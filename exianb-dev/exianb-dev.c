@@ -25,7 +25,7 @@
 static char *my_string = "exianb";
 static struct proc_dir_entry *our_proc_file; 
 
-// static struct miscdevice dispatch_misc_device;
+static struct miscdevice dispatch_misc_device;
 module_param(my_string, charp, 0644); // String parameter
 MODULE_PARM_DESC(my_string, "Parameter");
 
@@ -114,7 +114,7 @@ struct miscdevice misc = {
 };
 
 int __init driver_entry(void) {
-    // int ret;
+    int ret;
     pr_info("[+] device loaded");
     
     dispatch_misc_device.minor = MISC_DYNAMIC_MINOR;
