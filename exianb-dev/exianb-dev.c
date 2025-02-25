@@ -23,7 +23,7 @@
 #define PROCFS_ENTRY_FILENAME "exianb" 
 #define DEVICE_NAME "exianb"
 static char *my_string = "exianb";
-static struct proc_dir_entry *our_proc_file; 
+// static struct proc_dir_entry *our_proc_file; 
 
 static struct miscdevice dispatch_misc_device;
 module_param(my_string, charp, 0644); // String parameter
