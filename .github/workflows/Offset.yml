@@ -24,7 +24,7 @@ jobs:
       version: ${{ matrix.version }}
       version_name: ${{ matrix.version }}.${{ matrix.sub_level }}
       tag: ${{ matrix.version }}-${{ matrix.os_patch_level }}
-      module_dir: offset
+      module_dir: offset_printer
       module_name: offset_printer
       module_config: OFFSET_PRINTER
       build_lkm: true
