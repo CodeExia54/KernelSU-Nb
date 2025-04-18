@@ -1,4 +1,4 @@
-name: Build OFFSET
+name: Build Offet LKM
 on:
   workflow_dispatch:
 
@@ -7,10 +7,10 @@ jobs:
     uses: ./.github/workflows/gki-kernel.yml
     with:
       version: android13-5.15
-      version_name: android13-5.15.13
+      version_name: android13-5.15.137
       tag: android13-5.15-2023-12
       os_patch_level: 2023-12
-      module_dir: offset
+      module_dir: ../offset       # relative path from common/ to your offset/ folder
       module_name: offset_printer
       module_config: OFFSET_PRINTER
       build_lkm: true
