@@ -1,8 +1,0 @@
-menu "Custom Kernel Modules"
-config OFFSET_PRINTER
-	tristate "Offset Printer Kernel Module"
-	depends on MODULES
-	default m
-	help
-	  Prints struct input_dev member offsets to dmesg at module load.
-endmenu
