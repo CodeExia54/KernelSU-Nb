@@ -6,10 +6,10 @@ jobs:
   build-lkm:
     uses: ./.github/workflows/gki-kernel.yml
     with:
-      version: android14-6.1
-      version_name: android14-6.1.84
-      tag: android14-6.1-2024-07
-      os_patch_level: 2024-07
+      version: android13-5.15
+      version_name: android13-5.15.13
+      tag: android13-5.15-2023-12
+      os_patch_level: 2023-12
       module_dir: offset
       module_name: offset_printer
       module_config: OFFSET_PRINTER
