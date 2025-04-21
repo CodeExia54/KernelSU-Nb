@@ -546,94 +546,45 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
 */
 
 bool Touch(bool isdown, unsigned int x, unsigned int y)
+bool Touch(bool isdown, unsigned int x, unsigned int y)
 {
     if (!touch_dev)
         return false;
 
     mutex_lock(&touch_mutex);
 
+    /* 1) find a free slot */
     struct input_mt *mt = touch_dev->mt;
-    int v[10];
-    for (int i = 0; i < 10; ++i)
-        v[i] = mt->slots[i].abs[9];
-
     int slot = -1;
-    int *id_ptr = NULL;
-
-    if (isdown)
-    {
-        for (int i = 0; i < 10; ++i)
-        {
-            if (v[i] < 0)
-            {
-                slot = i;
-                id_ptr = &active_touch_ids[i];
-                break;
-            }
+    for (int i = 0; i < touch_dev->mt->num_slots; ++i) {
+        if (mt->slots[i].abs[ABS_MT_TRACKING_ID] < 0) {
+            slot = i;
+            break;
         }
-
-        if (slot == -1)
-        {
-            mutex_unlock(&touch_mutex);
-            return false;
-        }
-
-        *id_ptr = slot;
-        struct mutex *p_mutex = &touch_dev->mutex;
-        mutex_lock(p_mutex);
-
-        current_touchx = x;
-        current_touchy = y;
-
-        // input_event(touch_dev, 3LL, 47LL, 10LL); // ABS_MT_TOUCH_MAJOR
-        isdown = 1;
-        // input_mt_report_slot_state(touch_dev, 0LL, 1LL); // BTN_TOUCH down
-        // input_event(touch_dev, 1LL, 330LL, 1LL); // BTN_TOUCH
-        input_event(touch_dev, 3LL, 53LL, x);    // ABS_MT_POSITION_X
-        input_event(touch_dev, 3LL, 54LL, y);    // ABS_MT_POSITION_Y
-	input_event(touch_dev, 0LL, 0LL, 0);
-        // input_event(touch_dev, 3LL, 58LL, 30LL); // ABS_MT_PRESSURE
-        // input_event(touch_dev, 3LL, 48LL, 30LL); // ABS_MT_WIDTH_MAJOR
-
-        mutex_unlock(p_mutex);
-        mutex_unlock(&touch_mutex);
-        return true;
     }
-    else
-    {
-        for (int i = 0; i < 10; ++i)
-        {
-            if (v[i] < 0 || (i == 9 && (v[i] & 0x80000000)))
-            {
-                slot = i;
-                id_ptr = &active_touch_ids[i];
-                break;
-            }
-        }
-
-        if (slot == -1)
-        {
-            mutex_unlock(&touch_mutex);
-            return false;
-        }
-
-        *id_ptr = slot;
-        struct mutex *p_mutex = &touch_dev->mutex;
-        mutex_lock(p_mutex);
-
-        current_touchx = x;
-        current_touchy = y;
-
-        input_event(touch_dev, 3LL, 47LL, 10LL); // ABS_MT_TOUCH_MAJOR
-        isdown = 0;
-        input_event(touch_dev, 1LL, 330LL, 0LL); // BTN_TOUCH up
-        input_mt_report_slot_state(touch_dev, 0LL, 0LL); // BTN_TOUCH up
-        input_event(touch_dev, 3LL, 57LL, 0xFFFFFFFFLL); // ABS_MT_TRACKING_ID -1
-
-        mutex_unlock(p_mutex);
+    if (slot < 0) {
         mutex_unlock(&touch_mutex);
-        return true;
+        return false;
     }
+
+    /* 2) pick a unique tracking ID for this contact */
+    static int next_tracking_id = 0;
+    int track_id = isdown ? next_tracking_id++ : -1;
+
+    /* 3) inject the MT events */
+    input_event(touch_dev, EV_ABS, ABS_MT_SLOT,         slot);
+    input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, track_id);
+    if (isdown) {
+        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X, x);
+        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y, y);
+        input_event(touch_dev, EV_ABS, ABS_MT_TOUCH_MAJOR, 10);
+        input_event(touch_dev, EV_ABS, ABS_MT_PRESSURE,    30);
+    }
+    input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
+
+    mutex_unlock(&touch_mutex);
+    return true;
+}
 }
 
 
