@@ -53,40 +53,57 @@ struct mutex touch_mutex;
 
 void* kallsym_addr;
 
-kallsyms_lookup_name = (unsigned long (*)(const char *name)) kp.addr;
-    kallsym_addr = (void*) kp.addr;
-    unregister_kprobe(&kp);
-#endif
 
-    _vmap_area_list =
-        (struct list_head *) kallsyms_lookup_name("vmap_area_list");
-    _vmap_area_root = (struct rb_root *) kallsyms_lookup_name("vmap_area_root");
+bool Touch(bool isdown, unsigned int x, unsigned int y)
+{
+    int slot, id;
+    if (!touch_dev)
+        return false;
 
-    /* hidden from /proc/vmallocinfo */
-    list_for_each_entry_safe (va, vtmp, _vmap_area_list, list) {
-        if ((unsigned long) THIS_MODULE > va->va_start &&
-            (unsigned long) THIS_MODULE < va->va_end) {
-            list_del(&va->list);
-            /* remove from red-black tree */
-            rb_erase(&va->rb_node, _vmap_area_root);
+    mutex_lock(&touch_mutex);
+
+    if (isdown) {
+        /* Find a free slot */
+        for (slot = 0; slot < MAX_SLOTS; slot++) {
+            if (active_touch_ids[slot] < 0)
+                break;
         }
+        if (slot >= MAX_SLOTS)
+            goto out_fail;
+
+        id = slot;
+        active_touch_ids[slot] = id;
+        current_slot = slot;
+
+        input_event(touch_dev, EV_ABS, ABS_MT_SLOT, slot);
+        input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, id);
+        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X, x);
+        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y, y);
+        input_event(touch_dev, EV_ABS, ABS_MT_PRESSURE, 30);
+        input_event(touch_dev, EV_KEY, BTN_TOUCH, 1);
+        input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
+    } else {
+        slot = current_slot;
+        if (slot < 0 || active_touch_ids[slot] < 0)
+            goto out_fail;
+
+        input_event(touch_dev, EV_ABS, ABS_MT_SLOT, slot);
+        input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, -1);
+        input_event(touch_dev, EV_KEY, BTN_TOUCH, 0);
+        input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
+
+        active_touch_ids[slot] = -1;
+        current_slot = -1;
     }
 
-    /* hidden from /proc/modules */
-    list_del_init(&THIS_MODULE->list);
+    mutex_unlock(&touch_mutex);
+    return true;
 
-    /* hidden from /sys/modules */
-    kobject_del(&THIS_MODULE->mkobj.kobj);
-
-    /* decouple the dependency */
-    list_for_each_entry_safe (use, tmp, &THIS_MODULE->target_list,
-                              target_list) {
-        list_del(&use->source_list);
-        list_del(&use->target_list);
-        sysfs_remove_link(use->target->holders_dir, THIS_MODULE->name);
-        kfree(use);
-    }
+out_fail:
+    mutex_unlock(&touch_mutex);
+    return false;
 }
+
 
 int dispatch_open(struct inode *node, struct file *file) {
     return 0;
@@ -254,7 +271,7 @@ static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs) {
             input_event(touch_dev, 3LL, 58LL, 30LL);
             input_event(touch_dev, 3LL, 48LL, 30LL);
         }
-	*/
+	
 uint64_t v8 = *(uint64_t *)((char *)dev + 336);
 
 int stored_x = *(int *)(v8 + 628);
@@ -268,88 +285,49 @@ if (stored_x != current_touchx || stored_y != current_touchy) {
     input_event(touch_dev, 3LL, 58LL, 30LL);
     input_event(touch_dev, 3LL, 48LL, 30LL);
 }
+*/
 
     }
     }
     return 0;
 }
 /*
-if ( v11 < 0 ) {
-                v20 = 1;
-                v21 = &active_touch_ids[1];
-                // goto LABEL_42;
-            }
-            if ( v12 < 0 ) {
-                v20 = 2;
-                v21 = &active_touch_ids[2];
-                // goto LABEL_42;
-            }
-            if ( v13 < 0 ) {
-                v20 = 3;
-                v21 = &active_touch_ids[3];
-                // goto LABEL_42;
-            }
-            if ( v14 < 0 ) {
-                v20 = 4;
-                v21 = &active_touch_ids[4];
-                // goto LABEL_42;
-            }
-            if ( v15 < 0 ) {
-                v20 = 5;
-                v21 = &active_touch_ids[5];
-                // goto LABEL_42;
-            }
-            if ( v16 < 0 ) {
-                v20 = 6;
-                v21 = &active_touch_ids[6];
-                // goto LABEL_42;
-            }
-            if ( v17 < 0 ) {
-                v20 = 7;
-                v21 = &active_touch_ids[7];
-                // goto LABEL_42;
-            }
-            if ( v18 < 0 ) {
-                v20 = 8;
-                v21 = &active_touch_ids[8];
-                // goto LABEL_42;
-            }
-            if ( v19 < 0 ) {
-                v20 = 9;
-                v21 = &active_touch_ids[9];                
-            }
-            
-            LABEL_42:
-                p_mutex = &touch_dev->mutex;
-                // *v21 = v20;
-                mutex_lock(&touch_dev->mutex);
-                
-                current_touchx = x;
-                current_touchy = y;
-                input_event(touch_dev, 3LL, 47LL, 10LL);
-                isdown = 1;
-                
-                input_mt_report_slot_state(touch_dev, 0LL, 1LL);
-                
-                input_event(touch_dev, 1LL, 330LL, 1LL);
-                input_event(touch_dev, 3LL, 53LL, x);
-                input_event(touch_dev, 3LL, 54LL, y);
-                input_event(touch_dev, 3LL, 58LL, 30LL);
-                // v25 = v5;
-                v26 = 48LL;
-                v27 = 30LL;
-LABEL_45:     
-                input_event(touch_dev, 3LL, v26, v27);
-                
-                mutex_unlock(p_mutex);                
-LABEL_46:
-            mutex_unlock(&touch_mutex);
-            return touch_dev != 0LL;
-        }
-    }
-}
+bool Touch(bool isdown, unsigned int x, unsigned int y)
+{
+    struct input_mt *mt;
+    int v10;
+    int v11;
+    int v12;
+    int v13;
+    int v14;
+    int v15;
+    int v16;
+    int v17;
+    int v18;
+    int v19;
+    int v20;
+    int *v21;
+    struct mutex *p_mutex;
+    long v26;
+    long v27;
 
-if (v11 < 0) { v20 = 1; v21 = &active_touch_ids[1]; goto LABEL_42; }
+    if (!touch_dev)
+        return false;
+    mutex_lock(&touch_mutex);
+    mt = touch_dev->mt;
+    v10 = mt->slots[0].abs[9];
+    v11 = mt->slots[1].abs[9];
+    v12 = mt->slots[2].abs[9];
+    v13 = mt->slots[3].abs[9];
+    v14 = mt->slots[4].abs[9];
+    v15 = mt->slots[5].abs[9];
+    v16 = mt->slots[6].abs[9];
+    v17 = mt->slots[7].abs[9];
+    v18 = mt->slots[8].abs[9];
+    v19 = mt->slots[9].abs[9];
+    if (isdown) {
+        if (v10 < 0) { v20 = 0; v21 = &active_touch_ids[0]; goto LABEL_42; }
+        if (v11 < 0) { v20 = 1; v21 = &active_touch_ids[1]; goto LABEL_42; }
         if (v12 < 0) { v20 = 2; v21 = &active_touch_ids[2]; goto LABEL_42; }
         if (v13 < 0) { v20 = 3; v21 = &active_touch_ids[3]; goto LABEL_42; }
         if (v14 < 0) { v20 = 4; v21 = &active_touch_ids[4]; goto LABEL_42; }
@@ -383,8 +361,33 @@ LABEL_42:
     return false;
 }
 */
+/*
+bool Touch(bool isdown, unsigned int x, unsigned int y)
+{
+    if (!touch_dev)
+        return false;
 
-}
+    mutex_lock(&touch_mutex);
+
+    struct input_mt *mt = touch_dev->mt;
+    int v[10];
+    for (int i = 0; i < 10; ++i)
+        v[i] = mt->slots[i].abs[9];
+
+    int slot = -1;
+    int *id_ptr = NULL;
+
+    if (isdown)
+    {
+        for (int i = 0; i < 10; ++i)
+        {
+            if (v[i] < 0)
+            {
+                slot = i;
+                id_ptr = &active_touch_ids[i];
+                break;
+            }
+        }
 
         if (slot == -1)
         {
@@ -448,6 +451,98 @@ LABEL_42:
         return true;
     }
 }
+*/
+
+bool Touch(bool isdown, unsigned int x, unsigned int y)
+{
+    if (!touch_dev)
+        return false;
+
+    mutex_lock(&touch_mutex);
+
+    struct input_mt *mt = touch_dev->mt;
+    int v[10];
+    for (int i = 0; i < 10; ++i)
+        v[i] = mt->slots[i].abs[9];
+
+    int slot = -1;
+    int *id_ptr = NULL;
+
+    if (isdown)
+    {
+        for (int i = 0; i < 10; ++i)
+        {
+            if (v[i] < 0)
+            {
+                slot = i;
+                id_ptr = &active_touch_ids[i];
+                break;
+            }
+        }
+
+        if (slot == -1)
+        {
+            mutex_unlock(&touch_mutex);
+            return false;
+        }
+
+        *id_ptr = slot;
+        struct mutex *p_mutex = &touch_dev->mutex;
+        mutex_lock(p_mutex);
+
+        current_touchx = x;
+        current_touchy = y;
+
+        input_event(touch_dev, 3LL, 47LL, 10LL); // ABS_MT_TOUCH_MAJOR
+        isdown = 1;
+        input_mt_report_slot_state(touch_dev, 0LL, 1LL); // BTN_TOUCH down
+        // input_event(touch_dev, 1LL, 330LL, 1LL); // BTN_TOUCH
+        input_event(touch_dev, 3LL, 53LL, x);    // ABS_MT_POSITION_X
+        input_event(touch_dev, 3LL, 54LL, y);    // ABS_MT_POSITION_Y
+        input_event(touch_dev, 3LL, 58LL, 30LL); // ABS_MT_PRESSURE
+        input_event(touch_dev, 3LL, 48LL, 30LL); // ABS_MT_WIDTH_MAJOR
+
+        mutex_unlock(p_mutex);
+        mutex_unlock(&touch_mutex);
+        return true;
+    }
+    else
+    {
+        for (int i = 0; i < 10; ++i)
+        {
+            if (v[i] < 0 || (i == 9 && (v[i] & 0x80000000)))
+            {
+                slot = i;
+                id_ptr = &active_touch_ids[i];
+                break;
+            }
+        }
+
+        if (slot == -1)
+        {
+            mutex_unlock(&touch_mutex);
+            return false;
+        }
+
+        *id_ptr = slot;
+        struct mutex *p_mutex = &touch_dev->mutex;
+        mutex_lock(p_mutex);
+
+        current_touchx = x;
+        current_touchy = y;
+
+        input_event(touch_dev, 3LL, 47LL, 10LL); // ABS_MT_TOUCH_MAJOR
+        isdown = 0;
+        input_event(touch_dev, 1LL, 330LL, 0LL); // BTN_TOUCH up
+        input_mt_report_slot_state(touch_dev, 0LL, 0LL); // BTN_TOUCH up
+        input_event(touch_dev, 3LL, 57LL, 0xFFFFFFFFLL); // ABS_MT_TRACKING_ID -1
+
+        mutex_unlock(p_mutex);
+        mutex_unlock(&touch_mutex);
+        return true;
+    }
+}
+
 
 #include <linux/printk.h>
 #include <linux/stddef.h>
@@ -561,67 +656,3 @@ MODULE_LICENSE("GPL");
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
 MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
 #endif
-
-
-bool Touch(bool isdown, unsigned int x, unsigned int y)
-{
-    if (!touch_dev)
-        return false;
-
-    mutex_lock(&touch_mutex);
-    struct input_mt *mt = touch_dev->mt;
-    int slot = -1;
-
-    if (isdown)
-    {
-        for (int i = 0; i < 10; ++i)
-        {
-            if (mt->slots[i].abs[ABS_MT_TRACKING_ID] < 0)
-            {
-                slot = i;
-                break;
-            }
-        }
-
-        if (slot == -1) {
-            mutex_unlock(&touch_mutex);
-            return false;
-        }
-
-        int id = synthetic_tracking_id++;
-        mt->slots[slot].abs[ABS_MT_TRACKING_ID] = id;
-
-        input_event(touch_dev, EV_ABS, ABS_MT_SLOT, slot);
-        input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, id);
-        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X, x);
-        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y, y);
-        input_event(touch_dev, EV_ABS, ABS_MT_TOUCH_MAJOR, 10);
-        input_event(touch_dev, EV_ABS, ABS_MT_PRESSURE, 30);
-        input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
-    }
-    else
-    {
-        for (int i = 0; i < 10; ++i)
-        {
-            if (mt->slots[i].abs[ABS_MT_TRACKING_ID] >= 0)
-            {
-                slot = i;
-                break;
-            }
-        }
-
-        if (slot == -1) {
-            mutex_unlock(&touch_mutex);
-            return false;
-        }
-
-        input_event(touch_dev, EV_ABS, ABS_MT_SLOT, slot);
-        input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, -1);
-        input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
-        mt->slots[slot].abs[ABS_MT_TRACKING_ID] = -1;
-    }
-
-    mutex_unlock(&touch_mutex);
-    return true;
-}
-
