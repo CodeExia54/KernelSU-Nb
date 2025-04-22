@@ -480,7 +480,8 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
 
     if (isdown) {
         if (synthetic_slot < 0) {
-            for (int i = 0; i < total_slots; ++i) {
+            int i;
+            for (i = 0; i < total_slots; ++i) {
                 int real_id = mt->slots[i].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
                 if (real_id < 0 && !synthetic_slot_in_use[i]) {
                     synthetic_slot = i;
@@ -495,7 +496,7 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
             }
 
             int max_id = 0;
-            for (int i = 0; i < total_slots; ++i) {
+            for (i = 0; i < total_slots; ++i) {
                 int id = mt->slots[i].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
                 if (id > max_id)
                     max_id = id;
