@@ -462,8 +462,11 @@ static int next_tracking_id = 0;
 
 
 bool Touch(bool isdown, unsigned int x, unsigned int y)
+bool Touch(bool isdown, unsigned int x, unsigned int y)
 {
-    if (!touch_dev) return false;
+    if (!touch_dev)
+        return false;
+
     mutex_lock(&touch_mutex);
 
     int total_slots = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
@@ -471,63 +474,69 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
 
     if (isdown) {
         if (synthetic_slot < 0) {
-            // —— B‑protocol start —— 
             for (synthetic_slot = 0; synthetic_slot < total_slots; ++synthetic_slot) {
-                if (mt->slots[synthetic_slot]
-                      .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST] < 0)
+                if (mt->slots[synthetic_slot].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST] < 0)
                     break;
             }
-            if (synthetic_slot >= total_slots) goto fail;
 
-            // choose a unique ID
+            if (synthetic_slot >= total_slots) {
+                pr_info("Touch: No free slot available\n");
+                mutex_unlock(&touch_mutex);
+                return false;
+            }
+
             int max_id = 0;
             for (int i = 0; i < total_slots; ++i) {
-                int id = mt->slots[i]
-                          .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
-                if (id > max_id) max_id = id;
+                int id = mt->slots[i].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
+                if (id > max_id)
+                    max_id = id;
             }
             if (next_tracking_id <= max_id)
                 next_tracking_id = max_id + 1;
+
             int tracking_id = next_tracking_id++;
             active_touch_ids[synthetic_slot] = tracking_id;
 
-            // fire slot, ID, pos, BTN_DOWN, sync
+            pr_info("Touch: Assigned slot %d, tracking_id %d\n", synthetic_slot, tracking_id);
+
             input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        synthetic_slot);
             input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, tracking_id);
             input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X,  x);
             input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y,  y);
-            input_event(touch_dev, EV_KEY, BTN_TOUCH,          1);
+            input_event(touch_dev, EV_ABS, ABS_MT_TOUCH_MAJOR, 30);
+            input_event(touch_dev, EV_ABS, ABS_MT_PRESSURE,    30);
             input_event(touch_dev, EV_SYN, SYN_REPORT,         0);
         } else {
-            // —— A‑protocol moves —— 
-            input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X, x);
-            input_event(touch_dev, EV_SYN, SYN_REPORT,        0);
-
-            input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y, y);
-            input_event(touch_dev, EV_SYN, SYN_REPORT,        0);
-
+            input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        synthetic_slot);
+            input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X,  x);
+            input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y,  y);
             input_event(touch_dev, EV_ABS, ABS_MT_TOUCH_MAJOR, 30);
+            input_event(touch_dev, EV_ABS, ABS_MT_PRESSURE,    30);
             input_event(touch_dev, EV_SYN, SYN_REPORT,         0);
         }
+
         mutex_unlock(&touch_mutex);
         return true;
     } else {
-        // —— B‑protocol end —— 
-        if (synthetic_slot < 0) goto fail;
+        if (synthetic_slot < 0) {
+            pr_info("Touch: No active slot to release\n");
+            mutex_unlock(&touch_mutex);
+            return false;
+        }
+
+        pr_info("Touch: Releasing slot %d, tracking_id %d\n",
+                synthetic_slot, active_touch_ids[synthetic_slot]);
+
         input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        synthetic_slot);
         input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, -1);
-        input_event(touch_dev, EV_KEY, BTN_TOUCH,          0);
         input_event(touch_dev, EV_SYN, SYN_REPORT,         0);
 
         active_touch_ids[synthetic_slot] = -1;
         synthetic_slot = -1;
+
         mutex_unlock(&touch_mutex);
         return true;
     }
-
-fail:
-    mutex_unlock(&touch_mutex);
-    return false;
 }
 
 
