@@ -462,7 +462,6 @@ static int next_tracking_id = 0;
 
 
 bool Touch(bool isdown, unsigned int x, unsigned int y)
-bool Touch(bool isdown, unsigned int x, unsigned int y)
 {
     if (!touch_dev)
         return false;
