@@ -34,10 +34,10 @@
 static struct kprobe kp = {
     .symbol_name = "kallsyms_lookup_name",
 };
-static struct kprobe touch = {
+/*static struct kprobe touch = {
     .symbol_name = "input_event",
     .pre_handler = NULL, // Will be set later
-};
+};*/
 #endif
 
 static char *mCommon = "invoke_syscall";
