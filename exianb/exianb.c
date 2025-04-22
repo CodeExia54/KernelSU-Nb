@@ -180,10 +180,9 @@ long dispatch_ioctl(struct file* const file, unsigned int const cmd, unsigned lo
                     return -1;
                 }
                 
-                pr_info("Touch called");
-                
-               if(!Touch(true, ct.x, ct.y))
-                  return -1;
+                    pr_info("Touch called, isdown=%d\n", ct.isdown);
+                if (!Touch(ct.isdown, ct.x, ct.y))
+                    return -1;
             }
             break;                      
         default:
