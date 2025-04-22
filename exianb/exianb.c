@@ -463,26 +463,23 @@ static int next_tracking_id = 0;
 
 bool Touch(bool isdown, unsigned int x, unsigned int y)
 {
-    if (!touch_dev)
-        return false;
+    if (!touch_dev) return false;
     mutex_lock(&touch_mutex);
 
-    /* pull slot count from device: (max slot index +1) */
     int total_slots = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
     struct input_mt *mt = touch_dev->mt;
 
     if (isdown) {
         if (synthetic_slot < 0) {
-            // —— 1) first down: pick a free slot & tracking ID —— 
+            // —— B‑protocol start —— 
             for (synthetic_slot = 0; synthetic_slot < total_slots; ++synthetic_slot) {
                 if (mt->slots[synthetic_slot]
                       .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST] < 0)
                     break;
             }
-            if (synthetic_slot >= total_slots)
-                goto out_fail;
+            if (synthetic_slot >= total_slots) goto fail;
 
-            // unique ID above any in-use
+            // choose a unique ID
             int max_id = 0;
             for (int i = 0; i < total_slots; ++i) {
                 int id = mt->slots[i]
@@ -491,35 +488,32 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
             }
             if (next_tracking_id <= max_id)
                 next_tracking_id = max_id + 1;
-            active_touch_ids[synthetic_slot] = next_tracking_id++;
+            int tracking_id = next_tracking_id++;
+            active_touch_ids[synthetic_slot] = tracking_id;
 
-            // begin contact: slot→ID→coords→pressure→touch-down→sync
+            // fire slot, ID, pos, BTN_DOWN, sync
             input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        synthetic_slot);
-            input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, active_touch_ids[synthetic_slot]);
+            input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, tracking_id);
             input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X,  x);
             input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y,  y);
-            input_event(touch_dev, EV_ABS, ABS_MT_TOUCH_MAJOR, 30);
-            input_event(touch_dev, EV_ABS, ABS_MT_PRESSURE,    30);
             input_event(touch_dev, EV_KEY, BTN_TOUCH,          1);
             input_event(touch_dev, EV_SYN, SYN_REPORT,         0);
-
         } else {
-            // —— 2) moves: only slot→coords→pressure→sync —— 
-            input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        synthetic_slot);
-            input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X,  x);
-            input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y,  y);
+            // —— A‑protocol moves —— 
+            input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X, x);
+            input_event(touch_dev, EV_SYN, SYN_REPORT,        0);
+
+            input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y, y);
+            input_event(touch_dev, EV_SYN, SYN_REPORT,        0);
+
             input_event(touch_dev, EV_ABS, ABS_MT_TOUCH_MAJOR, 30);
-            input_event(touch_dev, EV_ABS, ABS_MT_PRESSURE,    30);
             input_event(touch_dev, EV_SYN, SYN_REPORT,         0);
         }
-
         mutex_unlock(&touch_mutex);
         return true;
     } else {
-        // —— 3) up: slot→TRACKING_ID=-1→touch-up→sync —— 
-        if (synthetic_slot < 0)
-            goto out_fail;
-
+        // —— B‑protocol end —— 
+        if (synthetic_slot < 0) goto fail;
         input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        synthetic_slot);
         input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, -1);
         input_event(touch_dev, EV_KEY, BTN_TOUCH,          0);
@@ -531,7 +525,7 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
         return true;
     }
 
-out_fail:
+fail:
     mutex_unlock(&touch_mutex);
     return false;
 }
