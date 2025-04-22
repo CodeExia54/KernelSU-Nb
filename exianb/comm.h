@@ -20,7 +20,7 @@ enum OPERATIONS {
 };
 
 typedef struct _COPY_TOUCH {
-    int state;
-    int x;
-    int y;
-} COPY_TOUCH, *PCOPY_TOUCH;
+    unsigned int x;
+    unsigned int y;
+    bool         isdown;    /* ← add this */
+} COPY_TOUCH;
