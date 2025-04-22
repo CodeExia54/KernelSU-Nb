@@ -245,6 +245,15 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 
 bool isDevUse = false;
 
+#define MAX_SLOTS 20
+static bool synthetic_slot_in_use[MAX_SLOTS] = {false};
+
+static int synthetic_slot = -1;
+static int next_tracking_id = 0;
+
+
+
+
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
     struct input_dev *dev = (struct input_dev *)regs->regs[0];
@@ -436,11 +445,7 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
 }
 */
 
-#define MAX_SLOTS 20
-static bool synthetic_slot_in_use[MAX_SLOTS] = {false};
 
-static int synthetic_slot = -1;
-static int next_tracking_id = 0;
 
 
 bool Touch(bool isdown, unsigned int x, unsigned int y)
