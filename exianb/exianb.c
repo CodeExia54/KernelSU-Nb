@@ -247,8 +247,6 @@ bool isDevUse = false;
 
 
 
-
-#define MAX_SLOTS 20
 #define MAX_SLOTS 20
 static bool synthetic_slot_in_use[MAX_SLOTS] = {false};
 static int synthetic_slot = -1;
