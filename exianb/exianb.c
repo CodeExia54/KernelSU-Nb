@@ -250,7 +250,7 @@ bool isDevUse = false;
 #define MAX_SLOTS 20          
 
 extern struct input_dev *touch_dev;
-
+static bool test_slot_reserved = false;
 /* ── Synthetic-injector state (only if you still use Touch()) ── */
 static int              synthetic_slot      = -1;
 static int              next_tracking_id    = 0;
