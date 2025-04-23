@@ -256,45 +256,35 @@ static int next_tracking_id = 0;
 
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
-    struct input_dev       *dev   = (struct input_dev *)regs->regs[0];
-    int                     type  = (int)regs->regs[1];
-    int                     code  = (int)regs->regs[2];
-    unsigned long long      value = (unsigned long long)regs->regs[3];
-
-    /* only our touchscreen */
+    if (synthetic_slot < 0) {
+        synthetic_slot = 1;
+        active_touch_ids[synthetic_slot] = 0;
+        pr_info("pre-handler-test: occupying fake synthetic_slot=%d\n", synthetic_slot);
+    }
+    struct input_dev *dev = (struct input_dev *)regs->regs[0];
+    int type = (int)regs->regs[1];
+    int code = (int)regs->regs[2];
+    unsigned long long value = regs->regs[3];
     if (dev != touch_dev)
         return 0;
-
-    pr_info("pre-handler: dev=%p, type=%d, code=%d, value=%llu\n",
-            dev, type, code, value);
-
+    pr_info("pre-handler-test: dev=%p type=%d code=%d value=%llu\n", dev, type, code, value);
     if (type == EV_ABS && code == ABS_MT_SLOT) {
-        pr_info("  ABS_MT_SLOT original=%llu\n", value);
-
-        /* if hardware is about to reuse our synthetic_slot, pick a real one */
+        pr_info("pre-handler-test: slot before remap=%llu\n", value);
         if ((int)value == synthetic_slot) {
             int total_slots = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
-            if (total_slots > MAX_SLOTS)
-                total_slots = MAX_SLOTS;
-
+            if (total_slots > MAX_SLOTS) total_slots = MAX_SLOTS;
             struct input_mt *mt = touch_dev->mt;
             for (int s = 0; s < total_slots; ++s) {
-                int rid = mt->slots[s]
-                          .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
-                /* skip our synthetic slot and any real touches */
+                int rid = mt->slots[s].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
                 if (s != synthetic_slot && rid < 0 && active_touch_ids[s] < 0) {
-                    pr_info("  remapping slot %d → %d\n",
-                            (int)value, s);
+                    pr_info("pre-handler-test: remapping slot %d->%d\n", synthetic_slot, s);
                     regs->regs[3] = s;
                     break;
                 }
             }
         }
-
-        pr_info("  ABS_MT_SLOT final=%llu\n",
-                (unsigned long long)regs->regs[3]);
+        pr_info("pre-handler-test: slot after remap=%u\n", (unsigned int)regs->regs[3]);
     }
-
     return 0;
 }
 /*
