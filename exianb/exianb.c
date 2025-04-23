@@ -246,82 +246,50 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 bool isDevUse = false;
 
 
-
 #define MAX_SLOTS 20
 
-/* which slot your synthetic swipe lives in */
-static int  synthetic_slot            = -1;
-/* mark every slot that’s in use (real or synthetic) */
-static bool synthetic_slot_in_use[MAX_SLOTS] = { false };
+extern struct input_dev *touch_dev;              // set elsewhere
+static bool synthetic_slot_in_use[MAX_SLOTS];    // tracks both real & ghost slots
+static bool test_slot_reserved = false;           // one-time TEST_SLOT reservation
+static const int TEST_SLOT = 1;                  // the slot we fake-reserve
 
-/* test harness: reserve slot 1 on first touch so you can verify remapping */
-static bool test_slot_reserved        = false;
-static const int TEST_SLOT            = 1;
-
+// The pre-handler itself:
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
     struct input_dev *dev   = (struct input_dev *)regs->regs[0];
     int               type  = (int)          regs->regs[1];
     int               code  = (int)          regs->regs[2];
-    unsigned int      value = (unsigned int) regs->regs[3];
+    unsigned int      slot  = (unsigned int) regs->regs[3];
 
-    /* one-time reservation of TEST_SLOT */
+    /* 1) Reserve TEST_SLOT exactly once */
     if (!test_slot_reserved) {
         if (TEST_SLOT < MAX_SLOTS) {
             synthetic_slot_in_use[TEST_SLOT] = true;
-            pr_info("pre-handler-test: reserved slot %d for testing\n",
-                    TEST_SLOT);
+            pr_info("pre-handler-test: reserved slot %d for testing\n", TEST_SLOT);
         }
         test_slot_reserved = true;
     }
 
-    /* only log & remap for our touchscreen */
-    if (dev != touch_dev)
+    /* 2) Only intercept touchscreen MT_SLOT events */
+    if (dev != touch_dev || type != EV_ABS || code != ABS_MT_SLOT)
         return 0;
 
-    /* 1) Log every ABS_MT_ event with slot context */
-    if (type == EV_ABS) {
-        switch (code) {
-        case ABS_MT_SLOT:
-            pr_info("pre-handler-test: ABS_MT_SLOT → %u%s\n",
-                    value,
-                    (value == TEST_SLOT) ? " (hit reserved)" : "");
-            last_slot = value;
-            break;
-        case ABS_MT_TRACKING_ID:
-            pr_info("pre-handler-test: ABS_MT_TRACKING_ID[%u] = %u\n",
-                    last_slot, value);
-            break;
-        case ABS_MT_POSITION_X:
-            pr_info("pre-handler-test: ABS_MT_POSITION_X[%u] = %u\n",
-                    last_slot, value);
-            break;
-        case ABS_MT_POSITION_Y:
-            pr_info("pre-handler-test: ABS_MT_POSITION_Y[%u] = %u\n",
-                    last_slot, value);
-            break;
-        default:
-            pr_info("pre-handler-test: EV_ABS code=%d value=%u\n",
-                    code, value);
-            break;
-        }
-    }
-    else if (type == EV_SYN && code == SYN_REPORT) {
-        pr_info("pre-handler-test: SYN_REPORT\n");
-    }
+    pr_info("pre-handler-test: incoming slot=%u\n", slot);
 
-    /* 2) If hardware tries to use TEST_SLOT, remap it */
-    if (type == EV_ABS && code == ABS_MT_SLOT && value == TEST_SLOT) {
+    /* 3) If hardware tries to pick TEST_SLOT, remap to a free one */
+    if (slot == TEST_SLOT) {
         int total = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
         if (total > MAX_SLOTS)
             total = MAX_SLOTS;
+
         struct input_mt *mt = touch_dev->mt;
         for (int s = 0; s < total; ++s) {
             int rid = mt->slots[s]
                       .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
+            /* skip any slot already reserved or still in use by a real finger */
             if (!synthetic_slot_in_use[s] && rid < 0) {
-                pr_info("pre-handler-test: remapping %u → %d\n",
-                        TEST_SLOT, s);
+                synthetic_slot_in_use[s] = true;
+                pr_info("pre-handler-test: remapping %u → %d\n", TEST_SLOT, s);
                 regs->regs[3] = s;
                 break;
             }
