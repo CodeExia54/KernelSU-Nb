@@ -48,7 +48,7 @@ static struct input_dev *touch_dev = NULL;
 bool isdown = true;
 int current_touchx, current_touchy;
 int current_slot = -1;
-int active_touch_ids[10];
+static int active_touch_ids[MAX_SLOTS];
 struct mutex touch_mutex;
 
 void* kallsym_addr;
@@ -251,7 +251,7 @@ bool isDevUse = false;
 static bool synthetic_slot_in_use[MAX_SLOTS] = {false};
 static int synthetic_slot = -1;
 static int next_tracking_id = 0;
-static int active_touch_ids[MAX_SLOTS];
+
 static DEFINE_SPINLOCK(remap_lock);
 
 
