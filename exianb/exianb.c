@@ -300,7 +300,7 @@ static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
             int total = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
             if (total > MAX_SLOTS) total = MAX_SLOTS;
 
-            struct input_mt *mt = touch_dev->mt;
+            //struct input_mt *mt = touch_dev->mt;
             for (int s = 0; s < total; ++s) {
                 /* free if no TID and not the synthetic slot */
                 if (slot_to_tid[s] < 0 && s != SYN_SLOT) {
