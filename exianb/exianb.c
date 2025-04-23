@@ -247,9 +247,8 @@ bool isDevUse = false;
 
 
 
-#define MAX_SLOTS 20           /* slots 0…19 */
+#define MAX_SLOTS 20          
 
-/* The touchscreen device we’re probing */
 extern struct input_dev *touch_dev;
 
 /* ── Synthetic-injector state (only if you still use Touch()) ── */
@@ -257,7 +256,6 @@ static int              synthetic_slot      = -1;
 static int              next_tracking_id    = 0;
 static int              active_touch_ids[MAX_SLOTS];
 static bool             synthetic_slot_in_use[MAX_SLOTS] = { false };
-static DEFINE_MUTEX     touch_mutex;         /* only if Touch() locks */
 
 /* ── Slot-to-TID tracking for hardware & ghost-remaps ── */
 /* slot_to_tid[s]:  -1 = free;  >=0 = hardware TID;  -2 = reserved */
