@@ -248,10 +248,20 @@ bool isDevUse = false;
 
 #define MAX_SLOTS 20
 
-extern struct input_dev *touch_dev;              // set elsewhere
-static bool synthetic_slot_in_use[MAX_SLOTS];    // tracks both real & ghost slots
-static bool test_slot_reserved = false;           // one-time TEST_SLOT reservation
-static const int TEST_SLOT = 1;                  // the slot we fake-reserve
+/* slot bookkeeping */
+static bool synthetic_slot_in_use[MAX_SLOTS] = { false };
+static int  synthetic_slot                  = -1;
+
+/* tracking IDs for your synthetic injector */
+static int  next_tracking_id                = 0;
+static int  active_touch_ids[MAX_SLOTS];    /* if you still use it */
+
+/* one–time test slot reservation */
+static bool test_slot_reserved              = false;
+static const int TEST_SLOT                  = 1;
+
+/* the device pointer you set in init */
+extern struct input_dev *touch_dev;                  // the slot we fake-reserve
 
 // The pre-handler itself:
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
