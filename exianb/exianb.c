@@ -246,18 +246,30 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 bool isDevUse = false;
 
 
-#define MAX_SLOTS 20           
 
-extern struct input_dev *touch_dev;  /* only once */
+#define MAX_SLOTS 20           /* slots 0…19 */
 
-static const int SYN_SLOT      = 1;  /* your synthetic slot */
-static bool        test_reserved;    /* once-only init flag */
+/* The touchscreen device we’re probing */
+extern struct input_dev *touch_dev;
 
-static int  slot_to_tid[MAX_SLOTS];  /* -1=free, >=0=trackID, -2=reserved */
-static bool slot_in_use[MAX_SLOTS];  /* mirror of slot_to_tid[s]>=0 || ==-2 */
+/* ── Synthetic-injector state (only if you still use Touch()) ── */
+static int              synthetic_slot      = -1;
+static int              next_tracking_id    = 0;
+static int              active_touch_ids[MAX_SLOTS];
+static bool             synthetic_slot_in_use[MAX_SLOTS] = { false };
+static DEFINE_MUTEX     touch_mutex;         /* only if Touch() locks */
 
-static unsigned int last_slot = UINT_MAX;  /* most recent ABS_MT_SLOT */
+/* ── Slot-to-TID tracking for hardware & ghost-remaps ── */
+/* slot_to_tid[s]:  -1 = free;  >=0 = hardware TID;  -2 = reserved */
+static int              slot_to_tid[MAX_SLOTS] = { [0 ... MAX_SLOTS-1] = -1 };
+static bool             slot_in_use[MAX_SLOTS] = { false };
 
+/* A one-time reservation for your test slot */
+static const int        SYN_SLOT             = 1;
+static bool             test_slot_reserved   = false;
+
+/* To capture which slot an upcoming TRACKING_ID belongs to */
+static unsigned int     last_slot            = UINT_MAX;
 
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
