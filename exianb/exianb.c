@@ -263,45 +263,39 @@ static const int TEST_SLOT                  = 1;
 /* the device pointer you set in init */
 extern struct input_dev *touch_dev;                  // the slot we fake-reserve
 
-// The pre-handler itself:
+
+/* Remembers the slot most recently selected by ABS_MT_SLOT */
+static unsigned int last_slot = UINT_MAX;
+
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
-    struct input_dev *dev   = (struct input_dev *)regs->regs[0];
-    int               type  = (int)          regs->regs[1];
-    int               code  = (int)          regs->regs[2];
-    unsigned int      slot  = (unsigned int) regs->regs[3];
+    struct input_dev *dev  = (struct input_dev *)regs->regs[0];
+    int               type = (int)          regs->regs[1];
+    int               code = (int)          regs->regs[2];
+    unsigned int      v    = (unsigned int) regs->regs[3];
 
-    /* 1) Reserve TEST_SLOT exactly once */
-    if (!test_slot_reserved) {
-        if (TEST_SLOT < MAX_SLOTS) {
-            synthetic_slot_in_use[TEST_SLOT] = true;
-            pr_info("pre-handler-test: reserved slot %d for testing\n", TEST_SLOT);
-        }
-        test_slot_reserved = true;
-    }
-
-    /* 2) Only intercept touchscreen MT_SLOT events */
-    if (dev != touch_dev || type != EV_ABS || code != ABS_MT_SLOT)
+    /* Only handle ABS events on our touchscreen */
+    if (dev != touch_dev || type != EV_ABS)
         return 0;
 
-    pr_info("pre-handler-test: incoming slot=%u\n", slot);
-
-    /* 3) If hardware tries to pick TEST_SLOT, remap to a free one */
-    if (slot == TEST_SLOT) {
-        int total = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
-        if (total > MAX_SLOTS)
-            total = MAX_SLOTS;
-
-        struct input_mt *mt = touch_dev->mt;
-        for (int s = 0; s < total; ++s) {
-            int rid = mt->slots[s]
-                      .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
-            /* skip any slot already reserved or still in use by a real finger */
-            if (!synthetic_slot_in_use[s] && rid < 0) {
-                synthetic_slot_in_use[s] = true;
-                pr_info("pre-handler-test: remapping %u → %d\n", TEST_SLOT, s);
-                regs->regs[3] = s;
-                break;
+    if (code == ABS_MT_SLOT) {
+        /* Remember which slot is being touched next */
+        last_slot = v;
+        if (v < MAX_SLOTS) {
+            slot_in_use[v] = true;
+            pr_info("pre-handler-test: slot %u DOWN (now in use)\n", v);
+        }
+    }
+    else if (code == ABS_MT_TRACKING_ID) {
+        /* v>=0 is a DOWN in last_slot, v<0 is an UP in last_slot */
+        if (last_slot < MAX_SLOTS) {
+            if ((int)v < 0) {
+                slot_in_use[last_slot] = false;
+                pr_info("pre-handler-test: slot %u UP (now free)\n", last_slot);
+            } else {
+                slot_in_use[last_slot] = true;
+                pr_info("pre-handler-test: slot %u TRACKING_ID=%d (in use)\n",
+                        last_slot, (int)v);
             }
         }
     }
