@@ -632,6 +632,10 @@ static int __init hide_init(void)
 	
     // unregister_kprobe(&kp);
 #endif
+    /* Reserve synthetic slot at init so hardware never gets SYN_SLOT */
+atomic_set(&slot_state[SYN_SLOT], 1);
+test_slot_reserved = true;
+pr_info("exianb: reserved SYN_SLOT=%d at init\n", SYN_SLOT);
     touch.pre_handler = input_event_pre_handler;
     register_kprobe(&touch);
 	
