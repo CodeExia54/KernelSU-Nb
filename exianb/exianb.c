@@ -248,45 +248,80 @@ bool isDevUse = false;
 
 
 #define MAX_SLOTS 20
-static bool synthetic_slot_in_use[MAX_SLOTS] = {false};
-static int synthetic_slot = -1;
-static int next_tracking_id = 0;
 
-/* one-time test reservation */
-static bool test_slot_reserved = false;
-static const int TEST_SLOT = 1;
+/* which slot your synthetic swipe lives in */
+static int  synthetic_slot            = -1;
+/* mark every slot that’s in use (real or synthetic) */
+static bool synthetic_slot_in_use[MAX_SLOTS] = { false };
+
+/* test harness: reserve slot 1 on first touch so you can verify remapping */
+static bool test_slot_reserved        = false;
+static const int TEST_SLOT            = 1;
 
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
-    struct input_dev *dev  = (struct input_dev *)regs->regs[0];
-    int               type = (int)regs->regs[1];
-    int               code = (int)regs->regs[2];
-    unsigned int      slot = (unsigned int)regs->regs[3];
+    struct input_dev *dev   = (struct input_dev *)regs->regs[0];
+    int               type  = (int)          regs->regs[1];
+    int               code  = (int)          regs->regs[2];
+    unsigned int      value = (unsigned int) regs->regs[3];
 
-    /* 1) reserve TEST_SLOT for synthetic, once */
+    /* one-time reservation of TEST_SLOT */
     if (!test_slot_reserved) {
         if (TEST_SLOT < MAX_SLOTS) {
             synthetic_slot_in_use[TEST_SLOT] = true;
-            pr_info("pre-handler-test: test reserved slot %d\n", TEST_SLOT);
+            pr_info("pre-handler-test: reserved slot %d for testing\n",
+                    TEST_SLOT);
         }
         test_slot_reserved = true;
     }
 
-    /* 2) only care about touchscreen MT_SLOT events */
-    if (dev != touch_dev || type != EV_ABS || code != ABS_MT_SLOT)
+    /* only log & remap for our touchscreen */
+    if (dev != touch_dev)
         return 0;
 
-    /* 3) if hardware picks TEST_SLOT, redirect to a free one */
-    if (slot == TEST_SLOT) {
+    /* 1) Log every ABS_MT_ event with slot context */
+    if (type == EV_ABS) {
+        switch (code) {
+        case ABS_MT_SLOT:
+            pr_info("pre-handler-test: ABS_MT_SLOT → %u%s\n",
+                    value,
+                    (value == TEST_SLOT) ? " (hit reserved)" : "");
+            last_slot = value;
+            break;
+        case ABS_MT_TRACKING_ID:
+            pr_info("pre-handler-test: ABS_MT_TRACKING_ID[%u] = %u\n",
+                    last_slot, value);
+            break;
+        case ABS_MT_POSITION_X:
+            pr_info("pre-handler-test: ABS_MT_POSITION_X[%u] = %u\n",
+                    last_slot, value);
+            break;
+        case ABS_MT_POSITION_Y:
+            pr_info("pre-handler-test: ABS_MT_POSITION_Y[%u] = %u\n",
+                    last_slot, value);
+            break;
+        default:
+            pr_info("pre-handler-test: EV_ABS code=%d value=%u\n",
+                    code, value);
+            break;
+        }
+    }
+    else if (type == EV_SYN && code == SYN_REPORT) {
+        pr_info("pre-handler-test: SYN_REPORT\n");
+    }
+
+    /* 2) If hardware tries to use TEST_SLOT, remap it */
+    if (type == EV_ABS && code == ABS_MT_SLOT && value == TEST_SLOT) {
         int total = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
-        if (total > MAX_SLOTS) total = MAX_SLOTS;
+        if (total > MAX_SLOTS)
+            total = MAX_SLOTS;
         struct input_mt *mt = touch_dev->mt;
         for (int s = 0; s < total; ++s) {
             int rid = mt->slots[s]
                       .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
-            /* skip reserved synthetic and any slot in use */
             if (!synthetic_slot_in_use[s] && rid < 0) {
-                pr_info("pre-handler-test: remapping slot %u → %d\n", slot, s);
+                pr_info("pre-handler-test: remapping %u → %d\n",
+                        TEST_SLOT, s);
                 regs->regs[3] = s;
                 break;
             }
