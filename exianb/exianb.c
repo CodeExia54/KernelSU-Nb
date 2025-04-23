@@ -257,16 +257,8 @@ static int              next_tracking_id    = 0;
 static int              active_touch_ids[MAX_SLOTS];
 static bool             synthetic_slot_in_use[MAX_SLOTS] = { false };
 
-/* ── Slot-to-TID tracking for hardware & ghost-remaps ── */
-/* slot_to_tid[s]:  -1 = free;  >=0 = hardware TID;  -2 = reserved */
-static int              slot_to_tid[MAX_SLOTS] = { [0 ... MAX_SLOTS-1] = -1 };
-static bool             slot_in_use[MAX_SLOTS] = { false };
-
-/* A one-time reservation for your test slot */
 static const int        SYN_SLOT             = 1;
-static bool             test_slot_reserved   = false;
 
-/* To capture which slot an upcoming TRACKING_ID belongs to */
 static unsigned int     last_slot            = UINT_MAX;
 
 #define MAX_TIDS  65536   
