@@ -48,7 +48,7 @@ static struct input_dev *touch_dev = NULL;
 bool isdown = true;
 int current_touchx, current_touchy;
 int current_slot = -1;
-int active_touch_ids[10];
+//int active_touch_ids[20];
 struct mutex touch_mutex;
 
 void* kallsym_addr;
