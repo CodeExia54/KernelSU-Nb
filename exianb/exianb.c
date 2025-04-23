@@ -245,12 +245,16 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 
 bool isDevUse = false;
 
+
+
+
+#define MAX_SLOTS 20
 #define MAX_SLOTS 20
 static bool synthetic_slot_in_use[MAX_SLOTS] = {false};
-
 static int synthetic_slot = -1;
 static int next_tracking_id = 0;
-
+static int active_touch_ids[MAX_SLOTS];
+static DEFINE_SPINLOCK(remap_lock);
 
 
 
@@ -258,6 +262,8 @@ static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
     if (synthetic_slot < 0) {
         synthetic_slot = 1;
+        for (int i = 0; i < MAX_SLOTS; ++i)
+            active_touch_ids[i] = -1;
         active_touch_ids[synthetic_slot] = 0;
         pr_info("pre-handler-test: occupying fake synthetic_slot=%d\n", synthetic_slot);
     }
@@ -272,8 +278,10 @@ static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
         pr_info("pre-handler-test: slot before remap=%llu\n", value);
         if ((int)value == synthetic_slot) {
             int total_slots = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
-            if (total_slots > MAX_SLOTS) total_slots = MAX_SLOTS;
+            if (total_slots > MAX_SLOTS)
+                total_slots = MAX_SLOTS;
             struct input_mt *mt = touch_dev->mt;
+            spin_lock_irq(&remap_lock);
             for (int s = 0; s < total_slots; ++s) {
                 int rid = mt->slots[s].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
                 if (s != synthetic_slot && rid < 0 && active_touch_ids[s] < 0) {
@@ -282,6 +290,7 @@ static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
                     break;
                 }
             }
+            spin_unlock_irq(&remap_lock);
         }
         pr_info("pre-handler-test: slot after remap=%u\n", (unsigned int)regs->regs[3]);
     }
