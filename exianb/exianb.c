@@ -29,6 +29,7 @@
 #include <linux/delay.h>
 #include <linux/spinlock.h>
 #include <linux/irqflags.h>
+#include <linux/percpu.h>
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
 #define KPROBE_LOOKUP 1
@@ -255,7 +256,7 @@ static int synthetic_slot = -1;
 static int next_tracking_id = 0;
 
 static DEFINE_SPINLOCK(remap_lock);
-
+static DEFINE_PER_CPU(bool, in_synthetic);
 extern struct input_dev  *touch_dev;
 extern bool               synthetic_slot_in_use[MAX_SLOTS];
 
@@ -268,40 +269,54 @@ static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
     unsigned long flags;
 
-    /* one-time test reservation of TEST_SLOT */
+    /* 1) reserve TEST_SLOT for synthetic, once */
     if (!test_slot_reserved) {
         if (TEST_SLOT < MAX_SLOTS) {
             synthetic_slot_in_use[TEST_SLOT] = true;
-            pr_info("pre-handler-test: artificially reserving slot %d\n", TEST_SLOT);
+            pr_info("pre-handler-test: artificially reserving slot %d\n",
+                    TEST_SLOT);
         }
         test_slot_reserved = true;
     }
 
-    /* unpack the event */
-    struct input_dev *dev = (struct input_dev *)regs->regs[0];
+    /* 2) unpack the incoming event */
+    struct input_dev *dev  = (struct input_dev *)regs->regs[0];
     int               type = (int)regs->regs[1];
     int               code = (int)regs->regs[2];
     unsigned int      slot = (unsigned int)regs->regs[3];
 
-    /* only handle real touchscreen slot events */
+    /* 3) only care about real touchscreen SLOT events */
     if (dev != touch_dev || type != EV_ABS || code != ABS_MT_SLOT)
         return 0;
 
-    spin_lock_irqsave(&remap_lock, flags);
+    /* 4) skip remapping *your* synthetic injections */
+    if (this_cpu_read(in_synthetic))
+        return 0;
+
+    pr_info("pre-handler-test: dev=%p slot=%u\n", dev, slot);
+
+    /* 5) if hardware tries to pick a reserved slot, find a truly free one */
     if (slot < MAX_SLOTS && synthetic_slot_in_use[slot]) {
         int total = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
         if (total > MAX_SLOTS)
             total = MAX_SLOTS;
 
+        /* lock to safely read mt->slots[] */
+        spin_lock_irqsave(&remap_lock, flags);
+        struct input_mt *mt = touch_dev->mt;
         for (int s = 0; s < total; ++s) {
-            if (!synthetic_slot_in_use[s]) {
-                pr_info("pre-handler-test: remapping slot %u → %d\n", slot, s);
+            int rid = mt->slots[s]
+                      .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
+            /* skip synthetic *and* any real touches */
+            if (!synthetic_slot_in_use[s] && rid < 0) {
+                pr_info("pre-handler-test: remapping slot %u → %d\n",
+                        slot, s);
                 regs->regs[3] = s;
                 break;
             }
         }
+        spin_unlock_irqrestore(&remap_lock, flags);
     }
-    spin_unlock_irqrestore(&remap_lock, flags);
 
     return 0;
 }
