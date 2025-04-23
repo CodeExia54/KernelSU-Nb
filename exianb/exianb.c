@@ -268,7 +268,7 @@ static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
     unsigned long flags;
 
-    /* --- artificial reservation, only once --- */
+    /* one-time test reservation of TEST_SLOT */
     if (!test_slot_reserved) {
         if (TEST_SLOT < MAX_SLOTS) {
             synthetic_slot_in_use[TEST_SLOT] = true;
@@ -277,13 +277,13 @@ static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
         test_slot_reserved = true;
     }
 
-    /* grab the incoming event */
+    /* unpack the event */
     struct input_dev *dev = (struct input_dev *)regs->regs[0];
     int               type = (int)regs->regs[1];
     int               code = (int)regs->regs[2];
     unsigned int      slot = (unsigned int)regs->regs[3];
 
-    /* only remap real touchscreen ABS_MT_SLOT events */
+    /* only handle real touchscreen slot events */
     if (dev != touch_dev || type != EV_ABS || code != ABS_MT_SLOT)
         return 0;
 
@@ -293,10 +293,9 @@ static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
         if (total > MAX_SLOTS)
             total = MAX_SLOTS;
 
-        struct input_mt *mt = touch_dev->mt;
         for (int s = 0; s < total; ++s) {
             if (!synthetic_slot_in_use[s]) {
-                pr_info("pre-handler-test: remapping slot %d → %d\n", slot, s);
+                pr_info("pre-handler-test: remapping slot %u → %d\n", slot, s);
                 regs->regs[3] = s;
                 break;
             }
