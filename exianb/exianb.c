@@ -269,62 +269,45 @@ static bool             test_slot_reserved   = false;
 /* To capture which slot an upcoming TRACKING_ID belongs to */
 static unsigned int     last_slot            = UINT_MAX;
 
+#define MAX_TIDS  65536   
+
+static int  tid_to_slot[MAX_TIDS];
+static atomic_t slot_state[MAX_SLOTS];
+/* … etc … */
+static unsigned int last_slot;            // updated on ABS_MT_SLOT
+
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
-    struct input_dev *dev  = (void*)regs->regs[0];
-    int               type = (int) regs->regs[1];
-    int               code = (int) regs->regs[2];
-    int               v    = (int) regs->regs[3];
+    struct input_dev *dev = (void*)regs->regs[0];
+    int               type = (int)regs->regs[1];
+    int               code = (int)regs->regs[2];
+    int               v    = (int)regs->regs[3];
 
-    /* Initialize on first call */
-    if (!test_slot_reserved) {
-        for (int i = 0; i < MAX_SLOTS; i++)
-            slot_to_tid[i] = -1;
-        slot_to_tid[SYN_SLOT] = -2;    /* mark synthetic slot permanently in use */
-        slot_in_use[SYN_SLOT] = true;
-        pr_info("pre-handler-test: reserved SYN_SLOT=%d\n", SYN_SLOT);
-        test_slot_reserved = true;
-    }
-
-    /* Only care about ABS_MT_* on our touchscreen */
     if (dev != touch_dev || type != EV_ABS)
         return 0;
 
     if (code == ABS_MT_SLOT) {
-        /* 1) Remember which slot is about to get a TID or coords */
         last_slot = v;
-        pr_info("pre-handler-test: saw SLOT → %u\n", last_slot);
-
-        /* 2) If hardware tries SYN_SLOT, remap to a free slot */
-        if ((int)v == SYN_SLOT) {
-            int total = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
-            if (total > MAX_SLOTS) total = MAX_SLOTS;
-
-            //struct input_mt *mt = touch_dev->mt;
-            for (int s = 0; s < total; ++s) {
-                /* free if no TID and not the synthetic slot */
-                if (slot_to_tid[s] < 0 && s != SYN_SLOT) {
-                    slot_to_tid[s]   = -2;   /* reserve as ghost */
-                    slot_in_use[s]   = true;
-                    pr_info("pre-handler-test: remapping %u → %d\n", v, s);
-                    regs->regs[3]    = s;
-                    last_slot        = s;    /* track the new slot */
-                    break;
-                }
-            }
-        }
     }
     else if (code == ABS_MT_TRACKING_ID) {
-        pr_info("pre-handler-test: TID[%u] = %d\n", last_slot, v);
-        if (v >= 0) {
-            /* finger-down: record its TID */
-            slot_to_tid[last_slot] = v;
-            slot_in_use[last_slot] = true;
-        } else {
-            /* finger-up: free that slot */
-            pr_info("pre-handler-test: freeing slot %u\n", last_slot);
-            slot_to_tid[last_slot] = -1;
-            slot_in_use[last_slot] = false;
+        if (v >= 0 && v < MAX_TIDS) {
+            // Finger DOWN: record which slot holds this TID
+            tid_to_slot[v] = last_slot;
+            atomic_set(&slot_state[last_slot], 1);
+            pr_info("pre: TID %d DOWN → slot %u\n", v, last_slot);
+        }
+        else if (v == -1) {
+            // Finger UP: free exactly the slot we recorded for this TID
+            // We need the *previous* TID, which must come from regs->regs[?].
+            // Usually input_event sends the TID value directly, but since it's -1,
+            // we need to remember the last non-negative TID in another variable:
+            static int last_tid;
+            int tid = last_tid;
+            int s   = tid_to_slot[tid];
+            if (s >= 0 && s < MAX_SLOTS) {
+                atomic_set(&slot_state[s], 0);
+                pr_info("pre: TID %d UP → freed slot %u\n", tid, s);
+            }
         }
     }
 
