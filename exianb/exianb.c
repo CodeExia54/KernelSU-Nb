@@ -181,8 +181,8 @@ long dispatch_ioctl(struct file* const file, unsigned int const cmd, unsigned lo
                 }
                 
                     pr_info("Touch called, isdown=%d\n", ct.isdown);
-                if (!Touch(ct.isdown, ct.x, ct.y))
-                    return -1;
+                //if (!Touch(ct.isdown, ct.x, ct.y))
+                   // return -1;
             }
             break;                      
         default:
@@ -256,22 +256,22 @@ static int next_tracking_id = 0;
 
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
-    struct input_dev *dev = (struct input_dev *)regs->regs[0];
-    int                type = (int)regs->regs[1];
-    int                code = (int)regs->regs[2];
-    unsigned long long value = regs->regs[3];
+    struct input_dev       *dev   = (struct input_dev *)regs->regs[0];
+    int                     type  = (int)regs->regs[1];
+    int                     code  = (int)regs->regs[2];
+    unsigned long long      value = (unsigned long long)regs->regs[3];
 
-    /* only care about our touchscreen */
+    /* only our touchscreen */
     if (dev != touch_dev)
         return 0;
 
-    pr_info("pre: dev=%p type=%d code=%d value=%llu\n",
+    pr_info("pre-handler: dev=%p, type=%d, code=%d, value=%llu\n",
             dev, type, code, value);
 
     if (type == EV_ABS && code == ABS_MT_SLOT) {
-        pr_info("  slot before remap = %llu\n", value);
+        pr_info("  ABS_MT_SLOT original=%llu\n", value);
 
-        /* if hardware is about to reuse our synthetic slot, pick a real one */
+        /* if hardware is about to reuse our synthetic_slot, pick a real one */
         if ((int)value == synthetic_slot) {
             int total_slots = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
             if (total_slots > MAX_SLOTS)
@@ -280,21 +280,19 @@ static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
             struct input_mt *mt = touch_dev->mt;
             for (int s = 0; s < total_slots; ++s) {
                 int rid = mt->slots[s]
-                    .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
-                /* skip our synthetic slot and any in-use by real touches */
-                if (s != synthetic_slot &&
-                    rid < 0 &&
-                    active_touch_ids[s] < 0) {
+                          .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
+                /* skip our synthetic slot and any real touches */
+                if (s != synthetic_slot && rid < 0 && active_touch_ids[s] < 0) {
                     pr_info("  remapping slot %d → %d\n",
-                            synthetic_slot, s);
+                            (int)value, s);
                     regs->regs[3] = s;
                     break;
                 }
             }
         }
 
-        pr_info("  slot after  remap = %u\n",
-                (unsigned int)regs->regs[3]);
+        pr_info("  ABS_MT_SLOT final=%llu\n",
+                (unsigned long long)regs->regs[3]);
     }
 
     return 0;
