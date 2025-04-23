@@ -256,39 +256,41 @@ static int next_tracking_id = 0;
 
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
-    struct input_dev *dev  = (struct input_dev *)regs->regs[0];
-    int               type = regs->regs[1];
-    int               code = regs->regs[2];
-    int               val  = regs->regs[3];
+    struct input_dev *dev   = (struct input_dev *)regs->regs[0];
+    int               type  = regs->regs[1];
+    int               code  = regs->regs[2];
+    int               value = regs->regs[3];
 
-    /* only intercept when we have an active synthetic swipe */
-    if (dev == touch_dev &&
-        type == EV_ABS &&
-        code == ABS_MT_SLOT &&
-        synthetic_slot >= 0 /* && synthetic_slot_in_use[synthetic_slot] */)
-    {
-        pr_info("pre-handler: HW trying slot %d, synth=%d\n",
-                val, synthetic_slot);
+    if (dev != touch_dev)
+        return 0;
 
-        if (val == synthetic_slot) {
+    /* log every time we enter the pre-handler */
+    pr_info("pre_handler: dev=%p type=%d code=%d value=%d\n",
+            dev, type, code, value);
+
+    if (type == EV_ABS && code == ABS_MT_SLOT) {
+        /* record original slot request */
+        pr_info("  ABS_MT_SLOT original slot=%d\n", value);
+
+        if (value == synthetic_slot) {
             int total_slots = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
             if (total_slots > MAX_SLOTS) total_slots = MAX_SLOTS;
-
             struct input_mt *mt = touch_dev->mt;
+
             for (int s = 0; s < total_slots; ++s) {
-                int rid = mt->slots[s]
-                              .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
-                if (s != synthetic_slot &&
-                    rid < 0 &&
-                    !synthetic_slot_in_use[s])
-                {
-                    pr_info("pre-handler: remapping slot %d → %d\n",
+                int rid = mt->slots[s].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
+                if (s != synthetic_slot && rid < 0 && active_touch_ids[s] < 0) {
+                    pr_info("  remapping synthetic_slot %d → real slot %d\n",
                             synthetic_slot, s);
                     regs->regs[3] = s;
                     break;
                 }
             }
         }
+
+        /* finally record what we actually ended up with */
+        pr_info("  ABS_MT_SLOT final slot=%d\n", regs->regs[3]);
+        current_slot = regs->regs[3];
     }
 
     return 0;
