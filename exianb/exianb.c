@@ -483,81 +483,61 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
 {
     if (!touch_dev)
         return false;
-
     mutex_lock(&touch_mutex);
-
-    /* figure out how many slots the device really has */
     int total_slots = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
     if (total_slots > MAX_SLOTS)
         total_slots = MAX_SLOTS;
-
     struct input_mt *mt = touch_dev->mt;
-
     if (isdown) {
-        /* --- on first down, allocate slot & tracking ID --- */
         if (synthetic_slot < 0) {
-            int max_id = 0;
+            int free_slot = -1;
             for (int s = 0; s < total_slots; ++s) {
-                int rid = mt->slots[s]
-                           .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
-                if (rid > max_id)
-                    max_id = rid;
-                if (rid < 0 && !synthetic_slot_in_use[s]) {
-                    synthetic_slot = s;
+                if (!reserved_slot[s] && atomic_read(&slot_state[s]) == 0) {
+                    free_slot = s;
                     break;
                 }
             }
-            if (synthetic_slot < 0) {
-                pr_info("Touch: no free slot (all %d busy)\n", total_slots);
+            if (free_slot < 0) {
                 mutex_unlock(&touch_mutex);
                 return false;
             }
-
-            /* pick a new tracking ID above any in use */
+            synthetic_slot = free_slot;
+            reserved_slot[free_slot] = true;
+            atomic_set(&slot_state[free_slot], 1);
+            int max_id = 0;
+            for (int s = 0; s < total_slots; ++s) {
+                int rid = mt->slots[s].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
+                if (rid > max_id)
+                    max_id = rid;
+            }
             if (next_tracking_id <= max_id)
                 next_tracking_id = max_id + 1;
-            int tid = next_tracking_id++;
-            active_touch_ids[synthetic_slot]     = tid;
-            synthetic_slot_in_use[synthetic_slot] = true;
-            pr_info("Touch: DOWN slot=%d tid=%d\n",
-                    synthetic_slot, tid);
-
-            /* emit down: slot, tracking_id, BTN_TOUCH=1 */
-            input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        synthetic_slot);
-            input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, tid);
-            input_event(touch_dev, EV_KEY, BTN_TOUCH,          1);
-            input_event(touch_dev, EV_SYN, SYN_REPORT,         0);
+            active_touch_ids[free_slot] = next_tracking_id++;
+            input_event(touch_dev, EV_ABS, ABS_MT_SLOT, synthetic_slot);
+            input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, active_touch_ids[synthetic_slot]);
+            input_event(touch_dev, EV_KEY, BTN_TOUCH, 1);
+            input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
         }
-
-        /* --- on move or after first down, update position only --- */
-        input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        synthetic_slot);
-        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X,  x);
-        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y,  y);
+        input_event(touch_dev, EV_ABS, ABS_MT_SLOT, synthetic_slot);
+        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X, x);
+        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y, y);
         input_event(touch_dev, EV_ABS, ABS_MT_TOUCH_MAJOR, 30);
-        input_event(touch_dev, EV_ABS, ABS_MT_PRESSURE,    30);
-        input_event(touch_dev, EV_SYN, SYN_REPORT,         0);
-
+        input_event(touch_dev, EV_ABS, ABS_MT_PRESSURE, 30);
+        input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
     } else {
-        /* --- on up, release slot & send BTN_TOUCH=0 --- */
         if (synthetic_slot < 0) {
-            pr_info("Touch: nothing to release\n");
             mutex_unlock(&touch_mutex);
             return false;
         }
-        pr_info("Touch:  UP slot=%d tid=%d\n",
-                synthetic_slot, active_touch_ids[synthetic_slot]);
-
-        input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        synthetic_slot);
+        input_event(touch_dev, EV_ABS, ABS_MT_SLOT, synthetic_slot);
         input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, -1);
-        input_event(touch_dev, EV_KEY, BTN_TOUCH,          0);
-        input_event(touch_dev, EV_SYN, SYN_REPORT,         0);
-
-        /* clear our bookkeeping */
-        synthetic_slot_in_use[synthetic_slot] = false;
-        active_touch_ids[synthetic_slot]      = -1;
-        synthetic_slot                       = -1;
+        input_event(touch_dev, EV_KEY, BTN_TOUCH, 0);
+        input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
+        atomic_set(&slot_state[synthetic_slot], 0);
+        reserved_slot[synthetic_slot] = false;
+        active_touch_ids[synthetic_slot] = -1;
+        synthetic_slot = -1;
     }
-
     mutex_unlock(&touch_mutex);
     return true;
 }
