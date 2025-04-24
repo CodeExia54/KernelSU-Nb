@@ -274,25 +274,38 @@ static unsigned int last_slot = UINT_MAX;
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
     struct input_dev *dev = (void*)regs->regs[0];
-    int type = (int)regs->regs[1];
-    int code = (int)regs->regs[2];
-    int v    = (int)regs->regs[3];
+    int type  = (int)regs->regs[1];
+    int code  = (int)regs->regs[2];
+    int v     = (int)regs->regs[3];
     static int last_tid = -1;
+
+    pr_info("handler START: dev=%p type=%d code=%d v=%d\n", dev, type, code, v);
 
     if (dev != touch_dev || type != EV_ABS)
         return 0;
 
     if (code == ABS_MT_SLOT) {
         last_slot = v;
-    } else if (code == ABS_MT_TRACKING_ID) {
+        pr_info("handler SLOT: last_slot=%u reserved=%d state=%d\n",
+                last_slot,
+                reserved_slot[last_slot],
+                atomic_read(&slot_state[last_slot]));
+    }
+    else if (code == ABS_MT_TRACKING_ID) {
+        pr_info("handler TRACKING_ID start: v=%d last_slot=%u\n", v, last_slot);
         if (v >= 0 && v < MAX_TIDS) {
             last_tid = v;
+            pr_info("handler DOWN: TID=%d on slot=%u reserved=%d state=%d\n",
+                    v, last_slot,
+                    reserved_slot[last_slot],
+                    atomic_read(&slot_state[last_slot]));
 
-            // Remap hardware touches if trying to use reserved slot
             if (reserved_slot[last_slot]) {
+                pr_info("handler CONFLICT: slot %u is reserved, remapping...\n", last_slot);
                 for (int s = 0; s < MAX_SLOTS; ++s) {
                     if (!reserved_slot[s] && atomic_read(&slot_state[s]) == 0) {
-                        pr_info("pre: Remapped TID %d from reserved slot %d → %d\n", v, last_slot, s);
+                        pr_info("handler REMAP: TID %d from slot %u → %d\n",
+                                v, last_slot, s);
                         last_slot = s;
                         break;
                     }
@@ -301,13 +314,17 @@ static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 
             tid_to_slot[v] = last_slot;
             atomic_set(&slot_state[last_slot], 1);
-            pr_info("pre: TID %d DOWN → slot %d\n", v, last_slot);
-        } else if (v == -1) {
+            pr_info("handler DOWN→slot: TID %d DOWN → slot %d\n",
+                    v, last_slot);
+        }
+        else if (v == -1) {
             int tid = last_tid;
-            int s = tid_to_slot[tid];
+            int s   = tid_to_slot[tid];
+            pr_info("handler UP: last_tid=%d mapped slot=%d\n", tid, s);
             if (s >= 0 && s < MAX_SLOTS) {
                 atomic_set(&slot_state[s], 0);
-                pr_info("pre: TID %d UP → freed slot %d\n", tid, s);
+                pr_info("handler UP→free: TID %d UP → freed slot %d\n",
+                        tid, s);
             }
         }
     }
@@ -481,25 +498,39 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
 
 bool Touch(bool isdown, unsigned int x, unsigned int y)
 {
+    pr_info("Touch ENTRY: isdown=%d x=%u y=%u synthetic_slot=%d\n",
+            isdown, x, y, synthetic_slot);
+
     if (!touch_dev)
         return false;
     mutex_lock(&touch_mutex);
+
     int total_slots = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
     if (total_slots > MAX_SLOTS)
         total_slots = MAX_SLOTS;
+    pr_info("Touch: total_slots=%d\n", total_slots);
+
     struct input_mt *mt = touch_dev->mt;
     if (isdown) {
         if (synthetic_slot < 0) {
+            pr_info("Touch DOWN: searching free slot\n");
             int free_slot = -1;
             for (int s = 0; s < total_slots; ++s) {
+                pr_info("  probe slot %d: reserved=%d in_use=%d state=%d\n",
+                        s,
+                        reserved_slot[s],
+                        synthetic_slot_in_use[s],
+                        atomic_read(&slot_state[s]));
                 if (!reserved_slot[s] &&
                     !synthetic_slot_in_use[s] &&
                     atomic_read(&slot_state[s]) == 0) {
                     free_slot = s;
+                    pr_info("  -> candidate free_slot=%d\n", free_slot);
                     break;
                 }
             }
             if (free_slot < 0) {
+                pr_info("Touch DOWN: no free slot!\n");
                 mutex_unlock(&touch_mutex);
                 return false;
             }
@@ -507,6 +538,8 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
             synthetic_slot_in_use[free_slot] = true;
             reserved_slot[free_slot] = true;
             atomic_set(&slot_state[free_slot], 1);
+            pr_info("Touch DOWN: reserved slot=%d\n", free_slot);
+
             int max_id = 0;
             for (int t = 0; t < total_slots; ++t) {
                 int rid = mt->slots[t].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
@@ -516,32 +549,38 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
             if (next_tracking_id <= max_id)
                 next_tracking_id = max_id + 1;
             active_touch_ids[free_slot] = next_tracking_id++;
-            input_event(touch_dev, EV_ABS, ABS_MT_SLOT, synthetic_slot);
+            pr_info("Touch DOWN: assigned TID=%d\n", active_touch_ids[free_slot]);
+
+            input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        synthetic_slot);
             input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, active_touch_ids[synthetic_slot]);
-            input_event(touch_dev, EV_KEY, BTN_TOUCH, 1);
-            input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
+            input_event(touch_dev, EV_KEY, BTN_TOUCH,          1);
+            input_event(touch_dev, EV_SYN, SYN_REPORT,         0);
         }
-        input_event(touch_dev, EV_ABS, ABS_MT_SLOT, synthetic_slot);
-        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X, x);
-        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y, y);
+
+        input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        synthetic_slot);
+        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X,  x);
+        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y,  y);
         input_event(touch_dev, EV_ABS, ABS_MT_TOUCH_MAJOR, 30);
-        input_event(touch_dev, EV_ABS, ABS_MT_PRESSURE, 30);
-        input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
+        input_event(touch_dev, EV_ABS, ABS_MT_PRESSURE,    30);
+        input_event(touch_dev, EV_SYN, SYN_REPORT,         0);
     } else {
+        pr_info("Touch UP: releasing slot=%d\n", synthetic_slot);
         if (synthetic_slot < 0) {
             mutex_unlock(&touch_mutex);
             return false;
         }
-        input_event(touch_dev, EV_ABS, ABS_MT_SLOT, synthetic_slot);
+        input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        synthetic_slot);
         input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, -1);
-        input_event(touch_dev, EV_KEY, BTN_TOUCH, 0);
-        input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
+        input_event(touch_dev, EV_KEY, BTN_TOUCH,          0);
+        input_event(touch_dev, EV_SYN, SYN_REPORT,         0);
+
         atomic_set(&slot_state[synthetic_slot], 0);
         reserved_slot[synthetic_slot] = false;
         synthetic_slot_in_use[synthetic_slot] = false;
         active_touch_ids[synthetic_slot] = -1;
         synthetic_slot = -1;
     }
+
     mutex_unlock(&touch_mutex);
     return true;
 }
