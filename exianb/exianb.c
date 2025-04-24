@@ -505,11 +505,11 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
             reserved_slot[free_slot] = true;
             atomic_set(&slot_state[free_slot], 1);
             int max_id = 0;
-            for (int s = 0; s < total_slots; ++s) {
-                int rid = mt->slots[s].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
-                if (rid > max_id)
-                    max_id = rid;
-            }
+            for (int t = 0; t < total_slots; ++t) {
+    int rid = mt->slots[t].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
+    if (rid > max_id)
+        max_id = rid;
+}
             if (next_tracking_id <= max_id)
                 next_tracking_id = max_id + 1;
             active_touch_ids[free_slot] = next_tracking_id++;
