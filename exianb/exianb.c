@@ -246,12 +246,8 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 bool isDevUse = false;
 
 
-
-#define MAX_SLOTS 20          
 #define MAX_SLOTS 20
 #define MAX_TIDS  65536
-
-extern struct input_dev *touch_dev;
 
 /* Synthetic injector state */
 static int  synthetic_slot = -1;
