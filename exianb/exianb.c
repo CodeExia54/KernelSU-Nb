@@ -492,7 +492,9 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
         if (synthetic_slot < 0) {
             int free_slot = -1;
             for (int s = 0; s < total_slots; ++s) {
-                if (!reserved_slot[s] && atomic_read(&slot_state[s]) == 0) {
+                if (!reserved_slot[s] &&
+                    !synthetic_slot_in_use[s] &&
+                    atomic_read(&slot_state[s]) == 0) {
                     free_slot = s;
                     break;
                 }
@@ -502,14 +504,15 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
                 return false;
             }
             synthetic_slot = free_slot;
+            synthetic_slot_in_use[free_slot] = true;
             reserved_slot[free_slot] = true;
             atomic_set(&slot_state[free_slot], 1);
             int max_id = 0;
             for (int t = 0; t < total_slots; ++t) {
-    int rid = mt->slots[t].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
-    if (rid > max_id)
-        max_id = rid;
-}
+                int rid = mt->slots[t].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
+                if (rid > max_id)
+                    max_id = rid;
+            }
             if (next_tracking_id <= max_id)
                 next_tracking_id = max_id + 1;
             active_touch_ids[free_slot] = next_tracking_id++;
@@ -535,6 +538,7 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
         input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
         atomic_set(&slot_state[synthetic_slot], 0);
         reserved_slot[synthetic_slot] = false;
+        synthetic_slot_in_use[synthetic_slot] = false;
         active_touch_ids[synthetic_slot] = -1;
         synthetic_slot = -1;
     }
