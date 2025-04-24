@@ -248,57 +248,66 @@ bool isDevUse = false;
 
 
 #define MAX_SLOTS 20          
+#define MAX_SLOTS 20
+#define MAX_TIDS  65536
 
 extern struct input_dev *touch_dev;
-static bool test_slot_reserved = false;
-/* ── Synthetic-injector state (only if you still use Touch()) ── */
-static int              synthetic_slot      = -1;
-static int              next_tracking_id    = 0;
-static int              active_touch_ids[MAX_SLOTS];
-static bool             synthetic_slot_in_use[MAX_SLOTS] = { false };
 
-static const int        SYN_SLOT             = 1;
+/* Synthetic injector state */
+static int  synthetic_slot = -1;
+static int  next_tracking_id = 0;
+static int  active_touch_ids[MAX_SLOTS];
+static bool synthetic_slot_in_use[MAX_SLOTS] = { false };
+static const int SYN_SLOT = 1;  // if you're using a fixed slot (optional)
 
-static unsigned int     last_slot            = UINT_MAX;
+/* Touch slot management */
+static int  tid_to_slot[MAX_TIDS];         // TRACKING_ID → slot
+static atomic_t slot_state[MAX_SLOTS];     // whether each slot is occupied
+static bool reserved_slot[MAX_SLOTS];      // synthetic reservation status
 
-#define MAX_TIDS  65536   
+/* Updated on ABS_MT_SLOT */
+static unsigned int last_slot = UINT_MAX;
 
-static int  tid_to_slot[MAX_TIDS];
-static atomic_t slot_state[MAX_SLOTS];
-/* … etc … */
-static unsigned int last_slot;            // updated on ABS_MT_SLOT
+
+
 
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
     struct input_dev *dev = (void*)regs->regs[0];
-    int               type = (int)regs->regs[1];
-    int               code = (int)regs->regs[2];
-    int               v    = (int)regs->regs[3];
+    int type = (int)regs->regs[1];
+    int code = (int)regs->regs[2];
+    int v    = (int)regs->regs[3];
+    static int last_tid = -1;
 
     if (dev != touch_dev || type != EV_ABS)
         return 0;
 
     if (code == ABS_MT_SLOT) {
         last_slot = v;
-    }
-    else if (code == ABS_MT_TRACKING_ID) {
+    } else if (code == ABS_MT_TRACKING_ID) {
         if (v >= 0 && v < MAX_TIDS) {
-            // Finger DOWN: record which slot holds this TID
+            last_tid = v;
+
+            // Remap hardware touches if trying to use reserved slot
+            if (reserved_slot[last_slot]) {
+                for (int s = 0; s < MAX_SLOTS; ++s) {
+                    if (!reserved_slot[s] && atomic_read(&slot_state[s]) == 0) {
+                        pr_info("pre: Remapped TID %d from reserved slot %d → %d\n", v, last_slot, s);
+                        last_slot = s;
+                        break;
+                    }
+                }
+            }
+
             tid_to_slot[v] = last_slot;
             atomic_set(&slot_state[last_slot], 1);
-            pr_info("pre: TID %d DOWN → slot %u\n", v, last_slot);
-        }
-        else if (v == -1) {
-            // Finger UP: free exactly the slot we recorded for this TID
-            // We need the *previous* TID, which must come from regs->regs[?].
-            // Usually input_event sends the TID value directly, but since it's -1,
-            // we need to remember the last non-negative TID in another variable:
-            static int last_tid;
+            pr_info("pre: TID %d DOWN → slot %d\n", v, last_slot);
+        } else if (v == -1) {
             int tid = last_tid;
-            int s   = tid_to_slot[tid];
+            int s = tid_to_slot[tid];
             if (s >= 0 && s < MAX_SLOTS) {
                 atomic_set(&slot_state[s], 0);
-                pr_info("pre: TID %d UP → freed slot %u\n", tid, s);
+                pr_info("pre: TID %d UP → freed slot %d\n", tid, s);
             }
         }
     }
@@ -632,10 +641,6 @@ static int __init hide_init(void)
 	
     // unregister_kprobe(&kp);
 #endif
-    /* Reserve synthetic slot at init so hardware never gets SYN_SLOT */
-atomic_set(&slot_state[SYN_SLOT], 1);
-test_slot_reserved = true;
-pr_info("exianb: reserved SYN_SLOT=%d at init\n", SYN_SLOT);
     touch.pre_handler = input_event_pre_handler;
     register_kprobe(&touch);
 	
