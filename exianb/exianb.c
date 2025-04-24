@@ -504,11 +504,21 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
         if (synthetic_slot < 0) {
             pr_info("Touch DOWN: searching free slot\n");
             int free_slot = -1;
+            struct input_mt *mt = touch_dev->mt;
+
             for (int s = 0; s < total_slots; ++s) {
                 int state = atomic_read(&slot_state[s]);
-                pr_info("  probe slot %d: state=%d\n", s, state);
-                if (state == SLOT_FREE &&
-                    atomic_cmpxchg(&slot_state[s], SLOT_FREE, SLOT_SYN) == SLOT_FREE) {
+                int hid   = mt->slots[s]
+                              .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
+                pr_info("  probe slot %d: state=%d hid=%d\n", s, state, hid);
+
+                /* skip if hardware already “owns” this slot or we already own it */
+                if (state != SLOT_FREE || hid >= 0)
+                    continue;
+
+                /* try to claim it for synthetic */
+                if (atomic_cmpxchg(&slot_state[s], SLOT_FREE, SLOT_SYN)
+                    == SLOT_FREE) {
                     free_slot = s;
                     pr_info("  -> candidate free_slot=%d (claimed SYN)\n", free_slot);
                     break;
@@ -522,7 +532,6 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
             synthetic_slot = free_slot;
 
             /* assign tracking ID */
-            struct input_mt *mt = touch_dev->mt;
             int max_id = 0;
             for (int t = 0; t < total_slots; ++t) {
                 int rid = mt->slots[t].abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
