@@ -450,7 +450,7 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
 
 
 
-static bool Touch(bool isdown,unsigned int x,unsigned int y)
+ bool Touch(bool isdown,unsigned int x,unsigned int y)
 {
     if(!touch_dev) return false;
     mutex_lock(&touch_mutex);
