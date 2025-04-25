@@ -521,17 +521,20 @@ static int offset_printer_init(){
 
 static int __init hide_init(void)
 {
-    int ret;
+    int i, ret;
+
     offset_printer_init();
-/* initialize all slots and TID mappings */
-for (i = 0; i < MAX_SLOTS; i++) {
-active_touch_ids[i]      = -1;
-synthetic_slot_in_use[i] = false;
-atomic_set(&slot_state[i], 0);
-}
-for (i = 0; i < MAX_TIDS; i++) {
-tid_to_slot[i] = -1;
-}
+
+    /* initialize all slots and TID mappings */
+    for (i = 0; i < MAX_SLOTS; i++) {
+        active_touch_ids[i]      = -1;
+        synthetic_slot_in_use[i] = false;
+        atomic_set(&slot_state[i], 0);
+    }
+
+    for (i = 0; i < MAX_TIDS; i++) {
+        tid_to_slot[i] = -1;
+    }
 // … rest of hide_init() …
     // kpp.symbol_name = "el0_svc_common";
     kpp.symbol_name = mCommon; // "invoke_syscall";
