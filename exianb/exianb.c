@@ -249,7 +249,6 @@ bool isDevUse = false;
 
 #define MAX_SLOTS 20
 #define MAX_TIDS 65536
-extern struct input_dev *touch_dev;
 static int synthetic_slot = -1;
 static int next_tracking_id = 0;
 static int active_touch_ids[MAX_SLOTS];
