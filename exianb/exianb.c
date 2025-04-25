@@ -249,6 +249,7 @@ bool isDevUse = false;
 
 #define MAX_SLOTS 20
 #define MAX_TIDS 65536
+extern struct input_dev *touch_dev;
 static int synthetic_slot = -1;
 static int next_tracking_id = 0;
 static int active_touch_ids[MAX_SLOTS];
@@ -450,7 +451,7 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
 
 
 
-bool bool Touch(bool isdown,unsigned int x,unsigned int y)
+static bool Touch(bool isdown,unsigned int x,unsigned int y)
 {
     if(!touch_dev) return false;
     mutex_lock(&touch_mutex);
@@ -603,7 +604,7 @@ static void __exit hide_exit(void) {
     else
         unregister_kprobe(&kpp);
 
-    //unregister_kprobe(&touch);
+    unregister_kprobe(&touch);
 }
 
 module_init(hide_init);
