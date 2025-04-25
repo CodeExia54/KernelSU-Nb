@@ -255,7 +255,7 @@ static int free_slots[MAX_SLOTS];
 static int free_head;
 static int synthetic_slot = -1;
 static bool injecting = false;
-static int active_touch_ids[MAX_SLOTS];
+//static int active_touch_ids[MAX_SLOTS];
 static int next_tracking_id = 0;
 static struct kprobe touch;
 
