@@ -255,7 +255,8 @@ static int hw2remap[MAX_SLOTS];
 /* Per-CPU flags for synthetic injection */
 static DEFINE_PER_CPU(int, synthetic_active);
 static DEFINE_PER_CPU(int, synthetic_slot);
-
+static bool synthetic_pressed = false;
+static DEFINE_PER_CPU(int, last_hw_slot);
 /* Real touch device pointer (found via kallsyms) */
 
 
@@ -282,56 +283,107 @@ static int find_free_slot(struct input_dev *dev)
     return -1;
 }
 
+/* per-CPU store of the most recent raw slot index */
+
+/* sits at top of the file */
+
+
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
-    struct input_dev *dev = (struct input_dev *)regs->regs[0];
-    int type  = regs->regs[1];
-    int code  = regs->regs[2];
-    int value = regs->regs[3];
-    unsigned long flags;
+    struct input_dev *dev   = (struct input_dev *)regs->regs[0];
+    int              type  = regs->regs[1];
+    int              code  = regs->regs[2];
+    int              value = regs->regs[3];
+    unsigned long    flags;
 
-    /* Grab global lock + disable local IRQs */
+    pr_debug("pre_handler: dev=%p type=%d code=%d val=%d\n",
+             dev, type, code, value);
+
     spin_lock_irqsave(&global_slot_lock, flags);
 
     if (dev == touch_dev) {
-        /* Handle slot selection events */
         if (type == EV_ABS && code == ABS_MT_SLOT) {
-            if (this_cpu_read(synthetic_active)) {
-                /* During synthetic injection, remap synthetic slot → free slot */
-                int ss = this_cpu_read(synthetic_slot);
-                if (value == ss) {
-                    int r = find_free_slot(dev);
-                    if (r >= 0)
-                        regs->regs[3] = r;
+            int orig = value;
+            this_cpu_write(last_hw_slot, orig);
+            pr_debug("  SLOT event: orig=%d current_slot=%d active=%d pressed=%d\n",
+                     orig,
+                     this_cpu_read(synthetic_slot),
+                     this_cpu_read(synthetic_active),
+                     synthetic_pressed);
+
+            /* A) hardware colliding with synthetic_pressed */
+            if (!this_cpu_read(synthetic_active) &&
+                 synthetic_pressed &&
+                 orig == current_slot) {
+                int r = find_free_slot(dev);
+                if (r >= 0) {
+                    hw2remap[orig] = r;
+                    regs->regs[3]   = r;
+                    pr_info("  remap collision: hw orig=%d → %d (synthetic held)\n",
+                            orig, r);
                 }
-            } else if (value >= 0 && value < MAX_SLOTS &&
-                       hw2remap[value] >= 0) {
-                /* Remap any previously recorded hardware slot */
-                regs->regs[3] = hw2remap[value];
+            }
+            /* B) during injection, maintain synthetic remap */
+            else if (this_cpu_read(synthetic_active) &&
+                     orig == this_cpu_read(synthetic_slot)) {
+                int r = this_cpu_read(synthetic_slot);
+                hw2remap[orig] = r;
+                regs->regs[3]   = r;
+                pr_info("  remap synthetic: orig=%d → %d\n", orig, r);
+            }
+            /* C) previously mapped hardware finger */
+            else if (orig >= 0 && orig < MAX_SLOTS &&
+                     hw2remap[orig] >= 0) {
+                int m = hw2remap[orig];
+                regs->regs[3] = m;
+                pr_debug("  apply existing remap: orig=%d → %d\n", orig, m);
             }
 
-        /* Handle tracking-ID (down/up) events */
         } else if (type == EV_ABS && code == ABS_MT_TRACKING_ID) {
-            int last_slot = this_cpu_read(synthetic_slot);
+            int orig   = this_cpu_read(last_hw_slot);
+            int mapped = (orig>=0 && orig<MAX_SLOTS) ? hw2remap[orig] : -1;
+            pr_debug("  TRACKING_ID event: orig=%d val=%d mapped=%d active=%d\n",
+                     orig, value, mapped, this_cpu_read(synthetic_active));
 
-            if (value >= 0 && this_cpu_read(synthetic_active)) {
-                /* Synthetic down: record its slot */
-                current_slot = last_slot;
-
-            } else if (value >= 0) {
-                /* Hardware down: map original slot → new slot */
-                int orig_slot = this_cpu_read(synthetic_slot);
-                hw2remap[orig_slot] = last_slot;
-
+            if (!this_cpu_read(synthetic_active)) {
+                /* hardware down/up */
+                if (value >= 0 && mapped >= 0) {
+                    regs->regs[3] = mapped;
+                    pr_info("  hw DOWN: orig=%d → mapped=%d\n", orig, mapped);
+                } else if (value < 0 && mapped >= 0) {
+                    regs->regs[3] = -1;
+                    hw2remap[orig] = -1;
+                    pr_info("  hw UP: orig=%d, cleared mapping\n", orig);
+                }
             } else {
-                /* Any up (value < 0): clear mapping for that slot */
-                int orig_slot = this_cpu_read(synthetic_slot);
-                hw2remap[orig_slot] = -1;
+                /* synthetic down/up */
+                if (value >= 0) {
+                    synthetic_pressed = true;
+                    current_slot      = this_cpu_read(synthetic_slot);
+                    pr_info("  synth DOWN: slot=%d\n", current_slot);
+                } else {
+                    synthetic_pressed = false;
+                    current_slot      = -1;
+                    pr_info("  synth UP\n");
+                }
             }
+
+        } else if (type == EV_ABS &&
+                  (code == ABS_MT_POSITION_X || code == ABS_MT_POSITION_Y)) {
+            int orig   = this_cpu_read(last_hw_slot);
+            int mapped = (orig>=0 && orig<MAX_SLOTS) ? hw2remap[orig] : -1;
+
+            /* drop hardware X/Y until mapped */
+            if (!this_cpu_read(synthetic_active) && mapped < 0) {
+                pr_warn("  drop POS code=%d orig=%d (unmapped)\n", code, orig);
+                spin_unlock_irqrestore(&global_slot_lock, flags);
+                return 0;
+            }
+            /* synthetic X/Y always pass */
+            pr_debug("  pass POS code=%d orig=%d mapped=%d\n", code, orig, mapped);
         }
     }
 
-    /* Release lock + restore IRQs */
     spin_unlock_irqrestore(&global_slot_lock, flags);
     return 0;
 }
@@ -505,39 +557,79 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
 {
     int slot;
     unsigned long flags;
-    if (!touch_dev)
+
+    if (!touch_dev) {
+        pr_err("Touch: no touch_dev\n");
         return false;
+    }
+
+    pr_debug("Touch: isdown=%d x=%u y=%u current_slot=%d\n",
+             isdown, x, y, current_slot);
+
     mutex_lock(&touch_mutex);
+
     if (isdown) {
-        slot = find_free_slot(touch_dev);
-        if (slot < 0) {
+        /* First down: allocate a slot and send down events */
+        if (current_slot < 0) {
+            slot = find_free_slot(touch_dev);
+            if (slot < 0) {
+                pr_warn("Touch: no free slot\n");
+                mutex_unlock(&touch_mutex);
+                return false;
+            }
+            current_slot = slot;
+            pr_info("Touch: allocated synthetic slot %d\n", slot);
+
+            preempt_disable();
+            local_irq_save(flags);
+            this_cpu_write(synthetic_slot,   slot);
+            this_cpu_write(synthetic_active, 1);
+            pr_debug("Touch: inject DOWN slot=%d\n", slot);
+            input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        slot);
+            input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, slot);
+            input_event(touch_dev, EV_SYN, SYN_REPORT,         0);
+            local_irq_restore(flags);
+            preempt_enable();
+        }
+
+        /* Position updates once slot is active */
+        preempt_disable();
+        local_irq_save(flags);
+        this_cpu_write(synthetic_active, 1);
+        pr_debug("Touch: inject POS slot=%d x=%u y=%u\n",
+                 current_slot, x, y);
+        input_event(touch_dev, EV_ABS, ABS_MT_SLOT,       current_slot);
+        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X, x);
+        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y, y);
+        input_event(touch_dev, EV_SYN, SYN_REPORT,        0);
+        this_cpu_write(synthetic_active, 0);
+        local_irq_restore(flags);
+        preempt_enable();
+
+    } else {
+        /* Up: only if a slot is active */
+        if (current_slot < 0) {
+            pr_warn("Touch: up called but no active slot\n");
             mutex_unlock(&touch_mutex);
             return false;
         }
-        preempt_disable();
-        local_irq_save(flags);
-        this_cpu_write(synthetic_slot, slot);
-        this_cpu_write(synthetic_active, 1);
-        input_event(touch_dev, EV_ABS, ABS_MT_SLOT, slot);
-        input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, slot);
-        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X, x);
-        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y, y);
-        input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
-        this_cpu_write(synthetic_active, 0);
-        local_irq_restore(flags);
-        preempt_enable();
-    } else {
-        slot = this_cpu_read(synthetic_slot);
+
         preempt_disable();
         local_irq_save(flags);
         this_cpu_write(synthetic_active, 1);
-        input_event(touch_dev, EV_ABS, ABS_MT_SLOT, slot);
+        pr_info("Touch: inject UP slot=%d\n", current_slot);
+        input_event(touch_dev, EV_ABS, ABS_MT_SLOT,        current_slot);
         input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, -1);
-        input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
+        input_event(touch_dev, EV_SYN, SYN_REPORT,         0);
         this_cpu_write(synthetic_active, 0);
         local_irq_restore(flags);
         preempt_enable();
+
+        /* Mark slot free for next down */
+        pr_debug("Touch: released slot %d\n", current_slot);
+        current_slot = -1;
     }
+
     mutex_unlock(&touch_mutex);
     return true;
 }
