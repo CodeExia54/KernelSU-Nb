@@ -254,7 +254,6 @@ static DEFINE_PER_CPU(int, synthetic_slot);
 extern struct input_dev *touch_dev;
 extern struct mutex touch_mutex;
 extern int active_touch_ids[MAX_SLOTS];
-extern unsigned int current_touchx, current_touchy;
 extern int current_slot;
 
 static int find_free_slot(struct input_dev *dev)
