@@ -49,7 +49,7 @@ bool isdown = true;
 int current_touchx, current_touchy;
 int current_slot = -1;
 //int active_touch_ids[20];
-struct mutex touch_mutex;
+static DEFINE_MUTEX(touch_mutex);
 
 void* kallsym_addr;
 
@@ -284,40 +284,55 @@ static int find_free_slot(struct input_dev *dev)
 
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
-    struct input_dev *dev=(struct input_dev*)regs->regs[0];
-    int type=regs->regs[1],code=regs->regs[2],value=regs->regs[3];
-    unsigned long __flags;
-spin_lock_irqsave(&global_slot_lock, __flags);
-    if(dev==touch_dev&&type==EV_ABS&&code==ABS_MT_SLOT)
-    {
-        
-        if(this_cpu_read(synthetic_active))
-        {
-            int ss=this_cpu_read(synthetic_slot);
-            if(value==ss)
-            {
-                int r=find_free_slot(dev);
-                if(r>=0)
-                    regs->regs[3]=r;
+    struct input_dev *dev = (struct input_dev *)regs->regs[0];
+    int type  = regs->regs[1];
+    int code  = regs->regs[2];
+    int value = regs->regs[3];
+    unsigned long flags;
+
+    /* Grab global lock + disable local IRQs */
+    spin_lock_irqsave(&global_slot_lock, flags);
+
+    if (dev == touch_dev) {
+        /* Handle slot selection events */
+        if (type == EV_ABS && code == ABS_MT_SLOT) {
+            if (this_cpu_read(synthetic_active)) {
+                /* During synthetic injection, remap synthetic slot → free slot */
+                int ss = this_cpu_read(synthetic_slot);
+                if (value == ss) {
+                    int r = find_free_slot(dev);
+                    if (r >= 0)
+                        regs->regs[3] = r;
+                }
+            } else if (value >= 0 && value < MAX_SLOTS &&
+                       hw2remap[value] >= 0) {
+                /* Remap any previously recorded hardware slot */
+                regs->regs[3] = hw2remap[value];
+            }
+
+        /* Handle tracking-ID (down/up) events */
+        } else if (type == EV_ABS && code == ABS_MT_TRACKING_ID) {
+            int last_slot = this_cpu_read(synthetic_slot);
+
+            if (value >= 0 && this_cpu_read(synthetic_active)) {
+                /* Synthetic down: record its slot */
+                current_slot = last_slot;
+
+            } else if (value >= 0) {
+                /* Hardware down: map original slot → new slot */
+                int orig_slot = this_cpu_read(synthetic_slot);
+                hw2remap[orig_slot] = last_slot;
+
+            } else {
+                /* Any up (value < 0): clear mapping for that slot */
+                int orig_slot = this_cpu_read(synthetic_slot);
+                hw2remap[orig_slot] = -1;
             }
         }
-        else if(hw2remap[value]>=0)
-        {
-            regs->regs[3]=hw2remap[value];
-        }
     }
-    if(dev==touch_dev&&type==EV_ABS&&code==ABS_MT_TRACKING_ID)
-    {
-        
-        int last_slot=this_cpu_read(synthetic_slot);
-        if(value>=0&&this_cpu_read(synthetic_active))
-            current_slot=last_slot;
-        else if(value>=0&&!this_cpu_read(synthetic_active))
-            hw2remap[this_cpu_read(synthetic_slot)]=this_cpu_read(synthetic_slot);
-        else if(value<0)
-            hw2remap[this_cpu_read(synthetic_slot)]= -1;
-    }
-    spin_unlock_irqrestore(&global_slot_lock, __flags);
+
+    /* Release lock + restore IRQs */
+    spin_unlock_irqrestore(&global_slot_lock, flags);
     return 0;
 }
 
@@ -553,6 +568,8 @@ static int __init hide_init(void)
 {
     int ret;
     offset_printer_init();
+	for (int i = 0; i < MAX_SLOTS; i++)
+        hw2remap[i] = -1;
     for (int i = 0; i < 10; ++i) active_touch_ids[i] = -1;
     // kpp.symbol_name = "el0_svc_common";
     kpp.symbol_name = mCommon; // "invoke_syscall";
