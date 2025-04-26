@@ -283,9 +283,6 @@ static int find_free_slot(struct input_dev *dev)
     return -1;
 }
 
-/* per-CPU store of the most recent raw slot index */
-
-/* sits at top of the file */
 
 
 static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
@@ -296,91 +293,93 @@ static int input_event_pre_handler(struct kprobe *kp, struct pt_regs *regs)
     int              value = regs->regs[3];
     unsigned long    flags;
 
-    pr_debug("pre_handler: dev=%p type=%d code=%d val=%d\n",
-             dev, type, code, value);
-
     spin_lock_irqsave(&global_slot_lock, flags);
 
     if (dev == touch_dev) {
+
+        /* 1) SLOT events: record raw slot and handle collision with synthetic */
         if (type == EV_ABS && code == ABS_MT_SLOT) {
             int orig = value;
             this_cpu_write(last_hw_slot, orig);
-            pr_debug("  SLOT event: orig=%d current_slot=%d active=%d pressed=%d\n",
+
+            pr_debug("SLOT: orig=%d cur_syn_slot=%d pressed=%d active=%d\n",
                      orig,
                      this_cpu_read(synthetic_slot),
-                     this_cpu_read(synthetic_active),
-                     synthetic_pressed);
+                     synthetic_pressed,
+                     this_cpu_read(synthetic_active));
 
-            /* A) hardware colliding with synthetic_pressed */
+            /* ★ If hardware picks our synthetic slot, hijack it to a free slot */
             if (!this_cpu_read(synthetic_active) &&
-                 synthetic_pressed &&
-                 orig == current_slot) {
+                synthetic_pressed &&
+                orig == current_slot) {
                 int r = find_free_slot(dev);
                 if (r >= 0) {
-                    hw2remap[orig] = r;
-                    regs->regs[3]   = r;
-                    pr_info("  remap collision: hw orig=%d → %d (synthetic held)\n",
-                            orig, r);
+                    hw2remap[orig]   = r;
+                    regs->regs[3]     = r;
+                    pr_info("  Collision remap: hw orig=%d → %d\n", orig, r);
                 }
             }
-            /* B) during injection, maintain synthetic remap */
-            else if (this_cpu_read(synthetic_active) &&
-                     orig == this_cpu_read(synthetic_slot)) {
-                int r = this_cpu_read(synthetic_slot);
-                hw2remap[orig] = r;
-                regs->regs[3]   = r;
-                pr_info("  remap synthetic: orig=%d → %d\n", orig, r);
-            }
-            /* C) previously mapped hardware finger */
+            /* Otherwise, if we’ve mapped orig before, reuse that */
             else if (orig >= 0 && orig < MAX_SLOTS &&
                      hw2remap[orig] >= 0) {
                 int m = hw2remap[orig];
                 regs->regs[3] = m;
-                pr_debug("  apply existing remap: orig=%d → %d\n", orig, m);
+                pr_debug("  Apply remap: orig=%d → %d\n", orig, m);
             }
 
-        } else if (type == EV_ABS && code == ABS_MT_TRACKING_ID) {
-            int orig   = this_cpu_read(last_hw_slot);
-            int mapped = (orig>=0 && orig<MAX_SLOTS) ? hw2remap[orig] : -1;
-            pr_debug("  TRACKING_ID event: orig=%d val=%d mapped=%d active=%d\n",
-                     orig, value, mapped, this_cpu_read(synthetic_active));
+        }
+        /* 2) TRACKING_ID: establish or clear mappings */
+        else if (type == EV_ABS && code == ABS_MT_TRACKING_ID) {
+            int orig = this_cpu_read(last_hw_slot);
 
+            pr_debug("TRACKING_ID: orig=%d val=%d active=%d\n",
+                     orig, value, this_cpu_read(synthetic_active));
+
+            /* hardware down/up */
             if (!this_cpu_read(synthetic_active)) {
-                /* hardware down/up */
-                if (value >= 0 && mapped >= 0) {
-                    regs->regs[3] = mapped;
-                    pr_info("  hw DOWN: orig=%d → mapped=%d\n", orig, mapped);
-                } else if (value < 0 && mapped >= 0) {
-                    regs->regs[3] = -1;
-                    hw2remap[orig] = -1;
-                    pr_info("  hw UP: orig=%d, cleared mapping\n", orig);
+                if (value >= 0) {
+                    /* first down → map orig→orig if needed */
+                    if (orig >= 0 && orig < MAX_SLOTS && hw2remap[orig] < 0) {
+                        hw2remap[orig] = orig;
+                        pr_info("  HW DOWN mapping orig=%d→%d\n", orig, orig);
+                    }
+                    regs->regs[3] = hw2remap[orig];
+                } else {
+                    /* up → clear */
+                    if (orig >= 0 && orig < MAX_SLOTS && hw2remap[orig] >= 0) {
+                        regs->regs[3]    = -1;
+                        hw2remap[orig]   = -1;
+                        pr_info("  HW UP clear orig=%d\n", orig);
+                    }
                 }
-            } else {
-                /* synthetic down/up */
+            }
+            /* synthetic down/up toggles pressed flag */
+            else {
                 if (value >= 0) {
                     synthetic_pressed = true;
                     current_slot      = this_cpu_read(synthetic_slot);
-                    pr_info("  synth DOWN: slot=%d\n", current_slot);
+                    pr_info("  SYN DOWN slot=%d\n", current_slot);
                 } else {
                     synthetic_pressed = false;
                     current_slot      = -1;
-                    pr_info("  synth UP\n");
+                    pr_info("  SYN UP\n");
                 }
             }
 
-        } else if (type == EV_ABS &&
-                  (code == ABS_MT_POSITION_X || code == ABS_MT_POSITION_Y)) {
+        }
+        /* 3) POSITION_X/Y: block until mapping exists */
+        else if (type == EV_ABS &&
+                (code == ABS_MT_POSITION_X || code == ABS_MT_POSITION_Y)) {
             int orig   = this_cpu_read(last_hw_slot);
-            int mapped = (orig>=0 && orig<MAX_SLOTS) ? hw2remap[orig] : -1;
+            int mapped = (orig >= 0 && orig < MAX_SLOTS) ? hw2remap[orig] : -1;
 
-            /* drop hardware X/Y until mapped */
             if (!this_cpu_read(synthetic_active) && mapped < 0) {
-                pr_warn("  drop POS code=%d orig=%d (unmapped)\n", code, orig);
+                pr_debug("  BLOCK POS code=%d orig=%d (unmapped)\n",
+                         code, orig);
                 spin_unlock_irqrestore(&global_slot_lock, flags);
                 return 0;
             }
-            /* synthetic X/Y always pass */
-            pr_debug("  pass POS code=%d orig=%d mapped=%d\n", code, orig, mapped);
+            /* otherwise let it through */
         }
     }
 
