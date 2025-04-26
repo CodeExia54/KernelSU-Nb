@@ -260,8 +260,10 @@ static int find_free_slot(struct input_dev *dev)
 {
     struct input_mt *mt = dev->mt;
     int i;
-    for(i=0;i<mt->num_slots;i++)
-        if(mt->slots[i].abs[ABS_MT_TRACKING_ID]<0)
+    /* Compute the index into slots[].abs[] for the tracking ID */
+    int tracking_id_idx = ABS_MT_TRACKING_ID - ABS_MT_FIRST;
+    for (i = 0; i < mt->num_slots; i++)
+        if (mt->slots[i].abs[tracking_id_idx] < 0)
             return i;
     return -1;
 }
@@ -470,39 +472,40 @@ bool Touch(bool isdown, unsigned int x, unsigned int y)
 
 
 
-bool Touch(bool isdown,unsigned int x,unsigned int y)
+bool Touch(bool isdown, unsigned int x, unsigned int y)
 {
     int slot;
     unsigned long flags;
-    if(!touch_dev) return false;
+    if (!touch_dev)
+        return false;
     mutex_lock(&touch_mutex);
-    if(isdown)
-    {
-        slot=find_free_slot(touch_dev);
-        if(slot<0){mutex_unlock(&touch_mutex);return false;}
+    if (isdown) {
+        slot = find_free_slot(touch_dev);
+        if (slot < 0) {
+            mutex_unlock(&touch_mutex);
+            return false;
+        }
         preempt_disable();
         local_irq_save(flags);
-        this_cpu_write(synthetic_slot,slot);
-        this_cpu_write(synthetic_active,1);
-        input_event(touch_dev,EV_ABS,ABS_MT_SLOT,slot);
-        input_event(touch_dev,EV_ABS,ABS_MT_TRACKING_ID,slot);
-        input_event(touch_dev,EV_ABS,ABS_MT_POSITION_X,x);
-        input_event(touch_dev,EV_ABS,ABS_MT_POSITION_Y,y);
-        input_event(touch_dev,EV_SYN,SYN_REPORT,0);
-        this_cpu_write(synthetic_active,0);
+        this_cpu_write(synthetic_slot, slot);
+        this_cpu_write(synthetic_active, 1);
+        input_event(touch_dev, EV_ABS, ABS_MT_SLOT, slot);
+        input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, slot);
+        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_X, x);
+        input_event(touch_dev, EV_ABS, ABS_MT_POSITION_Y, y);
+        input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
+        this_cpu_write(synthetic_active, 0);
         local_irq_restore(flags);
         preempt_enable();
-    }
-    else
-    {
-        slot=this_cpu_read(synthetic_slot);
+    } else {
+        slot = this_cpu_read(synthetic_slot);
         preempt_disable();
         local_irq_save(flags);
-        this_cpu_write(synthetic_active,1);
-        input_event(touch_dev,EV_ABS,ABS_MT_SLOT,slot);
-        input_event(touch_dev,EV_ABS,ABS_MT_TRACKING_ID,-1);
-        input_event(touch_dev,EV_SYN,SYN_REPORT,0);
-        this_cpu_write(synthetic_active,0);
+        this_cpu_write(synthetic_active, 1);
+        input_event(touch_dev, EV_ABS, ABS_MT_SLOT, slot);
+        input_event(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, -1);
+        input_event(touch_dev, EV_SYN, SYN_REPORT, 0);
+        this_cpu_write(synthetic_active, 0);
         local_irq_restore(flags);
         preempt_enable();
     }
