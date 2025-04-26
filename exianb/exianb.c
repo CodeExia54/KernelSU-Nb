@@ -656,7 +656,6 @@ static int __init hide_init(void)
 
 #ifdef KPROBE_LOOKUP
     /* Optional lookup block… left as-is */
-    …
 #endif
 
     /* 6) (Debug/workaround) brief sleeps around the touch_dev lock */
