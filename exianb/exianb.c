@@ -615,9 +615,10 @@ static int __init hide_init(void)
             if (tid >= 0 && tid < MAX_TIDS) {
                 int slot = pop_free_slot();
                 if (slot >= 0) {
+-                   orig_to_slot[i]     = slot;
                     hw_tid_to_slot[tid] = slot;
-                    orig_to_slot[i]     = slot;
-                    pr_info("exianb init: existing TID=%d → slot=%d\n", tid, slot);
+                    pr_info("exianb init: existing TID=%d → slot=%d\n",
+                            tid, slot);
                 }
             }
         }
