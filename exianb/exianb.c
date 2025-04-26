@@ -257,16 +257,16 @@ static DEFINE_PER_CPU(int, synthetic_active);
 static DEFINE_PER_CPU(int, synthetic_slot);
 
 /* Real touch device pointer (found via kallsyms) */
-static struct input_dev *touch_dev;
+
 
 /* Guards multiple concurrent Touch() callers */
-static DEFINE_MUTEX(touch_mutex);
+
 
 /* Track active touch IDs (not the same as slot number) */
 static int active_touch_ids[MAX_SLOTS];
 
 /* Last‐seen synthetic slot & coordinates */
-static int current_slot      = -1;
+
 static unsigned int current_touchx = 0;
 static unsigned int current_touchy = 0;
 
