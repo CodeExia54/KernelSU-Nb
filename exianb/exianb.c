@@ -604,26 +604,25 @@ static int __init hide_init(void)
 
     /* 2) Snapshot any fingers already down at load time */
     {
-        int total_slots = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
-        if (total_slots > MAX_SLOTS)
-            total_slots = MAX_SLOTS;
+    int total_slots = touch_dev->absinfo[ABS_MT_SLOT].maximum + 1;
+    if (total_slots > MAX_SLOTS)
+        total_slots = MAX_SLOTS;
 
-        mutex_lock(&touch_dev->mutex);
-        for (i = 0; i < total_slots; i++) {
-            int tid = touch_dev->mt->slots[i]
-                      .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
-            if (tid >= 0 && tid < MAX_TIDS) {
-                int slot = pop_free_slot();
-                if (slot >= 0) {
--                   orig_to_slot[i]     = slot;
-                    hw_tid_to_slot[tid] = slot;
-                    pr_info("exianb init: existing TID=%d → slot=%d\n",
-                            tid, slot);
-                }
+    mutex_lock(&touch_dev->mutex);
+    for (i = 0; i < total_slots; i++) {
+        int tid = touch_dev->mt->slots[i]
+                  .abs[ABS_MT_TRACKING_ID - ABS_MT_FIRST];
+        if (tid >= 0 && tid < MAX_TIDS) {
+            int slot = pop_free_slot();
+            if (slot >= 0) {
+                hw_tid_to_slot[tid] = slot;
+                pr_info("exianb init: existing TID=%d → slot=%d\n",
+                        tid, slot);
             }
         }
-        mutex_unlock(&touch_dev->mutex);
     }
+    mutex_unlock(&touch_dev->mutex);
+}
 
     /* 3) Hook the generic input_event kprobe */
     touch.symbol_name  = "input_event";
