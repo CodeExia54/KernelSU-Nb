@@ -248,13 +248,27 @@ bool isDevUse = false;
 
 
 #define MAX_SLOTS 20
+
+/* Remapping table for hardware slots → real slots */
 static int hw2remap[MAX_SLOTS];
+
+/* Per-CPU flags for synthetic injection */
 static DEFINE_PER_CPU(int, synthetic_active);
 static DEFINE_PER_CPU(int, synthetic_slot);
-extern struct input_dev *touch_dev;
-extern struct mutex touch_mutex;
-extern int active_touch_ids[MAX_SLOTS];
-extern int current_slot;
+
+/* Real touch device pointer (found via kallsyms) */
+static struct input_dev *touch_dev;
+
+/* Guards multiple concurrent Touch() callers */
+static DEFINE_MUTEX(touch_mutex);
+
+/* Track active touch IDs (not the same as slot number) */
+static int active_touch_ids[MAX_SLOTS];
+
+/* Last‐seen synthetic slot & coordinates */
+static int current_slot      = -1;
+static unsigned int current_touchx = 0;
+static unsigned int current_touchy = 0;
 
 static int find_free_slot(struct input_dev *dev)
 {
