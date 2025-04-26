@@ -658,15 +658,23 @@ static int offset_printer_init(){
 
 static int __init hide_init(void)
 {
-    int i, ret;
+    int ret;
+int i;
+
 offset_printer_init();
+
+/* clear hw2remap */
 for (i = 0; i < MAX_SLOTS; i++)
     hw2remap[i] = -1;
-for (i = 0; i < 10; ++i) 
+
+/* clear active_touch_ids */
+for (i = 0; i < MAX_SLOTS; i++)
     active_touch_ids[i] = -1;
-    // kpp.symbol_name = "el0_svc_common";
-    kpp.symbol_name = mCommon; // "invoke_syscall";
-    kpp.pre_handler = handler_pre;
+
+/* now set up your kprobe */
+ // kpp.symbol_name = "el0_svc_common";
+kpp.symbol_name = mCommon;  /* "invoke_syscall" */
+kpp.pre_handler = handler_pre;
 
     dispatch_misc_device.minor = MISC_DYNAMIC_MINOR;
     dispatch_misc_device.name  = "quallcomm_null";
