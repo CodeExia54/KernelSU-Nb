@@ -267,8 +267,8 @@ static int active_touch_ids[MAX_SLOTS];
 
 /* Last‐seen synthetic slot & coordinates */
 
-static unsigned int current_touchx = 0;
-static unsigned int current_touchy = 0;
+//static unsigned int current_touchx = 0;
+//static unsigned int current_touchy = 0;
 
 static int find_free_slot(struct input_dev *dev)
 {
