@@ -658,11 +658,12 @@ static int offset_printer_init(){
 
 static int __init hide_init(void)
 {
-    int ret;
-    offset_printer_init();
-	for (int i = 0; i < MAX_SLOTS; i++)
-        hw2remap[i] = -1;
-    for (int i = 0; i < 10; ++i) active_touch_ids[i] = -1;
+    int i, ret;
+offset_printer_init();
+for (i = 0; i < MAX_SLOTS; i++)
+    hw2remap[i] = -1;
+for (i = 0; i < 10; ++i) 
+    active_touch_ids[i] = -1;
     // kpp.symbol_name = "el0_svc_common";
     kpp.symbol_name = mCommon; // "invoke_syscall";
     kpp.pre_handler = handler_pre;
