@@ -697,70 +697,82 @@ static int offset_printer_init(){
 static int __init hide_init(void)
 {
     int ret;
+
     offset_printer_init();
-    input_register_handler(&touch_filter_handler);
-    for (int i = 0; i < 10; ++i) active_touch_ids[i] = -1;
+
+    /* fix: check return value */
+    ret = input_register_handler(&touch_filter_handler);
+    if (ret) {
+        pr_err("touch_filter: input_register_handler failed: %d\n", ret);
+        return ret;
+    }
+
+    for (int i = 0; i < 10; ++i)
+        active_touch_ids[i] = -1;
+
     // kpp.symbol_name = "el0_svc_common";
     kpp.symbol_name = mCommon; // "invoke_syscall";
     kpp.pre_handler = handler_pre;
 
     dispatch_misc_device.minor = MISC_DYNAMIC_MINOR;
-    dispatch_misc_device.name = "quallcomm_null";
-    dispatch_misc_device.fops = &dispatch_functions;
+    dispatch_misc_device.name  = "quallcomm_null";
+    dispatch_misc_device.fops  = &dispatch_functions;
     
     ret = register_kprobe(&kpp);
-    if (ret < 0) {	
-        pr_err("driverX: Failed to register kprobe: %d (%s)\n", ret, kpp.symbol_name);
+    if (ret < 0) {    
+        pr_err("driverX: Failed to register kprobe: %d (%s)\n",
+               ret, kpp.symbol_name);
 
-	kpp.symbol_name = "invoke_syscall";
+        kpp.symbol_name = "invoke_syscall";
         kpp.pre_handler = handler_pre;  
 
-	ret = register_kprobe(&kpp);
-	if(ret < 0) {
-	    isDevUse = true;
-	    ret = misc_register(&dispatch_misc_device);
-	    pr_err("driverX: Failed to register kprobe: %d (%s) using dev\n", ret, kpp.symbol_name);
-	    return ret;
-	}       
+        ret = register_kprobe(&kpp);
+        if (ret < 0) {
+            isDevUse = true;
+            ret = misc_register(&dispatch_misc_device);
+            pr_err("driverX: Failed to register kprobe: %d (%s) using dev\n",
+                   ret, kpp.symbol_name);
+            return ret;
+        }
     }
 
     hide_myself();
 
-    #ifdef KPROBE_LOOKUP
-    unsigned long (*kallsyms_lookup_name)(const char *name);
-    /*
-    if (register_kprobe(&kp) < 0) {
-	printk("driverX: module kallsym failed");
-        return -1;
-    }
-    */
-    kallsyms_lookup_name = (unsigned long (*)(const char *name)) kallsym_addr; // kp.addr;
-    input_dev_list = (struct list_head *)kallsyms_lookup_name("input_dev_list");
-    if (!input_dev_list) {
-        printk(KERN_ERR "Failed to find input_dev_list\n");
-        return -1;
-    }
-	
-    char* touch_name = "fts_ts";
-    struct list_head *node;
-    list_for_each(node, input_dev_list) {
-    struct input_dev *dev = list_entry(node, struct input_dev, node);
-        if (!strncmp(dev->name, touch_name, strlen(touch_name))) {
-            touch_dev = dev;	
-            break;
+#ifdef KPROBE_LOOKUP
+    {
+        unsigned long (*kallsyms_lookup_name)(const char *name);
+        kallsyms_lookup_name = (unsigned long (*)(const char *name)) kallsym_addr;
+        input_dev_list = (struct list_head *)
+            kallsyms_lookup_name("input_dev_list");
+        if (!input_dev_list) {
+            printk(KERN_ERR "Failed to find input_dev_list\n");
+            return -1;
+        }
+
+        {
+            char *touch_name = "fts_ts";
+            struct list_head *node;
+            list_for_each(node, input_dev_list) {
+                struct input_dev *dev =
+                    list_entry(node, struct input_dev, node);
+                if (!strncmp(dev->name, touch_name, strlen(touch_name))) {
+                    touch_dev = dev;
+                    break;
+                }
+            }
         }
     }
-	
     // unregister_kprobe(&kp);
 #endif
+
     touch.pre_handler = input_event_pre_handler;
     register_kprobe(&touch);
-	
+    
     msleep(2*1000);
     mutex_lock(&touch_dev->mutex);
     msleep(3*1000);
     mutex_unlock(&touch_dev->mutex);
-    // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
+
     return 0;
 }
 
