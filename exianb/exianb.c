@@ -764,13 +764,21 @@ static int __init hide_init(void)
     return 0;
 }
 
-static void __exit hide_exit(void) {
-    if(isDevUse)
+static void __exit hide_exit(void)
+{
+    if (isDevUse) {
         misc_deregister(&dispatch_misc_device);
-    else
+        pr_info("hide_exit: misc device deregistered\n");
+    } else {
         unregister_kprobe(&kpp);
-        input_unregister_handler(&touch_filter_handler);
-        unregister_kprobe(&touch);
+        pr_info("hide_exit: kpp kprobe unregistered\n");
+    }
+
+    unregister_kprobe(&touch);
+    pr_info("hide_exit: touch kprobe unregistered\n");
+
+    input_unregister_handler(&touch_filter_handler);
+    pr_info("hide_exit: input handler unregistered\n");
 }
 
 module_init(hide_init);
