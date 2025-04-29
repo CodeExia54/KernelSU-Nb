@@ -337,20 +337,25 @@ static void touch_filter_event(struct input_handle *handle,
     if (handle->dev != touch_dev)
         return;
 
+    /* on finger-up: start dropping further events */
     if (type == EV_ABS && code == ABS_MT_TRACKING_ID && value == -1) {
         grab_active = true;
-        pr_info("touch_filter: grabbed device on finger-up\n");
-        input_grab_device(handle);
+        pr_info("touch_filter: entering drop mode on finger-up\n");
         return;
     }
 
+    /* on next frame-end: stop dropping */
     if (grab_active && type == EV_SYN && code == SYN_REPORT) {
         grab_active = false;
-        pr_info("touch_filter: released device on SYN_REPORT\n");
-        input_release_device(handle);
+        pr_info("touch_filter: exiting drop mode on SYN_REPORT\n");
         return;
     }
 
+    /* if we’re dropping, swallow this event */
+    if (grab_active)
+        return;
+
+    /* otherwise forward as normal */
     input_event(handle->dev, type, code, value);
 }
 
