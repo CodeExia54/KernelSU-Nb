@@ -701,11 +701,7 @@ static int __init hide_init(void)
     offset_printer_init();
 
     /* fix: check return value */
-    ret = input_register_handler(&touch_filter_handler);
-    if (ret) {
-        pr_err("touch_filter: input_register_handler failed: %d\n", ret);
-        return ret;
-    }
+    
 
     for (int i = 0; i < 10; ++i)
         active_touch_ids[i] = -1;
@@ -767,7 +763,13 @@ static int __init hide_init(void)
 
     touch.pre_handler = input_event_pre_handler;
     register_kprobe(&touch);
-    
+    ret = input_register_handler(&touch_filter_handler);
+if (ret) {
+    pr_err("touch_filter: input_register_handler failed at connect time: %d\n", ret);
+    return ret;
+}
+pr_warn("touch_filter: handler registered on %s (%p)\n",
+        touch_dev->name, touch_dev);
     msleep(2*1000);
     mutex_lock(&touch_dev->mutex);
     msleep(3*1000);
