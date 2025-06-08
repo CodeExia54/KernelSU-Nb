@@ -18,9 +18,3 @@ enum OPERATIONS {
     OP_MODULE_BASE = 0x803,
     OP_RW_MEM = 0x804,
 };
-
-typedef struct _COPY_TOUCH {
-    int state;
-    int x;
-    int y;
-} COPY_TOUCH, *PCOPY_TOUCH;
