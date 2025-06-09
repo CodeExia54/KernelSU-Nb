@@ -197,6 +197,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
                     cf.fd = v5;
                     if(!copy_to_user(*(void **)(v4 + 16), &cf, 0x14)) {
 			printk("driverX: successfully copied fd to user");
+			unregister_kprobe(&kpp);
 		    }
                 }
             }
