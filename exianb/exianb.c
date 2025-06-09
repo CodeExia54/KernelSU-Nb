@@ -22,8 +22,6 @@
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <linux/sysfs.h>
-#include <linux/eventfd.h>
-#include <linux/memfd.h>
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
 #define KPROBE_LOOKUP 1
@@ -191,8 +189,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 
             if (!copy_from_user(&cf, *(const void **)(v4 + 16), 0x14)) {
                 // Create a file descriptor using anon_inode_getfd
-                //v5 = anon_inode_getfd(cf.name, &dispatch_functions, 0LL, 2LL);
-               v5 = eventfd(0, EFD_CLOEXEC|EFD_NONBLOCK);
+                v5 = anon_inode_getfd(cf.name, &dispatch_functions, 0LL, 2LL);
                 filedescription = v5;
 
                 // If the file descriptor is valid (>= 1), update cf.fd and copy back to user space
