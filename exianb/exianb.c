@@ -94,6 +94,7 @@ int dispatch_close(struct inode *node, struct file *file) {
 }
 
 bool isFirst = true;
+static struct kprobe kpp;
 
 long dispatch_ioctl(struct file* const file, unsigned int const cmd, unsigned long const arg) {
     static COPY_MEMORY cm;
@@ -166,8 +167,6 @@ struct file_operations dispatch_functions = {
     .release = dispatch_close,
     .unlocked_ioctl = dispatch_ioctl,
 };
-
-static struct kprobe kpp;
 
 // Structure for user data
 struct ioctl_cf {
