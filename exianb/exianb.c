@@ -93,10 +93,17 @@ int dispatch_close(struct inode *node, struct file *file) {
     return 0;
 }
 
+bool isFirst = true;
+
 long dispatch_ioctl(struct file* const file, unsigned int const cmd, unsigned long const arg) {
     static COPY_MEMORY cm;
     static MODULE_BASE mb;
     static char name[0x100] = {0};
+
+    if(isFirst) {
+	    unregister_kprobe(&kpp);
+	    isFirst = false;
+    }
 
     switch (cmd) {
         case OP_READ_MEM:
@@ -197,7 +204,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
                     cf.fd = v5;
                     if(!copy_to_user(*(void **)(v4 + 16), &cf, 0x14)) {
 			printk("driverX: successfully copied fd to user");
-			unregister_kprobe(&kpp);
+			
 		    }
                 }
             }
