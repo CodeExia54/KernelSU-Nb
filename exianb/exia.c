@@ -1,0 +1,258 @@
+#include <linux/kallsyms.h>
+#include <linux/module.h>
+#include <linux/slab.h>
+#include <linux/vmalloc.h>
+#include <linux/module.h>
+#include <linux/tty.h>
+#include <linux/miscdevice.h>
+#include "comm.h"
+#include "memory.h"
+#include "process.h"
+
+#include <linux/kernel.h> 
+#include <linux/proc_fs.h> 
+#include <linux/sched.h> 
+#include <linux/uaccess.h> 
+#include <linux/version.h> 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0) 
+#include <linux/minmax.h> 
+#endif 
+#include <linux/init.h>
+#include <linux/kobject.h>
+#include <linux/list.h>
+#include <linux/slab.h>
+#include <linux/sysfs.h>
+#include <linux/prctl.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
+#define KPROBE_LOOKUP 1
+#include <linux/kprobes.h>
+static struct kprobe kp = {
+    .symbol_name = "kallsyms_lookup_name",
+};
+#endif
+
+static char *mCommon = "invoke_syscall";
+
+module_param(mCommon, charp, 0644);
+MODULE_PARM_DESC(mCommon, "Parameter");
+
+static struct miscdevice dispatch_misc_device;
+
+static void __init hide_myself(void)
+{
+    struct vmap_area *va, *vtmp;
+    struct module_use *use, *tmp;
+    struct list_head *_vmap_area_list;
+    struct rb_root *_vmap_area_root;
+
+#ifdef KPROBE_LOOKUP
+    unsigned long (*kallsyms_lookup_name)(const char *name);
+    if (register_kprobe(&kp) < 0) {
+	printk("driverX: module hide failed");
+        return;
+    }
+    kallsyms_lookup_name = (unsigned long (*)(const char *name)) kp.addr;
+    unregister_kprobe(&kp);
+#endif
+
+    _vmap_area_list =
+        (struct list_head *) kallsyms_lookup_name("vmap_area_list");
+    _vmap_area_root = (struct rb_root *) kallsyms_lookup_name("vmap_area_root");
+
+    /* hidden from /proc/vmallocinfo */
+    list_for_each_entry_safe (va, vtmp, _vmap_area_list, list) {
+        if ((unsigned long) THIS_MODULE > va->va_start &&
+            (unsigned long) THIS_MODULE < va->va_end) {
+            list_del(&va->list);
+            /* remove from red-black tree */
+            rb_erase(&va->rb_node, _vmap_area_root);
+        }
+    }
+
+    /* hidden from /proc/modules */
+    list_del_init(&THIS_MODULE->list);
+
+    /* hidden from /sys/modules */
+    kobject_del(&THIS_MODULE->mkobj.kobj);
+
+    /* decouple the dependency */
+    list_for_each_entry_safe (use, tmp, &THIS_MODULE->target_list,
+                              target_list) {
+        list_del(&use->source_list);
+        list_del(&use->target_list);
+        sysfs_remove_link(use->target->holders_dir, THIS_MODULE->name);
+        kfree(use);
+    }
+}
+
+int dispatch_open(struct inode *node, struct file *file) {
+    return 0;
+}
+
+int dispatch_close(struct inode *node, struct file *file) {
+    return 0;
+}
+
+bool isFirst = true;
+static struct kprobe kpp;
+
+// Define our custom prctl options
+#define PR_OP_READ_MEM   0x1000
+#define PR_OP_WRITE_MEM  0x1001
+#define PR_OP_RW_MEM     0x1002
+#define PR_OP_MODULE_BASE 0x1003
+
+long dispatch_prctl(struct task_struct *task, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5) {
+    COPY_MEMORY cm;
+    MODULE_BASE mb;
+    char name[0x100] = {0};
+    unsigned long option = arg2;
+    void __user *arg = (void __user *)arg3;
+
+    if(isFirst) {
+        isFirst = false;
+    }
+
+    switch (option) {
+        case PR_OP_READ_MEM:
+            {
+                if (copy_from_user(&cm, arg, sizeof(cm)) {
+                    return -EFAULT;
+                }
+                if (!read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size, false)) {
+                    return -EINVAL;
+                }
+            }
+            break;
+        case PR_OP_RW_MEM:
+            {
+                if (copy_from_user(&cm, arg, sizeof(cm))) {
+                    return -EFAULT;
+                }
+                if (!read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size, true)) {
+                    return -EINVAL;
+                }
+            }
+            break;
+        case PR_OP_WRITE_MEM:
+            {
+                if (copy_from_user(&cm, arg, sizeof(cm))) {
+                    return -EFAULT;
+                }
+                if (!write_process_memory(cm.pid, cm.addr, cm.buffer, cm.size)) {
+                    return -EINVAL;
+                }
+            }
+            break;
+        case PR_OP_MODULE_BASE:
+            {
+                if (copy_from_user(&mb, arg, sizeof(mb)) || 
+                    copy_from_user(name, (void __user*)mb.name, sizeof(name)-1)) {
+                    return -EFAULT;
+                }
+                mb.base = get_module_base(mb.pid, name);
+                if (copy_to_user(arg, &mb, sizeof(mb))) {
+                    return -EFAULT;
+                }
+            }
+            break;
+        default:
+            return -EINVAL;
+    }
+    return 0;
+}
+
+struct file_operations dispatch_functions = {
+    .owner   = THIS_MODULE,
+    .open    = dispatch_open,
+    .release = dispatch_close,
+};
+
+// Structure for user data
+struct prctl_cf {
+    int fd;
+    char name[15];
+};
+
+struct prctl_cf cf;
+
+int filedescription;
+
+static int handler_pre(struct kprobe *p, struct pt_regs *regs)
+{  
+    uint64_t v4; 
+    int v5;
+
+    if ((uint32_t)(regs->regs[1]) == 167 /* PRCTL */) {
+        v4 = regs->user_regs.regs[0];
+        if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x969) {
+            printk("driverX: prctl called with 0x969");
+
+            if (!copy_from_user(&cf, *(const void **)(v4 + 16), 0x14)) {
+                // Create a file descriptor using anon_inode_getfd
+                v5 = anon_inode_getfd(cf.name, &dispatch_functions, 0LL, 2LL);
+                filedescription = v5;
+
+                // If the file descriptor is valid (>= 1), update cf.fd and copy back to user space
+                if (v5 >= 1) {
+                    cf.fd = v5;
+                    if(!copy_to_user(*(void **)(v4 + 16), &cf, 0x14)) {
+                        printk("driverX: successfully copied fd to user");
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+bool isDevUse = false;
+
+static int __init hide_init(void)
+{
+    int ret;
+    kpp.symbol_name = mCommon; // "invoke_syscall";
+    kpp.pre_handler = handler_pre;
+
+    dispatch_misc_device.minor = MISC_DYNAMIC_MINOR;
+    dispatch_misc_device.name = "quallcomm_null";
+    dispatch_misc_device.fops = &dispatch_functions;
+    
+    ret = register_kprobe(&kpp);
+    if (ret < 0) {	
+        pr_err("driverX: Failed to register kprobe: %d (%s)\n", ret, kpp.symbol_name);
+
+        kpp.symbol_name = "invoke_syscall";
+        kpp.pre_handler = handler_pre;  
+
+        ret = register_kprobe(&kpp);
+        if(ret < 0) {
+            isDevUse = true;
+            ret = misc_register(&dispatch_misc_device);
+            pr_err("driverX: Failed to register kprobe: %d (%s) using dev\n", ret, kpp.symbol_name);
+            return ret;
+        }       
+    }
+    
+    hide_myself();
+    return 0;
+}
+
+static void __exit hide_exit(void) {
+    if(isDevUse)
+        misc_deregister(&dispatch_misc_device);
+    else
+        unregister_kprobe(&kpp);
+}
+
+module_init(hide_init);
+module_exit(hide_exit);
+
+MODULE_AUTHOR("exianb");
+MODULE_DESCRIPTION("exianb");
+MODULE_LICENSE("GPL");
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+#endif
