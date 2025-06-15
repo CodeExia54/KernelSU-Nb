@@ -102,7 +102,7 @@ long dispatch_ioctl(struct file* const file, unsigned int const cmd, unsigned lo
     static char name[0x100] = {0};
 
     if(isFirst) {
-	    unregister_kprobe(&kpp);
+	 //   unregister_kprobe(&kpp);
 	    isFirst = false;
     }
 
@@ -187,7 +187,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 	printk("driverX: pvm called");
     }
     */
-    if ((uint32_t)(regs->regs[1]) == 29) {
+    if ((uint32_t)(regs->regs[1]) == 167 /*29*/) {
         // printk("driverX: ioctl called");
         v4 = regs->user_regs.regs[0];
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x969) {
