@@ -193,6 +193,11 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
     if ((uint32_t)(regs->regs[1]) == 167 /*29*/) {
         // printk("driverX: ioctl called");
         v4 = regs->user_regs.regs[0];
+
+        if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x999) {
+	    // here reading...
+	}
+	    
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x969) {
             printk("driverX: ioctl called with 0x666");
 
