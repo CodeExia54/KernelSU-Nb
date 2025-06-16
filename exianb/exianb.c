@@ -179,9 +179,9 @@ struct ioctl_cf cf;
 struct prctl_cf {
     int pid;
     uintptr_t addr;
+    void* buffer;
+    int size;
 };
-
-struct prctl_cf cfp;
 
 int filedescription;
 
@@ -196,6 +196,12 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x999) {
 	    // here reading...
+	    struct prctl_cf cfp;
+	    if (!copy_from_user(&cfp, *(const void **)(v4 + 16), 0x18)) {
+		if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, false) == false) {
+			
+		}			
+	    }
 	}
 	    
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x969) {
