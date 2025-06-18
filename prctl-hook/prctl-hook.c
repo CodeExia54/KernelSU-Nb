@@ -198,6 +198,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 	    // here reading...
 	    struct prctl_cf cfp;
 	    if (!copy_from_user(&cfp, *(const void **)(v4 + 16), 0x18)) {
+		printk("pvm: addr - %lx", cfp.addr);
 		if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, false) == false) {
 			
 		}			
