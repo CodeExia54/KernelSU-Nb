@@ -190,36 +190,46 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
     uint64_t v4; 
     int v5;
 
-    if ((uint32_t)(regs->regs[1]) == 167 /*29*/) {
-        // printk("driverX: ioctl called");
+    if ((uint32_t)(regs->regs[1]) == 167) {
         v4 = regs->user_regs.regs[0];
 
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x999) {
-	    // here reading...
-	    struct prctl_cf cfp;
-	    if (!copy_from_user(&cfp, *(const void **)(v4 + 16), 0x18)) {
-		printk("pvm: addr - %lx", cfp.addr);
-		if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, false) == false) {
-			
-		}			
-	    }
-	}
-	    
+            struct prctl_cf cfp;
+            void* kbuf;
+
+            if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
+                printk("pvm: addr - %lx size - %d", cfp.addr, cfp.size);
+
+                kbuf = kmalloc(cfp.size, GFP_KERNEL);
+                if (!kbuf)
+                    return 0;
+
+                if (read_process_memory(cfp.pid, cfp.addr, kbuf, cfp.size, false)) {
+                    if (copy_to_user(cfp.buffer, kbuf, cfp.size) != 0) {
+                        printk("pvm: copy_to_user failed");
+                    } else {
+                        printk("pvm: memory copied to user buffer");
+                    }
+                } else {
+                    printk("pvm: read_process_memory failed");
+                }
+
+                kfree(kbuf);
+            }
+        }
+
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x969) {
             printk("driverX: ioctl called with 0x666");
 
             if (!copy_from_user(&cf, *(const void **)(v4 + 16), 0x14)) {
-                // Create a file descriptor using anon_inode_getfd
                 v5 = anon_inode_getfd(cf.name, &dispatch_functions, 0LL, 2LL);
                 filedescription = v5;
 
-                // If the file descriptor is valid (>= 1), update cf.fd and copy back to user space
                 if (v5 >= 1) {
                     cf.fd = v5;
-                    if(!copy_to_user(*(void **)(v4 + 16), &cf, 0x14)) {
-			printk("driverX: successfully copied fd to user");
-			
-		    }
+                    if (!copy_to_user(*(void **)(v4 + 16), &cf, 0x14)) {
+                        printk("driverX: successfully copied fd to user");
+                    }
                 }
             }
         }
