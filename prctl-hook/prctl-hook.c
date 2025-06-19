@@ -194,16 +194,21 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
         // printk("driverX: ioctl called");
         v4 = regs->user_regs.regs[0];
 
-        if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x999) {
-	    // here reading...
-	    struct prctl_cf cfp;
-	    if (!copy_from_user(&cfp, *(const void **)(v4 + 16), 0x18)) {
-		printk("pvm: addr - %lx", cfp.addr);
-		if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, false) == false) {
-			
-		}			
-	    }
-	}
+        if (*(uint32_t *)(regs->regs[0] + 8) == 0x999) {
+    struct prctl_cf cfp;
+    if (!copy_from_user(&cfp, *(const void **)(regs->regs[0] + 16), sizeof(cfp))) {
+        printk("pvm: addr - %lx", cfp.addr);
+
+        void *kbuf = kmalloc(cfp.size, GFP_KERNEL);
+        if (!kbuf) return 0;
+
+        if (read_process_memory(cfp.pid, cfp.addr, kbuf, cfp.size, false)) {
+            // Write back to user daemon memory
+            copy_to_user(cfp.buffer, kbuf, cfp.size);
+        }
+        kfree(kbuf);
+    }
+}
 	    
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x969) {
             printk("driverX: ioctl called with 0x666");
