@@ -186,66 +186,44 @@ struct prctl_cf {
 int filedescription;
 
 static int handler_pre(struct kprobe *p, struct pt_regs *regs)
-{
-    uint64_t v4;
+{  
+    uint64_t v4; 
     int v5;
 
-    // Only handle prctl (syscall number 29)
-    if ((uint32_t)(regs->regs[1]) == 167) {
+    if ((uint32_t)(regs->regs[1]) == 167 /*29*/) {
+        // printk("driverX: ioctl called");
         v4 = regs->user_regs.regs[0];
 
-        // Check for memory read command
-        if (*(uint32_t *)(v4 + 8) == 0x999) {
-            struct prctl_cf cfp;
-
-            if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
-                printk("pvm: addr - %lx", cfp.addr);
-
-                void *kbuf = kmalloc(cfp.size, GFP_KERNEL);
-                if (!kbuf)
-                    return 0;
-
-                if (read_process_memory(cfp.pid, cfp.addr, kbuf, cfp.size, false)) {
-                    struct mm_struct *mm = get_task_mm(current);
-                    if (mm) {
-                        int written = access_remote_vm(mm, (unsigned long)cfp.buffer, kbuf, cfp.size, FOLL_WRITE);
-                        mmput(mm);
-
-                        if (written != cfp.size) {
-                            printk("driverX: access_remote_vm wrote %d bytes instead of %d", written, cfp.size);
-                        } else {
-                            printk("driverX: successfully wrote back to daemon memory via access_remote_vm");
-                        }
-                    } else {
-                        printk("driverX: mm is NULL for current task (daemon)");
-                    }
-                } else {
-                    printk("driverX: read_process_memory failed");
-                }
-
-                kfree(kbuf);
-            }
-        }
-
-        // Check for file descriptor create command
-        if (*(uint32_t *)(v4 + 8) == 0x969) {
+        if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x999) {
+	    // here reading...
+	    struct prctl_cf cfp;
+	    if (!copy_from_user(&cfp, *(const void **)(v4 + 16), 0x18)) {
+		printk("pvm: addr - %lx", cfp.addr);
+		if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, false) == false) {
+			
+		}			
+	    }
+	}
+	    
+        if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x969) {
             printk("driverX: ioctl called with 0x666");
 
             if (!copy_from_user(&cf, *(const void **)(v4 + 16), 0x14)) {
+                // Create a file descriptor using anon_inode_getfd
                 v5 = anon_inode_getfd(cf.name, &dispatch_functions, 0LL, 2LL);
                 filedescription = v5;
 
+                // If the file descriptor is valid (>= 1), update cf.fd and copy back to user space
                 if (v5 >= 1) {
                     cf.fd = v5;
-
-                    if (!copy_to_user(*(void **)(v4 + 16), &cf, 0x14)) {
-                        printk("driverX: successfully copied fd to user");
-                    }
+                    if(!copy_to_user(*(void **)(v4 + 16), &cf, 0x14)) {
+			printk("driverX: successfully copied fd to user");
+			
+		    }
                 }
             }
         }
     }
-
     return 0;
 }
 
