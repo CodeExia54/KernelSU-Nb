@@ -186,54 +186,55 @@ struct prctl_cf {
 int filedescription;
 
 static int handler_pre(struct kprobe *p, struct pt_regs *regs)
-{  
-    uint64_t v4; 
+{
+    uint64_t v4;
     int v5;
 
-    if ((uint32_t)(regs->regs[1]) == 167) {
+    if ((uint32_t)(regs->regs[1]) == 167 /* syscall 29 on AArch64 */) {
         v4 = regs->user_regs.regs[0];
 
+        // Handle memory read request
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x999) {
             struct prctl_cf cfp;
-            void* kbuf;
+            void *kbuf;
 
             if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
-                printk("pvm: addr - %lx size - %d", cfp.addr, cfp.size);
+                pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
 
                 kbuf = kmalloc(cfp.size, GFP_KERNEL);
-                if (!kbuf)
-                    return 0;
+                if (!kbuf) {
+                    pr_err("pvm: kmalloc failed\n");
+                    return -ENOMEM;
+                }
 
                 if (read_process_memory(cfp.pid, cfp.addr, kbuf, cfp.size, false)) {
-                    if (copy_to_user(cfp.buffer, kbuf, cfp.size) != 0) {
-                        printk("pvm: copy_to_user failed");
-                    } else {
-                        printk("pvm: memory copied to user buffer");
+                    if (copy_to_user(cfp.buffer, kbuf, cfp.size)) {
+                        pr_err("pvm: copy_to_user failed\n");
                     }
                 } else {
-                    printk("pvm: read_process_memory failed");
+                    pr_err("pvm: read_process_memory failed\n");
                 }
 
                 kfree(kbuf);
             }
         }
 
+        // Handle FD dispatch creation
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x969) {
-            printk("driverX: ioctl called with 0x666");
-
-            if (!copy_from_user(&cf, *(const void **)(v4 + 16), 0x14)) {
+            if (!copy_from_user(&cf, *(const void **)(v4 + 16), sizeof(cf))) {
                 v5 = anon_inode_getfd(cf.name, &dispatch_functions, 0LL, 2LL);
                 filedescription = v5;
 
                 if (v5 >= 1) {
                     cf.fd = v5;
-                    if (!copy_to_user(*(void **)(v4 + 16), &cf, 0x14)) {
-                        printk("driverX: successfully copied fd to user");
+                    if (!copy_to_user(*(void **)(v4 + 16), &cf, sizeof(cf))) {
+                        pr_info("driverX: successfully copied fd to user\n");
                     }
                 }
             }
         }
     }
+
     return 0;
 }
 
