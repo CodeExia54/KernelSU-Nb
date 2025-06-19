@@ -186,7 +186,6 @@ struct prctl_cf {
 int filedescription;
 
 static int handler_pre(struct kprobe *p, struct pt_regs *regs)
-static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 {
     uint64_t v4;
     int v5;
