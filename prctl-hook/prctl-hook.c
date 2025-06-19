@@ -206,9 +206,21 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
                     return 0;
 
                 if (read_process_memory(cfp.pid, cfp.addr, kbuf, cfp.size, false)) {
-                    if (copy_to_user(cfp.buffer, kbuf, cfp.size) != 0) {
-                        printk("driverX: copy_to_user failed");
+                    struct mm_struct *mm = get_task_mm(current);
+                    if (mm) {
+                        int written = access_remote_vm(mm, (unsigned long)cfp.buffer, kbuf, cfp.size, FOLL_WRITE);
+                        mmput(mm);
+
+                        if (written != cfp.size) {
+                            printk("driverX: access_remote_vm wrote %d bytes instead of %d", written, cfp.size);
+                        } else {
+                            printk("driverX: successfully wrote back to daemon memory via access_remote_vm");
+                        }
+                    } else {
+                        printk("driverX: mm is NULL for current task (daemon)");
                     }
+                } else {
+                    printk("driverX: read_process_memory failed");
                 }
 
                 kfree(kbuf);
