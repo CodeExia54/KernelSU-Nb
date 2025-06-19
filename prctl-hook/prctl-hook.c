@@ -190,23 +190,27 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
     uint64_t v4; 
     int v5;
 
-    if ((uint32_t)(regs->regs[1]) == 167 /*29*/) {
-        // printk("driverX: ioctl called");
-        v4 = regs->user_regs.regs[0];
+    if ((uint32_t)(regs->regs[1]) == 167 /* 29 = prctl */) {
+    v4 = regs->user_regs.regs[0];
 
-        if (*(uint32_t *)(regs->regs[0] + 8) == 0x999) {
-    struct prctl_cf cfp;
-    if (!copy_from_user(&cfp, *(const void **)(regs->regs[0] + 16), sizeof(cfp))) {
-        printk("pvm: addr - %lx", cfp.addr);
+    if (*(uint32_t *)(regs->regs[0] + 8) == 0x999) {
+        struct prctl_cf cfp;
 
-        void *kbuf = kmalloc(cfp.size, GFP_KERNEL);
-        if (!kbuf) return 0;
+        if (!copy_from_user(&cfp, *(const void **)(regs->regs[0] + 16), sizeof(cfp))) {
+            printk("pvm: addr - %lx", cfp.addr);
 
-        if (read_process_memory(cfp.pid, cfp.addr, kbuf, cfp.size, false)) {
-            // Write back to user daemon memory
-            copy_to_user(cfp.buffer, kbuf, cfp.size);
+            void *kbuf = kmalloc(cfp.size, GFP_KERNEL);
+            if (!kbuf)
+                return 0;
+
+            if (read_process_memory(cfp.pid, cfp.addr, kbuf, cfp.size, false)) {
+                if (copy_to_user(cfp.buffer, kbuf, cfp.size) != 0) {
+                    printk("driverX: copy_to_user failed");
+                }
+            }
+
+            kfree(kbuf);
         }
-        kfree(kbuf);
     }
 }
 	    
