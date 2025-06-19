@@ -199,7 +199,13 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
             void *kbuf;
 
             if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
-                pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
+                pr_info("pvm: read request: pid=%d addr=0x%lx size=%d userbuf=0x%px\n",
+                        cfp.pid, cfp.addr, cfp.size, cfp.buffer);
+
+                if (!cfp.buffer || cfp.size <= 0 || cfp.size > PAGE_SIZE * 4) {
+                    pr_err("pvm: invalid buffer or size\n");
+                    return -EINVAL;
+                }
 
                 kbuf = kmalloc(cfp.size, GFP_KERNEL);
                 if (!kbuf) {
@@ -208,14 +214,22 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
                 }
 
                 if (read_process_memory(cfp.pid, cfp.addr, kbuf, cfp.size, false)) {
-                    if (copy_to_user(cfp.buffer, kbuf, cfp.size)) {
-                        pr_err("pvm: copy_to_user failed\n");
+                    if (access_ok(cfp.buffer, cfp.size)) {
+                        if (copy_to_user(cfp.buffer, kbuf, cfp.size) != 0) {
+                            pr_err("pvm: copy_to_user failed\n");
+                        } else {
+                            pr_info("pvm: memory copied to user buffer\n");
+                        }
+                    } else {
+                        pr_err("pvm: user buffer is not accessible\n");
                     }
                 } else {
                     pr_err("pvm: read_process_memory failed\n");
                 }
 
                 kfree(kbuf);
+            } else {
+                pr_err("pvm: copy_from_user (prctl_cf) failed\n");
             }
         }
 
@@ -229,8 +243,14 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
                     cf.fd = v5;
                     if (!copy_to_user(*(void **)(v4 + 16), &cf, sizeof(cf))) {
                         pr_info("driverX: successfully copied fd to user\n");
+                    } else {
+                        pr_err("driverX: copy_to_user (fd) failed\n");
                     }
+                } else {
+                    pr_err("driverX: anon_inode_getfd failed\n");
                 }
+            } else {
+                pr_err("driverX: copy_from_user (cf struct) failed\n");
             }
         }
     }
