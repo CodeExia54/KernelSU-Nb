@@ -196,29 +196,31 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
         // Handle memory read request
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x999) {
             struct prctl_cf cfp;
-            void *kbuf;
+            // void *kbuf;
 
             if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
                 pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
-
+/*
                 kbuf = kmalloc(cfp.size, GFP_KERNEL);
                 if (!kbuf) {
                     pr_err("pvm: kmalloc failed\n");
                     return -ENOMEM;
                 }
-
-                if (read_process_memory(cfp.pid, cfp.addr, kbuf, cfp.size, false)) {
+*/
+                if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, false)) {
+		    /*
                     if (copy_to_user(cfp.buffer, kbuf, cfp.size)) {
                         pr_err("pvm: copy_to_user failed\n");
                     }
+		    */
                 } else {
                     pr_err("pvm: read_process_memory failed\n");
                 }
 
-                kfree(kbuf);
+                // kfree(kbuf);
             }
         }
-
+/*
         // Handle FD dispatch creation
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x969) {
             if (!copy_from_user(&cf, *(const void **)(v4 + 16), sizeof(cf))) {
@@ -233,6 +235,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
                 }
             }
         }
+*/
     }
 
     return 0;
