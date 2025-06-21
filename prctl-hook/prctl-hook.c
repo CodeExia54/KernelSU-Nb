@@ -188,7 +188,7 @@ int filedescription;
 static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 {
     uint64_t v4;
-    int v5;
+    // int v5;
 
     if ((uint32_t)(regs->regs[1]) == 167 /* syscall 29 on AArch64 */) {
         v4 = regs->user_regs.regs[0];
