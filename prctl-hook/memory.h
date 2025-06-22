@@ -164,7 +164,7 @@ bool read_process_memory(
     mmput(mm);
     pa = translate_linear_address(mm, addr);
     if (!pa) {
-        pr_err("read_process_memory pa failed.\n");
+        // pr_err("read_process_memory pa failed.\n");
         return false;
     }
     return read_physical_address(pa, buffer, size);
