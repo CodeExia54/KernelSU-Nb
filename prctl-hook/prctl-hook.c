@@ -197,7 +197,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x999) {
             struct prctl_cf cfp;
             if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
-                pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
+                // pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
                 if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, false)) {
 		
                 } else {
@@ -209,7 +209,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 	if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x9999) {
             struct prctl_cf cfp;
             if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
-                pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
+                // pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
                 if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, true)) {
 		
                 } else {
