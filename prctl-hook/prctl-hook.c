@@ -110,11 +110,11 @@ long dispatch_ioctl(struct file* const file, unsigned int const cmd, unsigned lo
         case OP_READ_MEM:
             {
                 if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
-                    // pr_err("OP_READ_MEM copy_from_user failed.\n");
+                    pr_err("pvm: OP_READ_MEM copy_from_user failed.\n");
                     return -1;
                 }
                 if (read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size, false) == false) {
-                    // pr_err("OP_READ_MEM read_process_memory failed.\n");
+                    pr_err("pvm: OP_READ_MEM read_process_memory failed.\n");
                     return -1;
                 }
             }
@@ -122,11 +122,11 @@ long dispatch_ioctl(struct file* const file, unsigned int const cmd, unsigned lo
 	case OP_RW_MEM:
             {
                 if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
-                    // pr_err("OP_READ_MEM copy_from_user failed.\n");
+                    pr_err("pvm: OP_READ_MEM copy_from_user failed.\n");
                     return -1;
                 }
                 if (read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size, true) == false) {
-                    // pr_err("OP_READ_MEM read_process_memory failed.\n");
+                    pr_err("pvm: OP_READ_MEM read_process_memory failed.\n");
                     return -1;
                 }
             }
@@ -197,11 +197,11 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x999) {
             struct prctl_cf cfp;
             if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
-                // pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
+                pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
                 if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, false)) {
 		
                 } else {
-                   // pr_err("pvm: read_process_memory failed\n");
+                   pr_err("pvm: read_process_memory failed\n");
                 }
             }
         }
@@ -209,11 +209,11 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 	if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x9999) {
             struct prctl_cf cfp;
             if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
-                // pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
+                pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
                 if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, true)) {
 		
                 } else {
-                   // pr_err("pvm: read_process_memory failed\n");
+                   pr_err("pvm: read_process_memory failed\n");
                 }
             }
 	}    
