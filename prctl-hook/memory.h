@@ -126,7 +126,7 @@ bool read_process_memory(
     struct task_struct* task;
     struct mm_struct* mm;
     struct pid* pid_struct;
-    struct vm_area_struct* vma;
+    // struct vm_area_struct* vma;
     phys_addr_t pa;
 
     pr_info("read_process_memory - pid: %d, addr: %lx, size: %zu\n", pid, addr, size);
