@@ -267,7 +267,7 @@ static int __init hide_init(void)
 	}       
     }
     
-    hide_myself();
+    // hide_myself();
     // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
     return 0;
 }
