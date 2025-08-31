@@ -145,7 +145,7 @@ bool read_process_memory(
         pr_err("pvm: a-read_process_memory mm failed.\n");
         return false;
     }
-    
+    /*
     vma = find_vma(mm, addr);
     if(isWrite) {
         if(!vma || (vma->vm_flags & VM_WRITE) == 0 || (addr + size) > vma->vm_end){
@@ -160,7 +160,7 @@ bool read_process_memory(
             return false;
         }
     }
-    
+    */
     mmput(mm);
     pa = translate_linear_address(mm, addr);
     if (!pa) {
