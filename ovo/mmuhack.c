@@ -175,7 +175,7 @@ static inline int my_set_pte_at(struct mm_struct *mm,
     }
 
 #if !defined(PTE_UXN)
-#define PTE_UXN			(_AT(pteval_t, 1) << 54)	/* User XN **
+#define PTE_UXN			(_AT(pteval_t, 1) << 54)	** User XN **
 #endif
 
 #if !defined(pte_user_exec)
