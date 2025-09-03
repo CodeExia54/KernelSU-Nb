@@ -5,6 +5,7 @@
 
 #include "touch.h"
 #include <linux/mutex.h>
+#include <linux/slab.h>
 #include <linux/input/mt.h>
 #include <linux/kprobes.h>
 #include <linux/version.h>
