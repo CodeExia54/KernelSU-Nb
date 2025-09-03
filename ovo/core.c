@@ -45,13 +45,13 @@ static int __init ovo_init(void) {
 	if(ret) {
 		return ret;
 	}
-
+/*
 	ret = init_input_dev();
 
 	if (!ret) {
 		init_addr_pfn_map();
 	}
-
+*/
     return ret;
 }
 
