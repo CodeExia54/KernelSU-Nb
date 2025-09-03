@@ -23,6 +23,7 @@
 #include "addr_pfn_map.h"
 
 #include <linux/mm_types.h>
+#include <linux/mm.h>
 
 #ifndef vm_flags_set
 #define vm_flags_set(vma, flags)   ((struct vm_area_struct *)(vma))->vm_flags |= (flags)
