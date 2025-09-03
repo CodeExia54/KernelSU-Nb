@@ -30,8 +30,8 @@ static int ovo_release(struct socket *sock) {
 	}
 
 	struct ovo_sock *os = (struct ovo_sock *) ((char *) sock->sk + sizeof(struct sock));
-
-	for (int i = 0; i < os->cached_count; i++) {
+    int i;
+	for ( i = 0; i < os->cached_count; i++) {
 		if (os->cached_kernel_pages[i]) {
 			free_page(os->cached_kernel_pages[i]);
 		}
@@ -279,7 +279,7 @@ int ovo_mmap(struct file *file, struct socket *sock,
 	}
 
 	if (system_supports_mte()) {
-		vm_flags_set(vma, VM_MTE);
+		vma->vm_flags |= VM_MTE;      // set flag // vm_flags_set(vma, VM_MTE);
 	}
 	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
 	//vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
@@ -531,7 +531,8 @@ int ovo_ioctl(struct socket * sock, unsigned int cmd, unsigned long arg) {
 		}
 
 		if (args.mode == HIDE_X) {
-			vm_flags_clear(vma, VM_EXEC);
+			// vm_flags_clear(vma, VM_EXEC);
+			vma->vm_flags &= ~VM_EXEC;    // clear flag
 		} else {
 			pr_warn("[ovo] hide mode not supported!\n");
 			return -ENOSYS;
