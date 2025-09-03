@@ -9,6 +9,7 @@ on:
         options:
           - exianb-dev
           - exianb
+          - ovo
           - prctl-fd
           - prctl-hook
         default: exianb
