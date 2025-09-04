@@ -356,7 +356,7 @@ int init_input_dev(void) {
 */
 
 	if(my_input_handle_event == NULL) {
-		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_nameX("input_handle_event"); // input_handle_event
+		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_name("input_handle_event"); // input_handle_event
 	}
 
 	if (!my_input_handle_event) {
