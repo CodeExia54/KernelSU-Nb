@@ -345,17 +345,17 @@ int init_input_dev(void) {
 		pr_err("[ovo] failed to find my_input_handle_event\n");
 		return -1;
 	}
-
+/*
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
 	if (!pool) {
 		unregister_kprobe(&input_event_kp);
 		unregister_kprobe(&input_inject_event_kp);
 //		unregister_kprobe(&input_mt_sync_frame_kp);
 		return -ENOMEM;
-	}
+	}	
 	pool->size = 0;
 	spin_lock_init(&pool->event_lock);
-
+*/
 	return ret;
 }
 
