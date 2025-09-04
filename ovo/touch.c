@@ -12,6 +12,14 @@
 #include <linux/input-event-codes.h>
 #include "kkit.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
+#define KPROBE_LOOKUP 1
+#include <linux/kprobes.h>
+static struct kprobe kp = {
+    .symbol_name = "kallsyms_lookup_name",
+};
+#endif
+
 static inline int is_event_supported(unsigned int code,
 									 unsigned long *bm, unsigned int max)
 {
@@ -314,6 +322,16 @@ static struct kprobe input_mt_sync_frame_kp = {
 
 int init_input_dev(void) {
 	int ret = 0;
+
+	#ifdef KPROBE_LOOKUP
+    unsigned long (*kallsyms_lookup_nameX)(const char *name);
+    if (register_kprobe(&kp) < 0) {
+	    printk("driverX: module kallsym find failed");
+        return -1;
+    }
+    kallsyms_lookup_nameX = (unsigned long (*)(const char *name)) kp.addr;
+    unregister_kprobe(&kp);
+    #endif
 	
 	ret = register_kprobe(&input_event_kp);
 	pr_info("[ovo] input_event_kp: %d\n", ret);
@@ -338,7 +356,7 @@ int init_input_dev(void) {
 */
 
 	if(my_input_handle_event == NULL) {
-		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))ovo_kallsyms_lookup_name("input_event"); // input_handle_event
+		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_nameX("input_handle_event"); // input_handle_event
 	}
 
 	if (!my_input_handle_event) {
