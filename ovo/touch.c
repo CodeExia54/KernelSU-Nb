@@ -314,6 +314,7 @@ static struct kprobe input_mt_sync_frame_kp = {
 
 int init_input_dev(void) {
 	int ret;
+	/*
 	ret = register_kprobe(&input_event_kp);
 	pr_info("[ovo] input_event_kp: %d\n", ret);
 	if (ret) {
@@ -326,6 +327,7 @@ int init_input_dev(void) {
 		unregister_kprobe(&input_event_kp);
 		return ret;
 	}
+ */
 /*	
 	ret = register_kprobe(&input_mt_sync_frame_kp);
 	if(ret) {
