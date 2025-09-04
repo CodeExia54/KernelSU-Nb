@@ -336,7 +336,7 @@ int init_input_dev(void) {
 		return ret;
 	}
 */
-
+/*
 	if(my_input_handle_event == NULL) {
 		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))ovo_kallsyms_lookup_name("input_handle_event");
 	}
@@ -345,6 +345,7 @@ int init_input_dev(void) {
 		pr_err("[ovo] failed to find my_input_handle_event\n");
 		return -1;
 	}
+ */
 /*
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
 	if (!pool) {
