@@ -247,6 +247,7 @@ int protect_rodata_memory(unsigned nr) {
     set_pte_at(init_mm_ptr, addr, ptep, pte);
 #endif
 */
+	set_pte_at(init_mm_ptr, addr, ptep, pte);
     //flush_icache_range(addr, addr + PAGE_SIZE);
     //__clean_dcache_area_pou(data_addr, sizeof(data));
     __flush_tlb_kernel_pgtable(addr); // arm64
@@ -285,6 +286,7 @@ int unprotect_rodata_memory(unsigned nr) {
     set_pte_at(init_mm_ptr, addr, ptep, pte);
 #endif
 	*/
+	set_pte_at(init_mm_ptr, addr, ptep, pte);
     __flush_tlb_kernel_pgtable(addr);
     return 0;
 }
