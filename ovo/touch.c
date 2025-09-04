@@ -314,7 +314,7 @@ static struct kprobe input_mt_sync_frame_kp = {
 
 int init_input_dev(void) {
 	int ret = 0;
-	/*
+	
 	ret = register_kprobe(&input_event_kp);
 	pr_info("[ovo] input_event_kp: %d\n", ret);
 	if (ret) {
@@ -327,7 +327,7 @@ int init_input_dev(void) {
 		unregister_kprobe(&input_event_kp);
 		return ret;
 	}
- */
+ 
 /*	
 	ret = register_kprobe(&input_mt_sync_frame_kp);
 	if(ret) {
@@ -346,7 +346,7 @@ int init_input_dev(void) {
 		return -1;
 	}
  */
-/*
+
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
 	if (!pool) {
 		unregister_kprobe(&input_event_kp);
@@ -356,7 +356,7 @@ int init_input_dev(void) {
 	}	
 	pool->size = 0;
 	spin_lock_init(&pool->event_lock);
-*/
+
 	return ret;
 }
 
