@@ -64,7 +64,7 @@ __always_inline int ovo_get_process_pid(int len, char __user *process_name_user)
 	int err;
 	pid_t pid;
 	char* process_name;
-
+    /*
 	process_name = kmalloc(len, GFP_KERNEL);
 	if (!process_name) {
 		return -ENOMEM;
@@ -87,6 +87,7 @@ __always_inline int ovo_get_process_pid(int len, char __user *process_name_user)
 
 	out_proc_name:
 	kfree(process_name);
+    */
 	return err;
 }
 
@@ -279,7 +280,7 @@ int ovo_mmap(struct file *file, struct socket *sock,
 	}
 
 	if (system_supports_mte()) {
-		vm_flags_set(vma, VM_MTE);
+		// vm_flags_set(vma, VM_MTE);
 	}
 	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
 	//vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
@@ -531,7 +532,7 @@ int ovo_ioctl(struct socket * sock, unsigned int cmd, unsigned long arg) {
 		}
 
 		if (args.mode == HIDE_X) {
-			vm_flags_clear(vma, VM_EXEC);
+			// vm_flags_clear(vma, VM_EXEC);
 		} else {
 			pr_warn("[ovo] hide mode not supported!\n");
 			return -ENOSYS;
