@@ -215,8 +215,8 @@ static void handle_cache_events(struct input_dev* dev) {
 		return;
 	}
 	spin_lock_irqsave(&dev->event_lock, flags);
-
-	for (int i = 0; i < pool->size; ++i) {
+    int i = 0;
+	for (i = 0; i < pool->size; ++i) {
 		struct ovo_touch_event event = pool->events[i];
 
 		if (event.type == EV_ABS &&
