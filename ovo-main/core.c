@@ -38,7 +38,7 @@
 static int __init ovo_init(void) {
     int ret;
 
-    cuteBabyPleaseDontCry();
+    // cuteBabyPleaseDontCry();
     ret = 0;
 
     ret = init_server();
@@ -46,12 +46,12 @@ static int __init ovo_init(void) {
 		return ret;
 	}
 
-	ret = init_input_dev();
-
+	// ret = init_input_dev();
+    /*
 	if (!ret) {
 		init_addr_pfn_map();
 	}
-
+    */
     return ret;
 }
 
