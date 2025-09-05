@@ -5,20 +5,12 @@
 
 #include "touch.h"
 #include <linux/mutex.h>
-#include <linux/slab.h>
 #include <linux/input/mt.h>
 #include <linux/kprobes.h>
 #include <linux/version.h>
+#include <linux/slab.h>
 #include <linux/input-event-codes.h>
 #include "kkit.h"
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
-#define KPROBE_LOOKUP 1
-#include <linux/kprobes.h>
-static struct kprobe kp = {
-    .symbol_name = "kallsyms_lookup_name",
-};
-#endif
 
 static inline int is_event_supported(unsigned int code,
 									 unsigned long *bm, unsigned int max)
@@ -65,38 +57,8 @@ int get_last_driver_slot(struct input_dev* dev) {
 	return is_new_slot ? new_slot : slot;
 }
 
-
 static void (*my_input_handle_event)(struct input_dev *dev,
-                                     unsigned int type,
-                                     unsigned int code,
-                                     int value) = NULL;
-
-// Kprobe-based resolver for unexported symbols
-static void *resolve_symbol_with_kprobe(const char *name)
-{
-    struct kprobe kp = { .symbol_name = (char *)name };
-    void *addr = NULL;
-    int ret = register_kprobe(&kp);
-    if (ret == 0) {
-        addr = (void *)kp.addr;
-        unregister_kprobe(&kp);
-    }
-    return addr;
-}
-
-// Initialize my_input_handle_event once at module init
-static int init_my_input_handle_event(void)
-{
-    my_input_handle_event =
-        (void (*)(struct input_dev *, unsigned int, unsigned int, int))
-        resolve_symbol_with_kprobe("input_handle_event");
-    if (!my_input_handle_event) {
-        pr_err("[ovo] failed to resolve input_handle_event symbol\n");
-        return -ENOENT;
-    }
-    pr_info("[ovo] resolved input_handle_event at %p\n", my_input_handle_event);
-    return 0;
-}
+							   unsigned int type, unsigned int code, int value) = NULL;
 
 int input_event_no_lock(struct input_dev *dev,
 				 unsigned int type, unsigned int code, int value)
@@ -254,7 +216,7 @@ static void handle_cache_events(struct input_dev* dev) {
 		return;
 	}
 	spin_lock_irqsave(&dev->event_lock, flags);
-    int i;
+    int i = 0;
 	for (i = 0; i < pool->size; ++i) {
 		struct ovo_touch_event event = pool->events[i];
 
@@ -351,20 +313,7 @@ static struct kprobe input_mt_sync_frame_kp = {
 */
 
 int init_input_dev(void) {
-	int ret = 0;
-
-	init_my_input_handle_event();
-
-	#ifdef KPROBE_LOOKUP
-    unsigned long (*kallsyms_lookup_nameX)(const char *name);
-    if (register_kprobe(&kp) < 0) {
-	    printk("driverX: module kallsym find failed");
-        return -1;
-    }
-    kallsyms_lookup_nameX = (unsigned long (*)(const char *name)) kp.addr;
-    unregister_kprobe(&kp);
-    #endif
-
+	int ret;
 	ret = register_kprobe(&input_event_kp);
 	pr_info("[ovo] input_event_kp: %d\n", ret);
 	if (ret) {
@@ -377,7 +326,6 @@ int init_input_dev(void) {
 		unregister_kprobe(&input_event_kp);
 		return ret;
 	}
- 
 /*	
 	ret = register_kprobe(&input_mt_sync_frame_kp);
 	if(ret) {
@@ -386,16 +334,15 @@ int init_input_dev(void) {
 		return ret;
 	}
 */
-/*
+
 	if(my_input_handle_event == NULL) {
-		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_nameX("input_handle_event"); // input_handle_event
+		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))ovo_kallsyms_lookup_name("input_handle_event");
 	}
 
 	if (!my_input_handle_event) {
 		pr_err("[ovo] failed to find my_input_handle_event\n");
 		return -1;
 	}
- */
 
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
 	if (!pool) {
@@ -403,7 +350,7 @@ int init_input_dev(void) {
 		unregister_kprobe(&input_inject_event_kp);
 //		unregister_kprobe(&input_mt_sync_frame_kp);
 		return -ENOMEM;
-	}	
+	}
 	pool->size = 0;
 	spin_lock_init(&pool->event_lock);
 
