@@ -10,6 +10,7 @@ on:
           - exianb-dev
           - exianb
           - ovo
+          - ovo-main
           - prctl-fd
           - prctl-hook
         default: exianb
