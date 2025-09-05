@@ -364,6 +364,8 @@ int init_input_dev(void) {
     kallsyms_lookup_nameX = (unsigned long (*)(const char *name)) kp.addr;
     unregister_kprobe(&kp);
     #endif
+
+	init_my_input_handle_event();
 	/*
 	ret = register_kprobe(&input_event_kp);
 	pr_info("[ovo] input_event_kp: %d\n", ret);
@@ -386,15 +388,16 @@ int init_input_dev(void) {
 		return ret;
 	}
 */
-
+/*
 	if(my_input_handle_event == NULL) {
-		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_name("input_handle_event"); // input_handle_event
+		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_nameX("input_handle_event"); // input_handle_event
 	}
 
 	if (!my_input_handle_event) {
 		pr_err("[ovo] failed to find my_input_handle_event\n");
 		return -1;
 	}
+ */
 /*
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
 	if (!pool) {
