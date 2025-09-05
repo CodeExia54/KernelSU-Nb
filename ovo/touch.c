@@ -68,6 +68,38 @@ int get_last_driver_slot(struct input_dev* dev) {
 static void (*my_input_handle_event)(struct input_dev *dev,
 							   unsigned int type, unsigned int code, int value) = NULL;
 
+static void (*my_input_handle_event)(struct input_dev *dev,
+                                     unsigned int type,
+                                     unsigned int code,
+                                     int value) = NULL;
+
+// Kprobe-based resolver for unexported symbols
+static void *resolve_symbol_with_kprobe(const char *name)
+{
+    struct kprobe kp = { .symbol_name = (char *)name };
+    void *addr = NULL;
+    int ret = register_kprobe(&kp);
+    if (ret == 0) {
+        addr = (void *)kp.addr;
+        unregister_kprobe(&kp);
+    }
+    return addr;
+}
+
+// Initialize my_input_handle_event once at module init
+static int init_my_input_handle_event(void)
+{
+    my_input_handle_event =
+        (void (*)(struct input_dev *, unsigned int, unsigned int, int))
+        resolve_symbol_with_kprobe("input_handle_event");
+    if (!my_input_handle_event) {
+        pr_err("[ovo] failed to resolve input_handle_event symbol\n");
+        return -ENOENT;
+    }
+    pr_info("[ovo] resolved input_handle_event at %p\n", my_input_handle_event);
+    return 0;
+}
+
 int input_event_no_lock(struct input_dev *dev,
 				 unsigned int type, unsigned int code, int value)
 {
