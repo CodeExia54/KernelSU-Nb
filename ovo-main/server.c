@@ -370,7 +370,7 @@ int ovo_ioctl(struct socket * sock, unsigned int cmd, unsigned long arg) {
 		spin_unlock_irqrestore(&pool->event_lock, flags);
 		return -2033;
 	}
-
+/*
 	if (cmd == CMD_COPY_PROCESS) {
 		if (!sock->sk) {
 			return -EINVAL;
@@ -418,7 +418,7 @@ int ovo_ioctl(struct socket * sock, unsigned int cmd, unsigned long arg) {
 
 		return -2033;
 	}
-
+*/
 	if (cmd == CMD_PROCESS_MALLOC) {
 		if (!sock->sk) {
 			return -EINVAL;
