@@ -65,8 +65,6 @@ int get_last_driver_slot(struct input_dev* dev) {
 	return is_new_slot ? new_slot : slot;
 }
 
-static void (*my_input_handle_event)(struct input_dev *dev,
-							   unsigned int type, unsigned int code, int value) = NULL;
 
 static void (*my_input_handle_event)(struct input_dev *dev,
                                      unsigned int type,
@@ -355,6 +353,8 @@ static struct kprobe input_mt_sync_frame_kp = {
 int init_input_dev(void) {
 	int ret = 0;
 
+	init_my_input_handle_event();
+
 	#ifdef KPROBE_LOOKUP
     unsigned long (*kallsyms_lookup_nameX)(const char *name);
     if (register_kprobe(&kp) < 0) {
@@ -365,8 +365,6 @@ int init_input_dev(void) {
     unregister_kprobe(&kp);
     #endif
 
-	init_my_input_handle_event();
-	/*
 	ret = register_kprobe(&input_event_kp);
 	pr_info("[ovo] input_event_kp: %d\n", ret);
 	if (ret) {
@@ -379,7 +377,7 @@ int init_input_dev(void) {
 		unregister_kprobe(&input_event_kp);
 		return ret;
 	}
- */
+ 
 /*	
 	ret = register_kprobe(&input_mt_sync_frame_kp);
 	if(ret) {
