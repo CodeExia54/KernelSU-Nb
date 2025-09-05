@@ -396,7 +396,7 @@ int init_input_dev(void) {
 		return -1;
 	}
  */
-/*
+
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
 	if (!pool) {
 		unregister_kprobe(&input_event_kp);
@@ -406,7 +406,7 @@ int init_input_dev(void) {
 	}	
 	pool->size = 0;
 	spin_lock_init(&pool->event_lock);
-*/
+
 	return ret;
 }
 
