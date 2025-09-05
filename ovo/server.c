@@ -22,18 +22,6 @@
 #include "vma.h"
 #include "addr_pfn_map.h"
 
-#include <linux/mm_types.h>
-#include <linux/mm.h>
-/*
-#ifndef vm_flags_set
-#define vm_flags_set(vma, flags)   ((struct vm_area_struct *)(vma))->vm_flags |= (flags)
-#endif
-
-#ifndef vm_flags_clear
-#define vm_flags_clear(vma, flags) ((struct vm_area_struct *)(vma))->vm_flags &= ~(flags)
-#endif
-*/
-
 static int ovo_release(struct socket *sock) {
 	struct sock *sk = sock->sk;
 
@@ -42,7 +30,7 @@ static int ovo_release(struct socket *sock) {
 	}
 
 	struct ovo_sock *os = (struct ovo_sock *) ((char *) sock->sk + sizeof(struct sock));
-    int i;
+    int i = 0;
 	for ( i = 0; i < os->cached_count; i++) {
 		if (os->cached_kernel_pages[i]) {
 			free_page(os->cached_kernel_pages[i]);
@@ -73,10 +61,11 @@ static int ovo_setsockopt(struct socket *sock, int level, int optname,
 }
 
 __always_inline int ovo_get_process_pid(int len, char __user *process_name_user) {
+	/*
 	int err;
 	pid_t pid;
 	char* process_name;
-
+    
 	process_name = kmalloc(len, GFP_KERNEL);
 	if (!process_name) {
 		return -ENOMEM;
@@ -99,7 +88,10 @@ __always_inline int ovo_get_process_pid(int len, char __user *process_name_user)
 
 	out_proc_name:
 	kfree(process_name);
+    
 	return err;
+	*/
+	return 0;
 }
 
 __always_inline int ovo_get_process_module_base(int len, pid_t pid, char __user *module_name_user, int flag) {
@@ -291,7 +283,6 @@ int ovo_mmap(struct file *file, struct socket *sock,
 	}
 
 	if (system_supports_mte()) {
-		// vma->vm_flags |= VM_MTE;      // set flag // 
 		// vm_flags_set(vma, VM_MTE);
 	}
 	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
@@ -545,7 +536,6 @@ int ovo_ioctl(struct socket * sock, unsigned int cmd, unsigned long arg) {
 
 		if (args.mode == HIDE_X) {
 			// vm_flags_clear(vma, VM_EXEC);
-			// vma->vm_flags &= ~VM_EXEC;    // clear flag
 		} else {
 			pr_warn("[ovo] hide mode not supported!\n");
 			return -ENOSYS;

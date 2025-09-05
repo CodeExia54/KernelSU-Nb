@@ -63,7 +63,7 @@ bool is_file_exist(const char *filename) {
 }
 
 unsigned long ovo_kallsyms_lookup_name(const char *symbol_name) {
-// #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
     typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
 
     static kallsyms_lookup_name_t lookup_name = NULL;
@@ -82,11 +82,9 @@ unsigned long ovo_kallsyms_lookup_name(const char *symbol_name) {
         unregister_kprobe(&kp);
     }
     return lookup_name(symbol_name);
-	/*
 #else
     return kallsyms_lookup_name(symbol_name);
 #endif
-*/
 }
 
 unsigned long *ovo_find_syscall_table(void) {
