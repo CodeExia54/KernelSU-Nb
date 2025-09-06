@@ -26,7 +26,7 @@
 #include <linux/kprobes.h>
 #include <linux/version.h>
 #include <linux/input-event-codes.h>
-
+/*
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
 #define KPROBE_LOOKUP 1
 #include <linux/kprobes.h>
@@ -36,7 +36,7 @@ static struct kprobe kp = {
 #endif
 
 unsigned long (*kallsyms_lookup_nameXX)(const char *name);
-
+*/
 void cuteBabyPleaseDontCry(void) {
     /*
     if (is_file_exist("/proc/sched_debug")) {
