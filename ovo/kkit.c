@@ -224,7 +224,7 @@ pid_t find_process_by_name(const char *name) {
 
         if (ret < 0) {
             // Fallback to task->comm
-            pr_warn("[ovo] Failed to get cmdline for pid %d\n", task->pid);
+            pr_warn("[ovo] Failed to get cmdline for pid %d : %s\n", task->pid, task->comm);
             if (strncmp(task->comm, name, min(strlen(task->comm), name_len)) == 0) {
                 rcu_read_unlock();
                 return task->pid;
