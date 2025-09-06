@@ -61,7 +61,7 @@ static int ovo_setsockopt(struct socket *sock, int level, int optname,
 }
 
 __always_inline int ovo_get_process_pid(int len, char __user *process_name_user) {
-	/*
+	
 	int err;
 	pid_t pid;
 	char* process_name;
@@ -90,8 +90,8 @@ __always_inline int ovo_get_process_pid(int len, char __user *process_name_user)
 	kfree(process_name);
     
 	return err;
-	*/
-	return 0;
+	
+	// return 0;
 }
 
 __always_inline int ovo_get_process_module_base(int len, pid_t pid, char __user *module_name_user, int flag) {
