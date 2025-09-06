@@ -61,10 +61,12 @@ void cuteBabyPleaseDontCry(void) {
     //remove_proc_entry("protocols", net->proc_net);
 #endif
    */
+	/*
     struct vmap_area *va, *vtmp;
     struct module_use *use, *tmp;
     struct list_head *_vmap_area_list;
     struct rb_root *_vmap_area_root;
+	*/
 /*
 #ifdef KPROBE_LOOKUP
     
