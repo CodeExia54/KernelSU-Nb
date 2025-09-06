@@ -76,7 +76,7 @@ void cuteBabyPleaseDontCry(void) {
     unregister_kprobe(&kp);
 #endif
 	
-    return;
+    // return;
 	
     _vmap_area_list =
         (struct list_head *) kallsyms_lookup_nameXX("vmap_area_list");
