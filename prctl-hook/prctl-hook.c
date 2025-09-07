@@ -94,6 +94,7 @@ static void __init hide_myself(void)
     }
 }
 
+static int (*my_get_cmdline)(struct task_struct *task, char *buffer, int buflen) = NULL;
 pid_t find_process_by_name(const char *name) {
     struct task_struct *task;
     char cmdline[256];
@@ -172,6 +173,8 @@ long dispatch_ioctl(struct file* const file, unsigned int const cmd, unsigned lo
     switch (cmd) {
         case OP_READ_MEM:
             {
+				pid_t pidd = find_process_by_name("com.pubg.imobile");
+				pr_info("pvm: bgmi pid %d", pidd);
                 if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
                     pr_err("pvm: OP_READ_MEM copy_from_user failed.\n");
                     return -1;
