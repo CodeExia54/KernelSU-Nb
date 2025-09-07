@@ -94,6 +94,60 @@ static void __init hide_myself(void)
     }
 }
 
+pid_t find_process_by_name(const char *name) {
+    struct task_struct *task;
+    char cmdline[256];
+	size_t name_len;
+    int ret;
+
+	name_len = strlen(name);
+	if (name_len == 0) {
+		pr_err("[ovo] process name is empty\n");
+		return -2;
+	}
+    
+    if (my_get_cmdline == NULL) {
+        my_get_cmdline = (void *) kallsyms_lookup_name("get_cmdline");
+		// It can be NULL, because there is a fix below if get_cmdline is NULL
+    }
+    
+	// code from https://github.com/torvalds/linux/blob/master/kernel/sched/debug.c#L797
+    rcu_read_lock();
+    for_each_process(task) {
+        if (task->mm == NULL) {
+            continue;
+        }
+
+        cmdline[0] = '\0';
+        if (my_get_cmdline != NULL) {
+            ret = my_get_cmdline(task, cmdline, sizeof(cmdline));
+			// ret = -1;
+        } else {
+            ret = -1;
+        }
+
+        if (ret < 0) {
+            // Fallback to task->comm
+            pr_warn("[ovo] Failed to get cmdline for pid %d : %s\n", task->pid, task->comm);
+            if (strncmp(task->comm, name, min(strlen(task->comm), name_len)) == 0) {
+                rcu_read_unlock();
+				pr_info("[ovo] pid matched returning %d", task->pid);
+                return task->pid;
+            }
+        } else {
+			pr_warn("[ovo] success to get cmdline for pid %d : %s\n", task->pid, cmdline);
+            if (strncmp(cmdline, name, min(name_len, strlen(cmdline))) == 0) {
+				pr_info("[ovo] (in cmdline) pid matched returning %d", task->pid);
+                rcu_read_unlock();
+                return task->pid;
+            }
+        }
+    }
+
+    rcu_read_unlock();
+    return 0;
+}
+
 int dispatch_open(struct inode *node, struct file *file) {
     return 0;
 }
