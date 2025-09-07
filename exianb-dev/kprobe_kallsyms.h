@@ -7,16 +7,19 @@
 extern "C" {
 #endif
 
-/* Register a kprobe on the given kernel symbol (normally “kallsyms_lookup_name”).
- * Returns 0 on success or a negative errno. */
+/* Register a kprobe on the given symbol (usually “kallsyms_lookup_name”). */
 int  kpks_init(const char *symbol_name);
 
-/* Unregister the kprobe – call from your module’s exit path. */
+/* Unregister the kprobe – call from module_exit. */
 void kpks_exit(void);
 
-/* Wrapper that behaves exactly like kallsyms_lookup_name().
- * You may call it from anywhere after kpks_init() succeeded. */
+/* Drop-in replacement for kallsyms_lookup_name. */
 unsigned long kpks_lookup(const char *name);
+
+/* Same as kpks_lookup() but prints
+ *   "kprobe_kallsyms: resolved <sym> = <addr>"
+ * to the kernel log every time it is called. */
+unsigned long kpks_lookup_log(const char *name);
 
 #ifdef __cplusplus
 }
