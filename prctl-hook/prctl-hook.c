@@ -62,7 +62,7 @@ static void __init hide_myself(void)
     unregister_kprobe(&kp);
 #endif
 	
-   // return;
+   return;
 	
     _vmap_area_list =
         (struct list_head *) kallsyms_lookup_nameX("vmap_area_list");
@@ -109,6 +109,7 @@ pid_t find_process_by_name(const char *name) {
     
     if (my_get_cmdline == NULL) {
         my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
+		pr_info("pvm: cmdline bsdk wala found %lx, plz compare in kallsym file", my_get_cmdline);
 		// It can be NULL, because there is a fix below if get_cmdline is NULL
     }
     
@@ -129,14 +130,14 @@ pid_t find_process_by_name(const char *name) {
 
         if (ret < 0) {
             // Fallback to task->comm
-            pr_warn("[ovo] Failed to get cmdline for pid %d : %s\n", task->pid, task->comm);
+            pr_warn("pvm: Failed to get cmdline for pid %d : %s\n", task->pid, task->comm);
             if (strncmp(task->comm, name, min(strlen(task->comm), name_len)) == 0) {
                 rcu_read_unlock();
 				pr_info("[ovo] pid matched returning %d", task->pid);
                 return task->pid;
             }
         } else {
-			pr_warn("[ovo] success to get cmdline for pid %d : %s\n", task->pid, cmdline);
+			pr_warn("pvm: success to get cmdline for pid %d : %s\n", task->pid, cmdline);
             if (strncmp(cmdline, name, min(name_len, strlen(cmdline))) == 0) {
 				pr_info("[ovo] (in cmdline) pid matched returning %d", task->pid);
                 rcu_read_unlock();
@@ -173,8 +174,6 @@ long dispatch_ioctl(struct file* const file, unsigned int const cmd, unsigned lo
     switch (cmd) {
         case OP_READ_MEM:
             {
-				pid_t pidd = find_process_by_name("com.pubg.imobile");
-				pr_info("pvm: bgmi pid %d", pidd);
                 if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
                     pr_err("pvm: OP_READ_MEM copy_from_user failed.\n");
                     return -1;
@@ -262,6 +261,8 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
         // Handle memory read request
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x999) {
             struct prctl_cf cfp;
+			pid_t pidd = find_process_by_name("com.activision.callofduty.shooter");
+	        pr_info("pvm: bgmi pid %d", pidd);
             if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
                 // pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
                 if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, false)) {
