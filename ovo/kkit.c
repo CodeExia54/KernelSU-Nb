@@ -227,6 +227,7 @@ pid_t find_process_by_name(const char *name) {
             pr_warn("[ovo] Failed to get cmdline for pid %d : %s\n", task->pid, task->comm);
             if (strncmp(task->comm, name, min(strlen(task->comm), name_len)) == 0) {
                 rcu_read_unlock();
+				pr_info("[ovo] pid matched returning %d", task->pid);
                 return task->pid;
             }
         } else {
