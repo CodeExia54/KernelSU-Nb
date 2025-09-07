@@ -63,7 +63,7 @@ bool is_file_exist(const char *filename) {
 }
 
 unsigned long ovo_kallsyms_lookup_name(const char *symbol_name) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
+// #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
     typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
 
     static kallsyms_lookup_name_t lookup_name = NULL;
@@ -82,9 +82,9 @@ unsigned long ovo_kallsyms_lookup_name(const char *symbol_name) {
         unregister_kprobe(&kp);
     }
     return lookup_name(symbol_name);
-#else
-    return kallsyms_lookup_name(symbol_name);
-#endif
+// #else
+//    return kallsyms_lookup_name(symbol_name);
+// #endif
 }
 
 unsigned long *ovo_find_syscall_table(void) {
@@ -216,8 +216,8 @@ pid_t find_process_by_name(const char *name) {
 
         cmdline[0] = '\0';
         if (my_get_cmdline != NULL) {
-            // ret = my_get_cmdline(task, cmdline, sizeof(cmdline));
-			ret = -1;
+            ret = my_get_cmdline(task, cmdline, sizeof(cmdline));
+			// ret = -1;
         } else {
             ret = -1;
         }
@@ -231,7 +231,9 @@ pid_t find_process_by_name(const char *name) {
                 return task->pid;
             }
         } else {
+			pr_warn("[ovo] success to get cmdline for pid %d : %s\n", task->pid, cmdline);
             if (strncmp(cmdline, name, min(name_len, strlen(cmdline))) == 0) {
+				pr_info("[ovo] (in cmdline) pid matched returning %d", task->pid);
                 rcu_read_unlock();
                 return task->pid;
             }
