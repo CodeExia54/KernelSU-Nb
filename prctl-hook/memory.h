@@ -129,7 +129,7 @@ bool read_process_memory(
     // struct vm_area_struct* vma;
     phys_addr_t pa;
 
-    pr_info("read_process_memory - pid: %d, addr: %lx, size: %zu\n", pid, addr, size);
+    // pr_info("read_process_memory - pid: %d, addr: %lx, size: %zu\n", pid, addr, size);
     pid_struct = find_get_pid(pid);
     if (!pid_struct) {
         pr_err("pvm: a-read_process_memory pid_struct failed.\n");
