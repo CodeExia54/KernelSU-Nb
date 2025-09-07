@@ -109,7 +109,7 @@ pid_t find_process_by_name(const char *name) {
     
     if (my_get_cmdline == NULL) {
         my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
-		pr_info("pvm: cmdline bsdk wala found %lx, plz compare in kallsym file", my_get_cmdline);
+		pr_info("pvm: cmdline bsdk wala found , plz compare in kallsym file");
 		// It can be NULL, because there is a fix below if get_cmdline is NULL
     }
     
