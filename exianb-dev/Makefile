@@ -1,7 +1,9 @@
 MODULE := exianb-dev
 
-obj-m := $(MODULE).o
-exianb-dev-objs := kprobe_kallsyms.o
+obj-m :=$(MODULE).o
+$(MODULE)-objs += exianb-dev.o
+$(MODULE)-objs += exianb-dev.o
+
 
 ccflags-y += -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat
 ccflags-y += -Wno-declaration-after-statement -Wno-unused-function
