@@ -159,39 +159,50 @@ pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
 	*/
 
 	pgd_t *pgd;
-    p4d_t *p4d;
-    pmd_t *pmd;
-    pte_t *pte;
-    pud_t *pud;
+pgd_t *pgd;
+p4d_t *p4d;
+pmd_t *pmd;
+pte_t *pte;
+pud_t *pud;
 
-	unsigned long va = addr;
-    
-    pgd = pgd_offset(mm, va);
-    if(pgd_none(*pgd) || pgd_bad(*pgd)) {
-        return NULL;
-    }
-    p4d = p4d_offset(pgd, va);
-    if (p4d_none(*p4d) || p4d_bad(*p4d)) {
-    	return NULL;
-    }
-	pud = pud_offset(p4d,va);
-	if(pud_none(*pud) || pud_bad(*pud)) {
-        return NULL;
-    }
-	pmd = pmd_offset(pud,va);
-	if(pmd_none(*pmd)) {
-        return NULL;
-    }
-	pte = pte_offset_kernel(pmd,va);
-	if(pte_none(*pte)) {
-        return NULL;
-    }
-	if (!pte_present(*pte)) {
-    pr_info("[ovo] pte not present, raw value: 0x%lx\n", pte_val(*pte));
+unsigned long va = addr;
+
+pgd = pgd_offset(mm, va);
+if (pgd_none(*pgd) || pgd_bad(*pgd)) {
+    pr_info("[ovo] pgd none or bad: 0x%llx\n", (unsigned long long)pgd_val(*pgd));
     return NULL;
 }
 
-    return pte;
+p4d = p4d_offset(pgd, va);
+if (p4d_none(*p4d) || p4d_bad(*p4d)) {
+    pr_info("[ovo] p4d none or bad: 0x%llx\n", (unsigned long long)p4d_val(*p4d));
+    return NULL;
+}
+
+pud = pud_offset(p4d, va);
+if (pud_none(*pud) || pud_bad(*pud)) {
+    pr_info("[ovo] pud none or bad: 0x%llx\n", (unsigned long long)pud_val(*pud));
+    return NULL;
+}
+
+pmd = pmd_offset(pud, va);
+if (pmd_none(*pmd)) {
+    pr_info("[ovo] pmd none: 0x%llx\n", (unsigned long long)pmd_val(*pmd));
+    return NULL;
+}
+
+pte = pte_offset_kernel(pmd, va);
+if (pte_none(*pte)) {
+    pr_info("[ovo] pte none: 0x%llx\n", (unsigned long long)pte_val(*pte));
+    return NULL;
+}
+if (!pte_present(*pte)) {
+    pr_info("[ovo] pte not present, raw value: 0x%llx\n", (unsigned long long)pte_val(*pte));
+    return NULL;
+}
+
+return pte;
+
 }
 #endif
 
