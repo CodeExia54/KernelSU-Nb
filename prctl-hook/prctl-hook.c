@@ -218,7 +218,7 @@ long dispatch_ioctl(struct file* const file, unsigned int const cmd, unsigned lo
                     // pr_err("OP_MODULE_BASE copy_from_user failed.\n");
                     return -1;
                 }
-                mb.base = get_module_base(mb.pid, name);
+                mb.base = get_module_baseX(mb.pid, name, 0x00000004);
                 if (copy_to_user((void __user*)arg, &mb, sizeof(mb)) !=0) {
                     // pr_err("OP_MODULE_BASE copy_to_user failed.\n");
                     return -1;
