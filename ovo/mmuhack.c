@@ -158,7 +158,6 @@ pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
     ret:
 	*/
 
-	pgd_t *pgd;
 pgd_t *pgd;
 p4d_t *p4d;
 pmd_t *pmd;
