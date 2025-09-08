@@ -10,6 +10,16 @@
 #include <linux/dcache.h>
 #include <linux/maple_tree.h>
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
+#include <linux/mmap_lock.h>
+#define MM_READ_LOCK(mm) mmap_read_lock(mm);
+#define MM_READ_UNLOCK(mm) mmap_read_unlock(mm);
+#else
+#include <linux/rwsem.h>
+#define MM_READ_LOCK(mm) down_read(&(mm)->mmap_sem);
+#define MM_READ_UNLOCK(mm) up_read(&(mm)->mmap_sem);
+#endif
+
 extern char *d_path(const struct path *, char *, int);
 #endif
 
