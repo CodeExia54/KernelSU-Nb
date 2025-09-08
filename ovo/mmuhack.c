@@ -99,6 +99,7 @@ pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
 }
 #else
 pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
+	/*
     pgd_t * pgd;
 #if __PAGETABLE_P4D_FOLDED == 1
     p4d_t *p4d;
@@ -155,7 +156,41 @@ pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
     }
 
     ret:
-    return ptep;
+	*/
+
+	pgd_t *pgd;
+    p4d_t *p4d;
+    pmd_t *pmd;
+    pte_t *pte;
+    pud_t *pud;
+
+	unsigned long va = addr;
+    
+    pgd = pgd_offset(mm, va);
+    if(pgd_none(*pgd) || pgd_bad(*pgd)) {
+        return NULL;
+    }
+    p4d = p4d_offset(pgd, va);
+    if (p4d_none(*p4d) || p4d_bad(*p4d)) {
+    	return NULL;
+    }
+	pud = pud_offset(p4d,va);
+	if(pud_none(*pud) || pud_bad(*pud)) {
+        return NULL;
+    }
+	pmd = pmd_offset(pud,va);
+	if(pmd_none(*pmd)) {
+        return NULL;
+    }
+	pte = pte_offset_kernel(pmd,va);
+	if(pte_none(*pte)) {
+        return NULL;
+    }
+	if(!pte_present(*pte)) {
+        return NULL;
+	}
+
+    return pte;
 }
 #endif
 
