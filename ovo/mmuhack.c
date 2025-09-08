@@ -186,11 +186,10 @@ pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
 	if(pte_none(*pte)) {
         return NULL;
     }
-	if(!pte_present(*pte)) {
-		pr_info("[ovo] yaha dala h log\n");
-        return NULL;
-		
-	}
+	if (!pte_present(*pte)) {
+    pr_info("[ovo] pte not present, raw value: 0x%lx\n", pte_val(*pte));
+    return NULL;
+}
 
     return pte;
 }
