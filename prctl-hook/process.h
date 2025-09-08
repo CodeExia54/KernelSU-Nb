@@ -10,15 +10,10 @@
 #include <linux/dcache.h>
 #include <linux/maple_tree.h>
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
+// #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
 #include <linux/mmap_lock.h>
 #define MM_READ_LOCK(mm) mmap_read_lock(mm);
 #define MM_READ_UNLOCK(mm) mmap_read_unlock(mm);
-#else
-#include <linux/rwsem.h>
-#define MM_READ_LOCK(mm) down_read(&(mm)->mmap_sem);
-#define MM_READ_UNLOCK(mm) up_read(&(mm)->mmap_sem);
-#endif
 
 extern char *d_path(const struct path *, char *, int);
 #endif
@@ -66,7 +61,7 @@ uintptr_t traverse_vma(struct mm_struct* mm, char* name) {
     }
     return 0;
 }
-
+/*
 uintptr_t get_module_baseX(pid_t pid, char *name, int vm_flag) {
     struct pid *pid_struct;
     struct task_struct *task;
@@ -135,11 +130,22 @@ uintptr_t get_module_baseX(pid_t pid, char *name, int vm_flag) {
     mmput(mm);
     return result;
 }
-
+*/
 uintptr_t get_module_base(pid_t pid, char* name) {
     struct pid* pid_struct;
     struct task_struct* task;
     struct mm_struct* mm;
+
+	// new
+	struct vm_area_struct *vma;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+    struct vma_iterator vmi;
+#endif
+    uintptr_t result;
+	struct dentry *dentry;
+	size_t name_len, dname_len;
+	result = 0;
+	
 
 #if(LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
     rcu_read_lock();
@@ -167,11 +173,39 @@ uintptr_t get_module_base(pid_t pid, char* name) {
 #endif
 
     mm = get_task_mm(task);
+	put_task_struct(task); // new
     if (!mm) {
         pr_err("get_module_base get_task_mm failed.\n");
         return false;
     }
-    mmput(mm);
 
-    return traverse_vma(mm, name);
+	mmap_read_lock(mm);
+
+	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+    vma_iter_init(&vmi, mm, 0);
+    for_each_vma(vmi, vma)
+#else
+        for (vma = mm->mmap; vma; vma = vma->vm_next)
+#endif
+    {
+        if (vma->vm_file) {
+			if (vm_flag && !(vma->vm_flags & vm_flag)) {
+				continue;
+			}
+			dentry = vma->vm_file->f_path.dentry;
+			dname_len = dentry->d_name.len;
+			if (!memcmp(dentry->d_name.name, name, min(name_len, dname_len))) {
+				result = vma->vm_start;
+				goto ret;
+			}
+        }
+    }
+
+    ret:
+    mmap_read_unlock(mm);
+
+    mmput(mm);
+    return result;
+    // mmput(mm);
+    // return traverse_vma(mm, name);
 }
