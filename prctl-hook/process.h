@@ -107,7 +107,7 @@ uintptr_t get_module_baseX(pid_t pid, char *name, int vm_flag) {
         return 0;
     }
 
-    MM_READ_LOCK(mm)
+    MM_READ_LOCK(mm);
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
     vma_iter_init(&vmi, mm, 0);
@@ -130,7 +130,7 @@ uintptr_t get_module_baseX(pid_t pid, char *name, int vm_flag) {
     }
 
     ret:
-    MM_READ_UNLOCK(mm)
+    MM_READ_UNLOCK(mm);
 
     mmput(mm);
     return result;
