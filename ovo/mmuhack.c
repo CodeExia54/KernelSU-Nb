@@ -167,30 +167,40 @@ pud_t *pud;
 unsigned long va = addr;
 
 pgd = pgd_offset(mm, va);
+pr_info("[ovo] PGD entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pgd_val(*pgd));
 if (pgd_none(*pgd) || pgd_bad(*pgd)) {
     pr_info("[ovo] pgd none or bad: 0x%llx\n", (unsigned long long)pgd_val(*pgd));
     return NULL;
 }
 
 p4d = p4d_offset(pgd, va);
+pr_info("[ovo] P4D entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)p4d_val(*p4d));
 if (p4d_none(*p4d) || p4d_bad(*p4d)) {
     pr_info("[ovo] p4d none or bad: 0x%llx\n", (unsigned long long)p4d_val(*p4d));
     return NULL;
 }
 
 pud = pud_offset(p4d, va);
+pr_info("[ovo] PUD entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pud_val(*pud));
 if (pud_none(*pud) || pud_bad(*pud)) {
     pr_info("[ovo] pud none or bad: 0x%llx\n", (unsigned long long)pud_val(*pud));
     return NULL;
 }
 
 pmd = pmd_offset(pud, va);
+// <--- Full PMD log right after assignment --->
+pr_info("[ovo] PMD entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pmd_val(*pmd));
 if (pmd_none(*pmd)) {
     pr_info("[ovo] pmd none: 0x%llx\n", (unsigned long long)pmd_val(*pmd));
     return NULL;
 }
+if (pmd_bad(*pmd)) {
+    pr_info("[ovo] pmd bad: 0x%llx\n", (unsigned long long)pmd_val(*pmd));
+    return NULL;
+}
 
 pte = pte_offset_kernel(pmd, va);
+pr_info("[ovo] PTE entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pte_val(*pte));
 if (pte_none(*pte)) {
     pr_info("[ovo] pte none: 0x%llx\n", (unsigned long long)pte_val(*pte));
     return NULL;
@@ -201,6 +211,7 @@ if (!pte_present(*pte)) {
 }
 
 return pte;
+
 
 }
 #endif
