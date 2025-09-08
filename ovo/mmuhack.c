@@ -81,7 +81,8 @@ pte_t *page_from_virt_kernel(unsigned long addr) {
     return ptep;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0) && defined(OVO_0X202501232117)
+#if 1
+// LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0) && defined(OVO_0X202501232117)
 pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
     pte_t *pte;
     spinlock_t *ptlp;
@@ -92,9 +93,9 @@ pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
 
     //pte_unmap_unlock(pte, ptlp);
 
-     //if (ptlp)
-     //   spin_unlock(ptlp);
-#error "OVO_0X202501232117"
+     if (ptlp)
+        spin_unlock(ptlp);
+// #error "OVO_0X202501232117"
     return pte;
 }
 #else
