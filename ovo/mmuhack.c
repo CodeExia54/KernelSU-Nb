@@ -187,8 +187,9 @@ pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
         return NULL;
     }
 	if(!pte_present(*pte)) {
-        return NULL;
 		pr_info("[ovo] yaha dala h log\n");
+        return NULL;
+		
 	}
 
     return pte;
