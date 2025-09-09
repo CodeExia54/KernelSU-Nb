@@ -1,4 +1,4 @@
-MODULE = ovo
+MODULE = ovo-main
 
 obj-m :=$(MODULE).o
 $(MODULE)-objs += core.o
