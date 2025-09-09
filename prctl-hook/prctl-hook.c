@@ -253,6 +253,12 @@ struct prctl_cf {
     int size;
 };
 
+struct prctl_mb {
+    pid_t pid;
+    char* name;
+    uintptr_t base;
+};
+
 int filedescription;
 
 static int handler_pre(struct kprobe *p, struct pt_regs *regs)
@@ -291,7 +297,20 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 	} 
 
     if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x1111) {
+        struct prctl_mb cfp;
 
+		if (copy_from_user(&mb, (void __user*)arg, sizeof(mb)) != 0 
+        ||  copy_from_user(name, (void __user*)mb.name, sizeof(name)-1) !=0) {
+            // pr_err("OP_MODULE_BASE copy_from_user failed.\n");
+            return -1;
+        }
+        mb.base = get_module_base(mb.pid, name);
+
+		/*
+		if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
+
+		}
+        */
 	}
 /*
         // Handle FD dispatch creation
