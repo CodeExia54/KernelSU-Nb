@@ -27,16 +27,23 @@
 #include <linux/kprobes.h>
 #include <linux/version.h>
 #include <linux/input-event-codes.h>
-
+#include "server.h"
 
 // bool isDevUse = false;
 
 static int __init pvm_init(void)
 {
-    // int ret;
 
+
+	int ret;
+
+    ret = init_server();
+    if (ret) {
+        pr_err("pvm: failed to initialize server: %d\n", ret);
+        return ret;
+	}
+    // int ret;
 	// hide_myself();
-    
     // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
     return 0;
 }
@@ -48,6 +55,7 @@ static void __exit pvm_exit(void) {
     else
         unregister_kprobe(&kpp);
 	*/
+	exit_server();
 }
 
 module_init(pvm_init);
