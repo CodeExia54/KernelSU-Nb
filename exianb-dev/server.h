@@ -1,14 +1,24 @@
 #ifndef SERVER_H
 #define SERVER_H
 
+#include <linux/init.h>
 #include <linux/module.h>
-#include <linux/kernel.h>
-#include <linux/net.h>
+#include <linux/sched/mm.h>
+#include <linux/sched/signal.h>
+#include <linux/sched/task.h>
 #include <linux/socket.h>
-#include <linux/skbuff.h>
+#include <linux/file.h>
+#include <linux/uaccess.h>
+#include <linux/net.h>
+#include <linux/netdevice.h>
+#include <linux/rculist.h>
+#include <linux/vmalloc.h>
+#include <net/busy_poll.h>
 #include <linux/atomic.h>
 #include <linux/errno.h>
 #include <linux/pid.h>
+#include <linux/mm.h>
+#include <linux/spinlock.h>
 
 #define MAX_CACHE_KERNEL_ADDRESS_COUNT 16
 
