@@ -272,8 +272,8 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
         // Handle memory read request
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x999) {
             struct prctl_cf cfp;
-			pid_t pidd = find_process_by_name("com.activision.callofduty.shooter");
-	        pr_info("pvm: bgmi pid %d", pidd);
+			// pid_t pidd = find_process_by_name("com.activision.callofduty.shooter");
+	        // pr_info("pvm: bgmi pid %d", pidd);
             if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
                 // pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
                 if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, false)) {
