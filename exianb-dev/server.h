@@ -47,9 +47,9 @@
 #define REQ_WRITE_PROCESS_MEMORY             8
 #define REMAP_MEMORY                        9
 
-#define CMD_TOUCH_CLICK_DOWN                1000
-#define CMD_TOUCH_CLICK_UP                  1001
-#define CMD_TOUCH_MOVE                     1006
+//#define CMD_TOUCH_CLICK_DOWN                1000
+//#define CMD_TOUCH_CLICK_UP                  1001
+//#define CMD_TOUCH_MOVE                     1006
 // #define CMD_COPY_PROCESS                  1007   // COMMENTED - extra function
 #define CMD_PROCESS_MALLOC                 1008
 #define CMD_HIDE_VMA                      1009
@@ -406,6 +406,7 @@ static int pvm_mmap(struct file *file, struct socket *sock,
 
 // ioctl handler with touch commands and process memory allocation
 static int pvm_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg) {
+    /*
     struct event_pool* pool;
     unsigned long flags;
 
@@ -481,6 +482,7 @@ static int pvm_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg) {
         spin_unlock_irqrestore(&pool->event_lock, flags);
         return -2033;
     }
+    */
 
     /*
     // Commented out: extra function, not needed
