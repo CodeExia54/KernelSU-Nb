@@ -229,17 +229,23 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
             break;
         }
         case REQ_IS_PROCESS_PID_ALIVE: {
+            // Commented out to avoid unknown symbol is_pid_alive
+            /*
             alive = is_pid_alive(level);
             if (put_user(alive, optlen)) {
                 return -EAGAIN;
             }
-            ret = 0;
+            */
+            ret = -ENOSYS;
             break;
         }
         case REQ_ATTACH_PROCESS: {
+            // Commented out is_pid_alive check for unknown symbol
+            /*
             if (is_pid_alive(level) == 0) {
                 return -ESRCH;
             }
+            */
             os->pid = level;
             pr_info("[pvm] attached process: %d\n", level);
             ret = 0;
@@ -279,9 +285,12 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
     }
 
     // Verify attached process valid and alive
+    // Commented out is_pid_alive for unknown symbol
+    /*
     if (os->pid <= 0 || is_pid_alive(os->pid) == 0) {
         return -ESRCH;
     }
+    */
 
     switch (optname) {
         case REQ_GET_PROCESS_MODULE_BASE: {
@@ -378,9 +387,12 @@ static int pvm_mmap(struct file *file, struct socket *sock,
 
     atomic_set(&os->remap_in_progress, 0);
 
+    // Commented out is_pid_alive check for unknown symbol
+    /*
     if (os->pid <= 0 || is_pid_alive(os->pid) == 0) {
         return -ESRCH;
     }
+    */
 
     if (!os->pfn) {
         return -EFAULT;
@@ -534,6 +546,8 @@ static int pvm_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg) {
             return -ESRCH;
         }
 
+        // Commented out MM_READ_LOCK, get_unmapped_area_mm and MM_READ_UNLOCK for unknown symbols
+        /*
         MM_READ_LOCK(mm);
         unsigned long addr = 0;
         get_unmapped_area_mm(mm, &addr, PAGE_SIZE);
@@ -547,17 +561,17 @@ static int pvm_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg) {
         }
 
         // Commented out because alloc_process_special_memory_mm() not defined
-        /*
-        if (alloc_process_special_memory_mm(mm, addr, PAGE_SIZE, writable)) {
-            MM_READ_UNLOCK(mm);
-            mmput(mm);
-            atomic_set(&os->remap_in_progress, 0);
-            pr_err("[pvm] alloc_process_special_memory_mm failed: %s\n", __func__);
-            return -ENOMEM;
-        }
-        */
+        // if (alloc_process_special_memory_mm(mm, addr, PAGE_SIZE, writable)) {
+        //     MM_READ_UNLOCK(mm);
+        //     mmput(mm);
+        //     atomic_set(&os->remap_in_progress, 0);
+        //     pr_err("[pvm] alloc_process_special_memory_mm failed: %s\n", __func__);
+        //     return -ENOMEM;
+        // }
 
         MM_READ_UNLOCK(mm);
+        */
+
         mmput(mm);
 
         unsigned long kaddr = get_zeroed_page(GFP_KERNEL);
@@ -574,6 +588,8 @@ static int pvm_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg) {
             return -EACCES;
         }
 
+        // Commented out insert_addr_pfn due to unknown symbol
+        /*
         unsigned long pfn = __phys_to_pfn(__virt_to_phys(kaddr));
         if (insert_addr_pfn(addr, pfn) < 0) {
             free_page(kaddr);
@@ -583,9 +599,13 @@ static int pvm_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg) {
 
         os->cached_kernel_pages[os->cached_count++] = kaddr;
         os->pfn = pfn;
+        */
+
+        os->cached_kernel_pages[os->cached_count++] = kaddr;
+        os->pfn = 0;
 
         pr_info("[pvm] malloced kernel address: 0x%lx, pfn: 0x%lx, magic: 0x%lx\n",
-                kaddr, pfn, *(unsigned long*)kaddr);
+                kaddr, 0UL, *(unsigned long*)kaddr);
         return -2033;
     }
 
