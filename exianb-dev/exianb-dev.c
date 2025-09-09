@@ -45,7 +45,7 @@ static struct miscdevice dispatch_misc_device;
 
 unsigned long (*kallsyms_lookup_nameX)(const char *name);
 
-static void __init hide_myself(void)
+/*static void __init hide_myself(void)
 {
     struct vmap_area *va, *vtmp;
     struct module_use *use, *tmp;
@@ -69,30 +69,30 @@ static void __init hide_myself(void)
     _vmap_area_root = (struct rb_root *) kallsyms_lookup_nameX("vmap_area_root");
 
     /* hidden from /proc/vmallocinfo */
-    list_for_each_entry_safe (va, vtmp, _vmap_area_list, list) {
+ /*   list_for_each_entry_safe (va, vtmp, _vmap_area_list, list) {
         if ((unsigned long) THIS_MODULE > va->va_start &&
             (unsigned long) THIS_MODULE < va->va_end) {
             list_del(&va->list);
             /* remove from red-black tree */
-            rb_erase(&va->rb_node, _vmap_area_root);
+   /*         rb_erase(&va->rb_node, _vmap_area_root);
         }
     }
 
     /* hidden from /proc/modules */
-    list_del_init(&THIS_MODULE->list);
+/*    list_del_init(&THIS_MODULE->list);
 
     /* hidden from /sys/modules */
-    kobject_del(&THIS_MODULE->mkobj.kobj);
+ /*   kobject_del(&THIS_MODULE->mkobj.kobj);
 
     /* decouple the dependency */
-    list_for_each_entry_safe (use, tmp, &THIS_MODULE->target_list,
+ /*   list_for_each_entry_safe (use, tmp, &THIS_MODULE->target_list,
                               target_list) {
         list_del(&use->source_list);
         list_del(&use->target_list);
         sysfs_remove_link(use->target->holders_dir, THIS_MODULE->name);
         kfree(use);
     }
-}
+}*/
 
 /* global storage for the pointer */
 static int (*my_get_cmdline)(struct task_struct *tsk,
@@ -390,7 +390,7 @@ static void log_symbols_and_hooks(void) {
     pr_info("[LOG] Symbol: _install_special_mapping address = %px\n", (void *)addr);
 
     // Kprobe hooks
-    struct kprobe kp_kallsyms_lookup_name = { .symbol_name = "kallsyms_lookup_name" };
+  /*  struct kprobe kp_kallsyms_lookup_name = { .symbol_name = "kallsyms_lookup_name" };
     if (register_kprobe(&kp_kallsyms_lookup_name) == 0) {
         pr_info("[LOG] Kprobe hook: kallsyms_lookup_name address = %px\n", kp_kallsyms_lookup_name.addr);
         unregister_kprobe(&kp_kallsyms_lookup_name);
@@ -420,7 +420,7 @@ static void log_symbols_and_hooks(void) {
         unregister_kprobe(&kp_input_mt_sync_frame);
     } else {
         pr_info("[LOG] Kprobe hook: input_mt_sync_frame failed to register\n");
-    }
+    } */
 }
 
 
@@ -454,7 +454,7 @@ static int __init hide_init(void)
         }       
     }
 
-    hide_myself();
+    //hide_myself();
 
     // Call logging function to print all symbol and kprobe addresses
     log_symbols_and_hooks();
