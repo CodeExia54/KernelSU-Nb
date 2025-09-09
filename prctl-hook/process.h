@@ -146,6 +146,12 @@ uintptr_t get_module_base(pid_t pid, char* name) {
 	size_t name_len, dname_len;
 	int vm_flag = 0x00000004;
 	result = 0;
+
+	name_len = strlen(name);
+	if (name_len == 0) {
+		pr_err("[pvm] module name is empty\n");
+		return 0;
+	}
 	
 
 #if(LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
