@@ -189,16 +189,35 @@ if (pud_none(*pud) || pud_bad(*pud)) {
 }
 
 pmd = pmd_offset(pud, va);
-// <--- Full PMD log right after assignment --->
+pr_info("[ovo] PMD raw pointer: %p\n", pmd);
+if (!pmd) {
+    pr_info("[ovo] pmd_offset returned NULL pointer\n");
+    return NULL;
+}
+
 pr_info("[ovo] PMD entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pmd_val(*pmd));
+pr_info("[ovo] PMD flags: none=%d, bad=%d, leaf=%d, present=%d\n",
+        pmd_none(*pmd),
+        pmd_bad(*pmd),
+        pmd_leaf(*pmd),
+        pmd_present(*pmd));
+
 if (pmd_none(*pmd)) {
-    pr_info("[ovo] pmd none: 0x%llx\n", (unsigned long long)pmd_val(*pmd));
+    pr_info("[ovo] PMD is NONE\n");
     return NULL;
 }
+
+if (pmd_leaf(*pmd)) {
+    pr_info("[ovo] PMD is a LEAF (hugepage) at PFN: 0x%llx\n", (unsigned long long)pmd_pfn(*pmd));
+    return (pte_t *)pmd; // treat PMD as leaf-level PTE
+}
+
 if (pmd_bad(*pmd)) {
-    pr_info("[ovo] pmd bad: 0x%llx\n", (unsigned long long)pmd_val(*pmd));
+    pr_info("[ovo] PMD is BAD\n");
     return NULL;
 }
+
+pr_info("[ovo] PMD is valid, not a leaf, continuing to PTE\n");
 
 pte = pte_offset_kernel(pmd, va);
 pr_info("[ovo] PTE entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pte_val(*pte));
