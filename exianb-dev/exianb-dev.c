@@ -31,7 +31,7 @@
 
 // bool isDevUse = false;
 
-static int __init exia_init(void)
+static int __init pvm_init(void)
 {
     // int ret;
 
@@ -41,7 +41,7 @@ static int __init exia_init(void)
     return 0;
 }
 
-static void __exit exia_exit(void) {
+static void __exit pvm_exit(void) {
 	/*
     if(isDevUse)
         misc_deregister(&dispatch_misc_device);
@@ -50,8 +50,8 @@ static void __exit exia_exit(void) {
 	*/
 }
 
-module_init(exia_init);
-module_exit(exia_exit);
+module_init(pvm_init);
+module_exit(pvm_exit);
 
 MODULE_AUTHOR("exianb");
 MODULE_DESCRIPTION("exianb");
