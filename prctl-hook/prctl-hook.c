@@ -298,13 +298,17 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 
     if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x1111) {
         struct prctl_mb cfp;
-
-		if (copy_from_user(&mb, (void __user*)arg, sizeof(mb)) != 0 
-        ||  copy_from_user(name, (void __user*)mb.name, sizeof(name)-1) !=0) {
-            // pr_err("OP_MODULE_BASE copy_from_user failed.\n");
+		static char name[0x100] = {0};
+		if (copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp)) != 0 
+        ||  copy_from_user(name, (void __user*)cfp.name, sizeof(name)-1) !=0) {
+            pr_err("OP_MODULE_BASE copy_from_user failed.\n");
             return -1;
         }
-        mb.base = get_module_base(mb.pid, name);
+        cfp.base = get_module_base(cfp.pid, name);
+		if (copy_to_user(*(void **)(v4 + 16), &cfp, sizeof(cfp)) !=0) {
+            pr_err("OP_MODULE_BASE copy_to_user failed.\n");
+            return -1;
+		}
 
 		/*
 		if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
