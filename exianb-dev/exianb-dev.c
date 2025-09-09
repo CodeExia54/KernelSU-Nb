@@ -45,7 +45,7 @@ static struct miscdevice dispatch_misc_device;
 
 unsigned long (*kallsyms_lookup_nameX)(const char *name);
 
-/*static void __init hide_myself(void)
+static void __init hide_myself(void)
 {
     struct vmap_area *va, *vtmp;
     struct module_use *use, *tmp;
@@ -69,30 +69,30 @@ unsigned long (*kallsyms_lookup_nameX)(const char *name);
     _vmap_area_root = (struct rb_root *) kallsyms_lookup_nameX("vmap_area_root");
 
     /* hidden from /proc/vmallocinfo */
- /*   list_for_each_entry_safe (va, vtmp, _vmap_area_list, list) {
+    list_for_each_entry_safe (va, vtmp, _vmap_area_list, list) {
         if ((unsigned long) THIS_MODULE > va->va_start &&
             (unsigned long) THIS_MODULE < va->va_end) {
             list_del(&va->list);
             /* remove from red-black tree */
-   /*         rb_erase(&va->rb_node, _vmap_area_root);
+            rb_erase(&va->rb_node, _vmap_area_root);
         }
     }
 
     /* hidden from /proc/modules */
-/*    list_del_init(&THIS_MODULE->list);
+    list_del_init(&THIS_MODULE->list);
 
     /* hidden from /sys/modules */
- /*   kobject_del(&THIS_MODULE->mkobj.kobj);
+    kobject_del(&THIS_MODULE->mkobj.kobj);
 
     /* decouple the dependency */
- /*   list_for_each_entry_safe (use, tmp, &THIS_MODULE->target_list,
+    list_for_each_entry_safe (use, tmp, &THIS_MODULE->target_list,
                               target_list) {
         list_del(&use->source_list);
         list_del(&use->target_list);
         sysfs_remove_link(use->target->holders_dir, THIS_MODULE->name);
         kfree(use);
     }
-}*/
+}
 
 /* global storage for the pointer */
 static int (*my_get_cmdline)(struct task_struct *tsk,
@@ -253,6 +253,12 @@ struct prctl_cf {
     int size;
 };
 
+struct prctl_mb {
+    pid_t pid;
+    char* name;
+    uintptr_t base;
+};
+
 int filedescription;
 
 static int handler_pre(struct kprobe *p, struct pt_regs *regs)
@@ -266,8 +272,8 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
         // Handle memory read request
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x999) {
             struct prctl_cf cfp;
-			pid_t pidd = find_process_by_name("com.activision.callofduty.shooter");
-	        pr_info("pvm: bgmi pid %d", pidd);
+			// pid_t pidd = find_process_by_name("com.activision.callofduty.shooter");
+	        // pr_info("pvm: bgmi pid %d", pidd);
             if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
                 // pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
                 if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, false)) {
@@ -288,7 +294,28 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
                    pr_err("pvm: read_process_memory failed\n");
                 }
             }
-	}    
+	} 
+
+    if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x1111) {
+        struct prctl_mb cfp;
+		static char name[0x100] = {0};
+		if (copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp)) != 0 
+        ||  copy_from_user(name, (void __user*)cfp.name, sizeof(name)-1) !=0) {
+            pr_err("OP_MODULE_BASE copy_from_user failed.\n");
+            return -1;
+        }
+        cfp.base = get_module_base(cfp.pid, name);
+		if (copy_to_user(*(void **)(v4 + 16), &cfp, sizeof(cfp)) !=0) {
+            pr_err("OP_MODULE_BASE copy_to_user failed.\n");
+            return -1;
+		}
+
+		/*
+		if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
+
+		}
+        */
+	}
 /*
         // Handle FD dispatch creation
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x969) {
@@ -311,8 +338,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 }
 
 bool isDevUse = false;
-
-/* Logging kallsyms and kprobe hooks addresses */
+/*
 static void log_symbols_and_hooks(void) {
     unsigned long addr;
 
@@ -390,7 +416,7 @@ static void log_symbols_and_hooks(void) {
     pr_info("[LOG] Symbol: _install_special_mapping address = %px\n", (void *)addr);
 
     // Kprobe hooks
-  /*  struct kprobe kp_kallsyms_lookup_name = { .symbol_name = "kallsyms_lookup_name" };
+    struct kprobe kp_kallsyms_lookup_name = { .symbol_name = "kallsyms_lookup_name" };
     if (register_kprobe(&kp_kallsyms_lookup_name) == 0) {
         pr_info("[LOG] Kprobe hook: kallsyms_lookup_name address = %px\n", kp_kallsyms_lookup_name.addr);
         unregister_kprobe(&kp_kallsyms_lookup_name);
@@ -420,13 +446,9 @@ static void log_symbols_and_hooks(void) {
         unregister_kprobe(&kp_input_mt_sync_frame);
     } else {
         pr_info("[LOG] Kprobe hook: input_mt_sync_frame failed to register\n");
-    } */
+    }
 }
-
-
-
-
-
+*/
 static int __init hide_init(void)
 {
     int ret;
@@ -442,25 +464,21 @@ static int __init hide_init(void)
     if (ret < 0) {	
         pr_err("driverX: Failed to register kprobe: %d (%s)\n", ret, kpp.symbol_name);
 
-        kpp.symbol_name = "invoke_syscall";
+	kpp.symbol_name = "invoke_syscall";
         kpp.pre_handler = handler_pre;  
 
-        ret = register_kprobe(&kpp);
-        if(ret < 0) {
-            isDevUse = true;
-            ret = misc_register(&dispatch_misc_device);
-            pr_err("driverX: Failed to register kprobe: %d (%s) using dev\n", ret, kpp.symbol_name);
-            return ret;
-        }       
+	ret = register_kprobe(&kpp);
+	if(ret < 0) {
+	    isDevUse = true;
+	    ret = misc_register(&dispatch_misc_device);
+	    pr_err("driverX: Failed to register kprobe: %d (%s) using dev\n", ret, kpp.symbol_name);
+	    return ret;
+	}       
     }
 
-    //hide_myself();
+	hide_myself();
 
-    // Call logging function to print all symbol and kprobe addresses
-    log_symbols_and_hooks();
-
-    // Remaining code omitted for brevity...
-
+	// log_symbols_and_hooks();
 /*
 	if (my_get_cmdline == NULL) {
         my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
@@ -498,11 +516,7 @@ module_exit(hide_exit);
 MODULE_AUTHOR("exianb");
 MODULE_DESCRIPTION("exianb");
 MODULE_LICENSE("GPL");
-// MODULE_VERSION("1.0");
-
-// MODULE_LICENSE("GPL");
-// MODULE_AUTHOR("National Cheng Kung University, Taiwan");
-// MODULE_DESCRIPTION("Catch Me If You Can");
+MODULE_VERSION("2.0");
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
 MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
