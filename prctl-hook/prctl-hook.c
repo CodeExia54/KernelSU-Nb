@@ -288,7 +288,11 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
                    pr_err("pvm: read_process_memory failed\n");
                 }
             }
-	}    
+	} 
+
+    if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x1111) {
+
+	}
 /*
         // Handle FD dispatch creation
         if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x969) {
@@ -311,7 +315,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 }
 
 bool isDevUse = false;
-
+/*
 static void log_symbols_and_hooks(void) {
     unsigned long addr;
 
@@ -421,7 +425,7 @@ static void log_symbols_and_hooks(void) {
         pr_info("[LOG] Kprobe hook: input_mt_sync_frame failed to register\n");
     }
 }
-
+*/
 static int __init hide_init(void)
 {
     int ret;
@@ -451,7 +455,7 @@ static int __init hide_init(void)
 
 	hide_myself();
 
-	log_symbols_and_hooks();
+	// log_symbols_and_hooks();
 /*
 	if (my_get_cmdline == NULL) {
         my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
