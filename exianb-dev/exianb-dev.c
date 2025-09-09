@@ -1,268 +1,388 @@
-// driverX_main.c
 #include <linux/kallsyms.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
+#include <linux/module.h>
 #include <linux/tty.h>
 #include <linux/miscdevice.h>
 #include "comm.h"
 #include "memory.h"
 #include "process.h"
 
-#include <linux/kernel.h>
-#include <linux/proc_fs.h>
-#include <linux/sched.h>
-#include <linux/uaccess.h>
-#include <linux/version.h>
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)
-#include <linux/minmax.h>
-#endif
+#include <linux/kernel.h> 
+#include <linux/proc_fs.h> 
+#include <linux/sched.h> 
+#include <linux/uaccess.h> 
+#include <linux/version.h> 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0) 
+#include <linux/minmax.h> 
+#endif 
 #include <linux/init.h>
 #include <linux/kobject.h>
 #include <linux/list.h>
+#include <linux/slab.h>
 #include <linux/sysfs.h>
 
 #include <linux/input/mt.h>
-#include <linux/input-event-codes.h>
 #include <linux/kprobes.h>
+#include <linux/version.h>
+#include <linux/input-event-codes.h>
 
-/* ---- universal helper -------------------------------------------- */
-#include "kprobe_kallsyms.h"
-/* Use ONLY the by-name resolver (resolved via kprobe). */
-#define klookup(name)  ksym_lookup_name_log(name)   /* logs each resolve */
-/* ------------------------------------------------------------------ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
+#define KPROBE_LOOKUP 1
+#include <linux/kprobes.h>
+static struct kprobe kp = {
+    .symbol_name = "kallsyms_lookup_name",
+};
+#endif
 
 static char *mCommon = "invoke_syscall";
+
 module_param(mCommon, charp, 0644);
 MODULE_PARM_DESC(mCommon, "Parameter");
 
 static struct miscdevice dispatch_misc_device;
 
-/* If prctl_cf is not already defined in headers, define it here so stack
- * variables compile without incomplete-type errors. */
-#ifndef HAVE_PRCTL_CF_DEF
-struct prctl_cf {
-	pid_t           pid;
-	unsigned long   addr;
-	void __user    *buffer;
-	size_t          size;
-};
-#endif
+unsigned long (*kallsyms_lookup_nameX)(const char *name);
 
-/* --------------------------- hide_myself -------------------------- */
 static void __init hide_myself(void)
 {
-	struct vmap_area *va, *vtmp;
-	struct module_use *use, *tmp;
-	struct list_head *vmap_list =
-		(struct list_head *)klookup("vmap_area_list");
-	struct rb_root *vmap_root =
-		(struct rb_root *)klookup("vmap_area_root");
+    struct vmap_area *va, *vtmp;
+    struct module_use *use, *tmp;
+    struct list_head *_vmap_area_list;
+    struct rb_root *_vmap_area_root;
 
-	if (!vmap_list || !vmap_root)
-		return;
+#ifdef KPROBE_LOOKUP
+    
+    if (register_kprobe(&kp) < 0) {
+	    printk("driverX: module hide failed");
+        return;
+    }
+    kallsyms_lookup_nameX = (unsigned long (*)(const char *name)) kp.addr;
+    unregister_kprobe(&kp);
+#endif
+	
+   return;
+	
+    _vmap_area_list =
+        (struct list_head *) kallsyms_lookup_nameX("vmap_area_list");
+    _vmap_area_root = (struct rb_root *) kallsyms_lookup_nameX("vmap_area_root");
 
-	list_for_each_entry_safe(va, vtmp, vmap_list, list) {
-		if ((unsigned long)THIS_MODULE > va->va_start &&
-		    (unsigned long)THIS_MODULE < va->va_end) {
-			list_del(&va->list);
-			rb_erase(&va->rb_node, vmap_root);
-		}
-	}
+    /* hidden from /proc/vmallocinfo */
+    list_for_each_entry_safe (va, vtmp, _vmap_area_list, list) {
+        if ((unsigned long) THIS_MODULE > va->va_start &&
+            (unsigned long) THIS_MODULE < va->va_end) {
+            list_del(&va->list);
+            /* remove from red-black tree */
+            rb_erase(&va->rb_node, _vmap_area_root);
+        }
+    }
 
-	list_del_init(&THIS_MODULE->list);
-	kobject_del(&THIS_MODULE->mkobj.kobj);
+    /* hidden from /proc/modules */
+    list_del_init(&THIS_MODULE->list);
 
-	list_for_each_entry_safe(use, tmp, &THIS_MODULE->target_list,
-				 target_list) {
-		list_del(&use->source_list);
-		list_del(&use->target_list);
-		sysfs_remove_link(use->target->holders_dir, THIS_MODULE->name);
-		kfree(use);
-	}
+    /* hidden from /sys/modules */
+    kobject_del(&THIS_MODULE->mkobj.kobj);
+
+    /* decouple the dependency */
+    list_for_each_entry_safe (use, tmp, &THIS_MODULE->target_list,
+                              target_list) {
+        list_del(&use->source_list);
+        list_del(&use->target_list);
+        sysfs_remove_link(use->target->holders_dir, THIS_MODULE->name);
+        kfree(use);
+    }
 }
 
-/* --------------------------- helpers ------------------------------ */
-static int (*my_get_cmdline)(struct task_struct *, char *, int);
+/* global storage for the pointer */
+static int (*my_get_cmdline)(struct task_struct *tsk,
+                             char *buf, int buflen) =
+        (void *)0xffffffebb7992db0;   /* ← hard-coded address */
 
-static pid_t find_process_by_name(const char *name)
-{
-	struct task_struct *task;
-	char cmdline[256];  // fixed: buffer instead of char
-	size_t name_len = strlen(name);
-	int ret;
+/* unchanged logic below … */
+pid_t find_process_by_name(const char *name) {
+    struct task_struct *task;
+    char cmdline[256];
+	size_t name_len;
+    int ret;
 
-	if (!name_len)
-		return -EINVAL;
-
-	if (!my_get_cmdline)
-		my_get_cmdline = (void *)klookup("get_cmdline");
-
-	rcu_read_lock();
-	for_each_process(task) {
-		if (!task->mm)
-			continue;
-
-		cmdline[0] = '\0';  // initialize buffer
-		ret = my_get_cmdline ? my_get_cmdline(task, cmdline, sizeof(cmdline))
-				     : -1;
-
-		if (ret < 0) {
-			if (!strncmp(task->comm, name,
-				     min(strlen(task->comm), name_len))) {
-				rcu_read_unlock();
-				return task->pid;
-			}
-		} else {
-			if (!strncmp(cmdline, name,
-				     min(name_len, strlen(cmdline)))) {
-				rcu_read_unlock();
-				return task->pid;
-			}
-		}
+	name_len = strlen(name);
+	if (name_len == 0) {
+		pr_err("[ovo] process name is empty\n");
+		return -2;
 	}
-	rcu_read_unlock();
-	return 0;
+    
+    if (my_get_cmdline == NULL) {
+        my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
+		pr_info("pvm: cmdline bsdk wala found , plz compare in kallsym file");
+		// It can be NULL, because there is a fix below if get_cmdline is NULL
+    }
+    
+	// code from https://github.com/torvalds/linux/blob/master/kernel/sched/debug.c#L797
+    rcu_read_lock();
+    for_each_process(task) {
+        if (task->mm == NULL) {
+            continue;
+        }
+
+        cmdline[0] = '\0';
+        if (my_get_cmdline != NULL) {
+            ret = my_get_cmdline(task, cmdline, sizeof(cmdline));
+			// ret = -1;
+        } else {
+            ret = -1;
+        }
+
+        if (ret < 0) {
+            // Fallback to task->comm
+            pr_warn("pvm: Failed to get cmdline for pid %d : %s\n", task->pid, task->comm);
+            if (strncmp(task->comm, name, min(strlen(task->comm), name_len)) == 0) {
+                rcu_read_unlock();
+				pr_info("[ovo] pid matched returning %d", task->pid);
+                return task->pid;
+            }
+        } else {
+			pr_warn("pvm: success to get cmdline for pid %d : %s\n", task->pid, cmdline);
+            if (strncmp(cmdline, name, min(name_len, strlen(cmdline))) == 0) {
+				pr_info("[ovo] (in cmdline) pid matched returning %d", task->pid);
+                rcu_read_unlock();
+                return task->pid;
+            }
+        }
+    }
+
+    rcu_read_unlock();
+    return 0;
 }
 
-/* --------------------- ioctl & syscall kprobe --------------------- */
-static struct kprobe syscall_probe;
+int dispatch_open(struct inode *node, struct file *file) {
+    return 0;
+}
+
+int dispatch_close(struct inode *node, struct file *file) {
+    return 0;
+}
+
+bool isFirst = true;
+static struct kprobe kpp;
+
+long dispatch_ioctl(struct file* const file, unsigned int const cmd, unsigned long const arg) {
+    static COPY_MEMORY cm;
+    static MODULE_BASE mb;
+    static char name[0x100] = {0};
+
+    if(isFirst) {
+	 //   unregister_kprobe(&kpp);
+	    isFirst = false;
+    }
+
+    switch (cmd) {
+        case OP_READ_MEM:
+            {
+                if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
+                    pr_err("pvm: OP_READ_MEM copy_from_user failed.\n");
+                    return -1;
+                }
+                if (read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size, false) == false) {
+                    pr_err("pvm: OP_READ_MEM read_process_memory failed.\n");
+                    return -1;
+                }
+            }
+            break;
+	case OP_RW_MEM:
+            {
+                if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
+                    pr_err("pvm: OP_READ_MEM copy_from_user failed.\n");
+                    return -1;
+                }
+                if (read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size, true) == false) {
+                    pr_err("pvm: OP_READ_MEM read_process_memory failed.\n");
+                    return -1;
+                }
+            }
+            break;
+        case OP_WRITE_MEM:
+            {
+                if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
+                    return -1;
+                }
+                if (write_process_memory(cm.pid, cm.addr, cm.buffer, cm.size) == false) {
+                    return -1;
+                }
+            }
+            break;
+        case OP_MODULE_BASE:
+            {
+                if (copy_from_user(&mb, (void __user*)arg, sizeof(mb)) != 0 
+                ||  copy_from_user(name, (void __user*)mb.name, sizeof(name)-1) !=0) {
+                    // pr_err("OP_MODULE_BASE copy_from_user failed.\n");
+                    return -1;
+                }
+                mb.base = get_module_base(mb.pid, name);
+                if (copy_to_user((void __user*)arg, &mb, sizeof(mb)) !=0) {
+                    // pr_err("OP_MODULE_BASE copy_to_user failed.\n");
+                    return -1;
+                }
+            }
+            break;
+        default:
+            break;
+    }
+return 0;
+}
+
+struct file_operations dispatch_functions = {
+    .owner   = THIS_MODULE,
+    .open    = dispatch_open,
+    .release = dispatch_close,
+    .unlocked_ioctl = dispatch_ioctl,
+};
+
+// Structure for user data
+struct ioctl_cf {
+    int fd;
+    char name[15];
+};
+
+struct ioctl_cf cf;
+
+struct prctl_cf {
+    int pid;
+    uintptr_t addr;
+    void* buffer;
+    int size;
+};
+
+int filedescription;
 
 static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 {
-	u64 v4;
+    uint64_t v4;
+    // int v5;
 
-	if ((u32)regs->regs[1] != 167)   /* AArch64 svc 29 */
-		return 0;
+    if ((uint32_t)(regs->regs[1]) == 167 /* syscall 29 on AArch64 */) {
+        v4 = regs->user_regs.regs[0];
 
-	// fixed: assign first element, not entire array
-	v4 = regs->user_regs.regs[0];
+        // Handle memory read request
+        if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x999) {
+            struct prctl_cf cfp;
+			pid_t pidd = find_process_by_name("com.activision.callofduty.shooter");
+	        pr_info("pvm: bgmi pid %d", pidd);
+            if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
+                // pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
+                if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, false)) {
+		
+                } else {
+                   pr_err("pvm: read_process_memory failed\n");
+                }
+            }
+        }
 
-	if (*(u32 *)(regs->user_regs.regs + 8) == 0x999) {
-		struct prctl_cf cfp;
-		if (!copy_from_user(&cfp, *(const void __user **)(v4 + 16), sizeof(cfp)))
-			read_process_memory(cfp.pid, cfp.addr, cfp.buffer,
-					    cfp.size, false);
-	}
+	if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x9999) {
+            struct prctl_cf cfp;
+            if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
+                // pr_info("pvm: read request: pid=%d addr=0x%lx size=%d buf=0x%px\n", cfp.pid, cfp.addr, cfp.size, cfp.buffer);
+                if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, true)) {
+		
+                } else {
+                   pr_err("pvm: read_process_memory failed\n");
+                }
+            }
+	}    
+/*
+        // Handle FD dispatch creation
+        if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x969) {
+            if (!copy_from_user(&cf, *(const void **)(v4 + 16), sizeof(cf))) {
+                v5 = anon_inode_getfd(cf.name, &dispatch_functions, 0LL, 2LL);
+                filedescription = v5;
 
-	if (*(u32 *)(regs->user_regs.regs + 8) == 0x9999) {
-		struct prctl_cf cfp;
-		if (!copy_from_user(&cfp, *(const void __user **)(v4 + 16), sizeof(cfp)))
-			read_process_memory(cfp.pid, cfp.addr, cfp.buffer,
-					    cfp.size, true);
-	}
-	return 0;
+                if (v5 >= 1) {
+                    cf.fd = v5;
+                    if (!copy_to_user(*(void **)(v4 + 16), &cf, sizeof(cf))) {
+                        pr_info("driverX: successfully copied fd to user\n");
+                    }
+                }
+            }
+        }
+*/
+    }
+
+    return 0;
 }
 
-static long dispatch_ioctl(struct file *file, unsigned int cmd,
-			   unsigned long arg)
-{
-	static COPY_MEMORY  cm;
-	static MODULE_BASE  mb;
-	static char name[0x100];
-
-	switch (cmd) {
-	case OP_READ_MEM:
-#ifdef OP_RW_MEM
-	case OP_RW_MEM:
-#endif
-		if (copy_from_user(&cm, (void __user *)arg, sizeof(cm)))
-			return -EFAULT;
-#ifdef OP_RW_MEM
-		if (!read_process_memory(cm.pid, cm.addr, cm.buffer,
-					 cm.size, cmd == OP_RW_MEM))
-#else
-		if (!read_process_memory(cm.pid, cm.addr, cm.buffer,
-					 cm.size, false))
-#endif
-			return -EIO;
-		break;
-
-	case OP_WRITE_MEM:
-		if (copy_from_user(&cm, (void __user *)arg, sizeof(cm)))
-			return -EFAULT;
-		if (!write_process_memory(cm.pid, cm.addr, cm.buffer, cm.size))
-			return -EIO;
-		break;
-
-	case OP_MODULE_BASE:
-		if (copy_from_user(&mb, (void __user *)arg, sizeof(mb)) ||
-		    copy_from_user(name, (void __user *)mb.name,
-				   sizeof(name) - 1))
-			return -EFAULT;
-		mb.base = get_module_base(mb.pid, name);
-		if (copy_to_user((void __user *)arg, &mb, sizeof(mb)))
-			return -EFAULT;
-		break;
-	default:
-		return -EINVAL;
-	}
-	return 0;
-}
-
-static int dispatch_open(struct inode *n, struct file *f) { return 0; }
-static int dispatch_close(struct inode *n, struct file *f) { return 0; }
-
-static const struct file_operations dispatch_fops = {
-	.owner          = THIS_MODULE,
-	.open           = dispatch_open,
-	.release        = dispatch_close,
-	.unlocked_ioctl = dispatch_ioctl,
-};
-
-/* ----------------------- module init / exit ----------------------- */
-static bool isDevUse;
+bool isDevUse = false;
 
 static int __init hide_init(void)
 {
-	int ret;
+    int ret;
+    // kpp.symbol_name = "el0_svc_common";
+    kpp.symbol_name = mCommon; // "invoke_syscall";
+    kpp.pre_handler = handler_pre;
 
-	ret = kallsyms_init("kallsyms_lookup_name");
-	if (ret) {
-		pr_err("driverX: kallsyms_init failed (%d)\n", ret);
-		return ret;
-	}
+    dispatch_misc_device.minor = MISC_DYNAMIC_MINOR;
+    dispatch_misc_device.name = "quallcomm_null";
+    dispatch_misc_device.fops = &dispatch_functions;
+    
+    ret = register_kprobe(&kpp);
+    if (ret < 0) {	
+        pr_err("driverX: Failed to register kprobe: %d (%s)\n", ret, kpp.symbol_name);
 
-	syscall_probe.symbol_name = mCommon;
-	syscall_probe.pre_handler = handler_pre;
+	kpp.symbol_name = "invoke_syscall";
+        kpp.pre_handler = handler_pre;  
 
-	dispatch_misc_device.minor = MISC_DYNAMIC_MINOR;
-	dispatch_misc_device.name  = "quallcomm_null";
-	dispatch_misc_device.fops  = &dispatch_fops;
-
-	ret = register_kprobe(&syscall_probe);
-	if (ret) {
-		syscall_probe.symbol_name = "invoke_syscall";
-		ret = register_kprobe(&syscall_probe);
-		if (ret) {
-			isDevUse = true;
-			return misc_register(&dispatch_misc_device);
-		}
-	}
+	ret = register_kprobe(&kpp);
+	if(ret < 0) {
+	    isDevUse = true;
+	    ret = misc_register(&dispatch_misc_device);
+	    pr_err("driverX: Failed to register kprobe: %d (%s) using dev\n", ret, kpp.symbol_name);
+	    return ret;
+	}       
+    }
 
 	hide_myself();
-	return 0;
+/*
+	if (my_get_cmdline == NULL) {
+        my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
+		pr_info("pvm: cmdline bsdk wala found , plz compare in kallsym file");
+		// It can be NULL, because there is a fix below if get_cmdline is NULL
+	}
+*/
+	static struct kprobe kpc = {
+    .symbol_name = "get_cmdline",
+     };
+
+	if (register_kprobe(&kpc) < 0) {
+	    printk("kpm: cmdline bsdk not kprobed");
+        // return;
+    } else {
+        my_get_cmdline = (int (*)(struct task_struct *task, char *buffer, int buflen)) kpc.addr;
+		pr_info("pvm: cmdline bsdk wala found");
+		unregister_kprobe(&kpc);
+	}
+    
+    // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
+    return 0;
 }
 
-static void __exit hide_exit(void)
-{
-	if (isDevUse)
-		misc_deregister(&dispatch_misc_device);
-	else
-		unregister_kprobe(&syscall_probe);
-
-	kallsyms_exit();
+static void __exit hide_exit(void) {
+    if(isDevUse)
+        misc_deregister(&dispatch_misc_device);
+    else
+        unregister_kprobe(&kpp);
 }
 
 module_init(hide_init);
 module_exit(hide_exit);
 
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)
-MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
-#endif
-
 MODULE_AUTHOR("exianb");
 MODULE_DESCRIPTION("exianb");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.0");
+// MODULE_VERSION("1.0");
+
+// MODULE_LICENSE("GPL");
+// MODULE_AUTHOR("National Cheng Kung University, Taiwan");
+// MODULE_DESCRIPTION("Catch Me If You Can");
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+#endif
