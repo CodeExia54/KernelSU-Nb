@@ -158,80 +158,62 @@ pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
     ret:
 	*/
 
-pgd_t *pgd;
-p4d_t *p4d;
-pmd_t *pmd;
-pte_t *pte;
-pud_t *pud;
+    pgd_t *pgd;
+    #if __PAGETABLE_P4D_FOLDED == 1
+    p4d_t *p4d;
+    #endif
+    pud_t *pud;
+    pmd_t *pmd;
+    pte_t *pte;
 
-unsigned long va = addr;
+    unsigned long va = addr;
 
-pgd = pgd_offset(mm, va);
-pr_info("[ovo] PGD entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pgd_val(*pgd));
-if (pgd_none(*pgd) || pgd_bad(*pgd)) {
-    pr_info("[ovo] pgd none or bad: 0x%llx\n", (unsigned long long)pgd_val(*pgd));
-    return NULL;
-}
+    pgd = pgd_offset(mm, va);
+    pr_info("[ovo] PGD entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pgd_val(*pgd));
+    if (pgd_none(*pgd) || pgd_bad(*pgd)) return NULL;
 
-p4d = p4d_offset(pgd, va);
-pr_info("[ovo] P4D entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)p4d_val(*p4d));
-if (p4d_none(*p4d) || p4d_bad(*p4d)) {
-    pr_info("[ovo] p4d none or bad: 0x%llx\n", (unsigned long long)p4d_val(*p4d));
-    return NULL;
-}
+#if __PAGETABLE_P4D_FOLDED == 1
+    p4d = p4d_offset(pgd, va);
+    pr_info("[ovo] P4D entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)p4d_val(*p4d));
+    if (p4d_none(*p4d) || p4d_bad(*p4d)) return NULL;
+    pud = pud_offset(p4d, va);
+#else
+    pud = pud_offset(pgd, va);
+#endif
 
-pud = pud_offset(p4d, va);
-pr_info("[ovo] PUD entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pud_val(*pud));
-if (pud_none(*pud) || pud_bad(*pud)) {
-    pr_info("[ovo] pud none or bad: 0x%llx\n", (unsigned long long)pud_val(*pud));
-    return NULL;
-}
+    pr_info("[ovo] PUD entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pud_val(*pud));
+    if (pud_none(*pud) || pud_bad(*pud)) return NULL;
 
-pmd = pmd_offset(pud, va);
-pr_info("[ovo] PMD raw pointer: %p\n", pmd);
-if (!pmd) {
-    pr_info("[ovo] pmd_offset returned NULL pointer\n");
-    return NULL;
-}
+    pmd = pmd_offset(pud, va);
+    pr_info("[ovo] PMD raw pointer: %p\n", pmd);
+    if (!pmd) return NULL;
 
-pr_info("[ovo] PMD entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pmd_val(*pmd));
-pr_info("[ovo] PMD flags: none=%d, bad=%d, leaf=%d, present=%d\n",
-        pmd_none(*pmd),
-        pmd_bad(*pmd),
-        pmd_leaf(*pmd),
-        pmd_present(*pmd));
+    pr_info("[ovo] PMD entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pmd_val(*pmd));
+    pr_info("[ovo] PMD flags: none=%d, bad=%d, leaf=%d, present=%d\n",
+            pmd_none(*pmd),
+            pmd_bad(*pmd),
+            pmd_leaf(*pmd),
+            pmd_present(*pmd));
 
-if (pmd_none(*pmd)) {
-    pr_info("[ovo] PMD is NONE\n");
-    return NULL;
-}
+    // Fix: try to use raw PMD pointer if it's not mapped
+    if (pmd_none(*pmd) || pmd_bad(*pmd)) {
+        pr_info("[ovo] PMD is NONE/BAD, using raw pointer\n");
+        return (pte_t *)pmd; // risky, but allows reading physical memory
+    }
 
-if (pmd_leaf(*pmd)) {
-    pr_info("[ovo] PMD is a LEAF (hugepage) at PFN: 0x%llx\n", (unsigned long long)pmd_pfn(*pmd));
-    return (pte_t *)pmd; // treat PMD as leaf-level PTE
-}
+    if (pmd_leaf(*pmd)) {
+        pr_info("[ovo] PMD is a LEAF (hugepage) at PFN: 0x%llx\n", (unsigned long long)pmd_pfn(*pmd));
+        return (pte_t *)pmd;
+    }
 
-if (pmd_bad(*pmd)) {
-    pr_info("[ovo] PMD is BAD\n");
-    return NULL;
-}
+    pr_info("[ovo] PMD is valid, not a leaf, continuing to PTE\n");
 
-pr_info("[ovo] PMD is valid, not a leaf, continuing to PTE\n");
+    pte = pte_offset_kernel(pmd, va);
+    pr_info("[ovo] PTE entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pte_val(*pte));
+    if (pte_none(*pte)) return NULL;
+    if (!pte_present(*pte)) return NULL;
 
-pte = pte_offset_kernel(pmd, va);
-pr_info("[ovo] PTE entry for va 0x%lx: 0x%llx\n", va, (unsigned long long)pte_val(*pte));
-if (pte_none(*pte)) {
-    pr_info("[ovo] pte none: 0x%llx\n", (unsigned long long)pte_val(*pte));
-    return NULL;
-}
-if (!pte_present(*pte)) {
-    pr_info("[ovo] pte not present, raw value: 0x%llx\n", (unsigned long long)pte_val(*pte));
-    return NULL;
-}
-
-return pte;
-
-
+    return pte;
 }
 #endif
 
