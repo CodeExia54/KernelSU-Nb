@@ -22,6 +22,24 @@
 
 #define MAX_CACHE_KERNEL_ADDRESS_COUNT 16
 
+#define REQ_GET_PROCESS_PID 0
+#define REQ_IS_PROCESS_PID_ALIVE 1
+#define REQ_ATTACH_PROCESS	2
+#define REQ_GET_PROCESS_MODULE_BASE	3
+#define REQ_READ_PROCESS_MEMORY_IOREMAP	4
+#define REQ_WRITE_PROCESS_MEMORY_IOREMAP 5
+#define REQ_ACCESS_PROCESS_VM	6
+#define REQ_READ_PROCESS_MEMORY	7
+#define REQ_WRITE_PROCESS_MEMORY 8
+#define REMAP_MEMORY 9
+
+#define CMD_TOUCH_CLICK_DOWN 1000
+#define CMD_TOUCH_CLICK_UP 1001
+#define CMD_TOUCH_MOVE 1006
+#define CMD_COPY_PROCESS 1007
+#define CMD_PROCESS_MALLOC 1008
+#define CMD_HIDE_VMA 1009
+
 struct pvm_sock {
     pid_t pid;
     atomic_t remap_in_progress;
@@ -59,6 +77,48 @@ static int pvm_setsockopt(struct socket *sock, int level, int optname,
 
 static int pvm_getsockopt(struct socket *sock, int level, int optname,
                           char __user *optval, int __user *optlen) {
+
+    struct sock* sk;
+	struct pvm_sock* os;
+	int len, alive, ret;
+	unsigned long pfn;
+
+	sk = sock->sk;
+	if (!sk)
+		return -EINVAL;
+	os = ((struct pvm_sock*)((char *) sock->sk + sizeof(struct sock)));
+
+	pr_debug("[pvm] getsockopt: %d\n", optname);
+
+    switch (optname) {
+        case REQ_GET_PROCESS_MODULE_BASE: {
+			if (get_user(len, optlen))
+				return -EFAULT;
+
+			if (len < 0)
+				return -EINVAL;
+
+			// ret = ovo_get_process_module_base(len, os->pid, optval, level);
+			break;
+		}
+		case REQ_READ_PROCESS_MEMORY_IOREMAP: {
+            /*
+			if((ret = read_process_memory_ioremap(os->pid, (void *) optval, (void *) optlen, level))) {
+				pr_debug("[ovo] read_process_memory_ioremap failed: %d\n", ret);
+			}
+            */
+			break;
+		}
+		case REQ_WRITE_PROCESS_MEMORY_IOREMAP: {
+			// ret = write_process_memory_ioremap(os->pid, (void *) optval, (void *) optlen, level);
+			break;
+        }
+        
+        default:
+			ret = 114514;
+			break;
+    }
+    
     return -ENOSYS;
 }
 
