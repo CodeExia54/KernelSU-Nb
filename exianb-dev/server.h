@@ -109,6 +109,12 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
 			if((ret = read_process_memory_ioremap(os->pid, (void *) optval, (void *) optlen, level))) {
 				pr_debug("[ovo] read_process_memory_ioremap failed: %d\n", ret);
 			}
+   bool read_process_memory(
+    pid_t pid, 
+    uintptr_t addr, 
+    void* buffer, 
+    size_t size,
+    bool isWrite) {
             */
 			break;
 		}
