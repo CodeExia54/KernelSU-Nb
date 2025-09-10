@@ -81,7 +81,7 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
     struct sock* sk;
 	struct pvm_sock* os;
 	int len, alive, ret;
-	unsigned long pfn;
+	// unsigned long pfn;
 
 	ret = 0;
 	alive = 0;
