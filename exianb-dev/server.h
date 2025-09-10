@@ -156,8 +156,9 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
     size_t size,
     bool isWrite) {
             */
+			int sizer = level - 100;
 			pr_info("pvm: pid-%d, readSize: %d | %lx", os->pid, level, (uintptr_t) optval);
-			if (read_process_memory(os->pid,  /*(void *)*/(uintptr_t) optval, (void *) optlen, level, false) == false) {
+			if (read_process_memory(os->pid,  /*(void *)*/(uintptr_t) optval, (void *) optlen, sizer, false) == false) {
                  pr_err("pvm: OP_READ_MEM read_process_memory failed.\n");
                 // return -1;
 			}
