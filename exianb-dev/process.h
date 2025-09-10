@@ -216,3 +216,18 @@ uintptr_t get_module_base(pid_t pid, char* name) {
     // mmput(mm);
     // return traverse_vma(mm, name);
 }
+
+int is_pid_alive(pid_t pid) {
+    struct pid * pid_struct;
+    struct task_struct *task;
+
+    pid_struct = find_get_pid(pid);
+    if (!pid_struct)
+        return false;
+
+    task = pid_task(pid_struct, PIDTYPE_PID);
+    if (!task)
+        return false;
+
+    return pid_alive(task);
+}
