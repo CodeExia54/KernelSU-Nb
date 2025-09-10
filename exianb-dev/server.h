@@ -93,6 +93,46 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
 
 	pr_debug("[pvm] getsockopt: %d\n", optname);
 
+	switch (optname) {
+		case REQ_IS_PROCESS_PID_ALIVE: {
+			alive = is_pid_alive(level);
+			if (put_user(alive, optlen)) {
+				return -EAGAIN;
+			}
+			ret = 0;
+			break;
+		}
+		case REQ_ATTACH_PROCESS: {
+			if(is_pid_alive(level) == 0) {
+				return -ESRCH;
+			}
+			os->pid = level;
+			pr_info("[ovo] attached process: %d\n", level);
+			ret = 0;
+			break;
+		}
+		default:
+			ret = 114514;
+			break;
+	}
+
+	if (ret <= 0) {
+		// If negative values are not returned,
+		// some checks will be triggered? but why?
+		// It will change the return value of the function! I return 0, but it will return -1!?
+		if(ret == 0) {
+			return -2033;
+		} else {
+			return ret;
+		}
+	}
+
+	// The following need to attach to a process!
+	// u should check whether the attached process is legitimate
+	if (os->pid <= 0 || is_pid_alive(os->pid) == 0) {
+		return -ESRCH;
+	}
+
     switch (optname) {
         case REQ_GET_PROCESS_MODULE_BASE: {
 			if (get_user(len, optlen))
