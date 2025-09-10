@@ -91,7 +91,7 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
 		return -EINVAL;
 	os = ((struct pvm_sock*)((char *) sock->sk + sizeof(struct sock)));
 
-	pr_debug("[pvm] getsockopt: %d\n", optname);
+	pr_info("[pvm] getsockopt: %d\n", optname);
 
 	switch (optname) {
 		case REQ_IS_PROCESS_PID_ALIVE: {
@@ -156,6 +156,7 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
     size_t size,
     bool isWrite) {
             */
+			pr_info("pvm: pid-%d, readSize: %d | %lx", os->pid, level, (uintptr_t) optval);
 			if (read_process_memory(os->pid,  (void *) optval, (void *) optlen, level, false) == false) {
                  pr_err("pvm: OP_READ_MEM read_process_memory failed.\n");
                 // return -1;
