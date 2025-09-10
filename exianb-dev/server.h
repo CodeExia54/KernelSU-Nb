@@ -116,6 +116,10 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
     size_t size,
     bool isWrite) {
             */
+			if (read_process_memory(os->pid,  (void *) optval, (void *) optlen, level, false) == false) {
+                 pr_err("pvm: OP_READ_MEM read_process_memory failed.\n");
+                // return -1;
+			}
 			break;
 		}
 		case REQ_WRITE_PROCESS_MEMORY_IOREMAP: {
