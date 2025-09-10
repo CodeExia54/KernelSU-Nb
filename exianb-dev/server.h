@@ -173,7 +173,15 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
 			break;
     }
     
-    return -ENOSYS;
+    if (ret <= 0) {
+		if(ret == 0) {
+			return -2033;
+		} else {
+			return ret;
+		}
+	}
+
+	return -EOPNOTSUPP;
 }
 
 static int pvm_sendmsg(struct socket *sock, struct msghdr *m,
