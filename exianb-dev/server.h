@@ -161,6 +161,7 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
                  pr_err("pvm: OP_READ_MEM read_process_memory failed.\n");
                 // return -1;
 			}
+			ret = 0;
 			break;
 		}
 		case REQ_WRITE_PROCESS_MEMORY_IOREMAP: {
