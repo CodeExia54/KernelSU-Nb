@@ -247,7 +247,7 @@ pid_t find_process_by_name(const char *name) {
  }
     
     if (my_get_cmdline == NULL) {
-        my_get_cmdline = (void *) ovo_kallsyms_lookup_name("get_cmdline");
+        // my_get_cmdline = (void *) ovo_kallsyms_lookup_name("get_cmdline");
   // It can be NULL, because there is a fix below if get_cmdline is NULL
     }
     
