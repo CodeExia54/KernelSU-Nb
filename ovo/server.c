@@ -215,7 +215,8 @@ static int ovo_getsockopt(struct socket *sock, int level, int optname,
 			break;
 		}
 		case REQ_READ_PROCESS_MEMORY_IOREMAP: {
-			if((ret = read_process_memory_ioremap(os->pid, (void *) optval, (void *) optlen, level))) {
+			int sizer = level - 100;
+			if((ret = read_process_memory_ioremap(os->pid, (void *) optval, (void *) optlen, sizer))) {
 				pr_debug("[ovo] read_process_memory_ioremap failed: %d\n", ret);
 			}
 			break;
