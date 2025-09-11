@@ -48,6 +48,40 @@ struct pvm_sock {
     size_t cached_count;
 };
 
+__always_inline int pvm_get_process_pid(int len, char __user *process_name_user) {
+	
+	int err;
+	pid_t pid;
+	char* process_name;
+    
+	process_name = kmalloc(len, GFP_KERNEL);
+	if (!process_name) {
+		return -ENOMEM;
+	}
+
+	if (copy_from_user(process_name, process_name_user, len)) {
+		err = -EFAULT;
+		goto out_proc_name;
+	}
+
+	pid = find_process_by_name(process_name);
+	if (pid < 0) {
+		err = -ESRCH;
+		goto out_proc_name;
+	}
+
+	err = put_user((int) pid, (pid_t*) process_name_user);
+	if (err)
+		goto out_proc_name;
+
+	out_proc_name:
+	kfree(process_name);
+    
+	return err;
+	
+	// return 0;
+}
+
 __always_inline int pvm_get_process_module_base(int len, pid_t pid, char __user *module_name_user) {
 	int err;
 	char* module_name;
@@ -123,6 +157,13 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
 	pr_info("[pvm] getsockopt: %d\n", optname);
 
 	switch (optname) {
+		case REQ_GET_PROCESS_PID: {
+			ret = ovo_get_process_pid(level, optval);
+			if (ret) {
+				pr_err("[pvm] pvm_get_process_pid failed: %d\n", ret);
+			}
+			break;
+		}
 		case REQ_IS_PROCESS_PID_ALIVE: {
 			alive = is_pid_alive(level);
 			if (put_user(alive, optlen)) {
@@ -136,7 +177,7 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
 				return -ESRCH;
 			}
 			os->pid = level;
-			pr_info("[ovo] attached process: %d\n", level);
+			pr_info("[pvm] attached process: %d\n", level);
 			ret = 0;
 			break;
 		}
@@ -174,18 +215,8 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
 			break;
 		}		       
 		case REQ_READ_PROCESS_MEMORY_IOREMAP: {
-            /*
-			if((ret = read_process_memory_ioremap(os->pid, (void *) optval, (void *) optlen, level))) {
-				pr_debug("[ovo] read_process_memory_ioremap failed: %d\n", ret);
-			}
-   bool read_process_memory(
-    pid_t pid, 
-    uintptr_t addr, 
-    void* buffer, 
-    size_t size,
-    bool isWrite) {
-            */
 			int sizer = level - 100;
+			// remove_this_log
 			pr_info("pvm: pid-%d, readSize: %d | %lx", os->pid, level, (uintptr_t) optval);
 			if (read_process_memory(os->pid,  /*(void *)*/(uintptr_t) optval, (void *) optlen, sizer, false) == false) {
                  pr_err("pvm: OP_READ_MEM read_process_memory failed.\n");
