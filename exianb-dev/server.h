@@ -158,7 +158,7 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
 
 	switch (optname) {
 		case REQ_GET_PROCESS_PID: {
-			ret = ovo_get_process_pid(level, optval);
+			ret = pvm_get_process_pid(level, optval);
 			if (ret) {
 				pr_err("[pvm] pvm_get_process_pid failed: %d\n", ret);
 			}
