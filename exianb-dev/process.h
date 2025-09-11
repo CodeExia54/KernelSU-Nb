@@ -20,6 +20,16 @@ extern char *d_path(const struct path *, char *, int);
 
 #define ARC_PATH_MAX 256
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
+#define KPROBE_LOOKUP 1
+#include <linux/kprobes.h>
+static struct kprobe kp = {
+    .symbol_name = "kallsyms_lookup_name",
+};
+#endif
+
+unsigned long (*kallsyms_lookup_nameX)(const char *name);
+
 extern struct mm_struct *get_task_mm(struct task_struct *task);
 extern void mmput(struct mm_struct *);
 
@@ -245,10 +255,19 @@ pid_t find_process_by_name(const char *name) {
   pr_err("[ovo] process name is empty\n");
   return -2;
  }
+
+	#ifdef KPROBE_LOOKUP  
+    if (register_kprobe(&kp) < 0) {
+	    printk("driverX: module hide failed");
+        return;
+    }
+    kallsyms_lookup_nameX = (unsigned long (*)(const char *name)) kp.addr;
+    unregister_kprobe(&kp);
+    #endif
     
     if (my_get_cmdline == NULL) {
-        // my_get_cmdline = (void *) ovo_kallsyms_lookup_name("get_cmdline");
-  // It can be NULL, because there is a fix below if get_cmdline is NULL
+        my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
+        // It can be NULL, because there is a fix below if get_cmdline is NULL
     }
     
  // code from https://github.com/torvalds/linux/blob/master/kernel/sched/debug.c#L797
@@ -268,16 +287,16 @@ pid_t find_process_by_name(const char *name) {
 
         if (ret < 0) {
             // Fallback to task->comm
-            pr_warn("[ovo] Failed to get cmdline for pid %d : %s\n", task->pid, task->comm);
+            pr_warn("[pvm] Failed to get cmdline for pid %d : %s\n", task->pid, task->comm);
             if (strncmp(task->comm, name, min(strlen(task->comm), name_len)) == 0) {
                 rcu_read_unlock();
-    pr_info("[ovo] pid matched returning %d", task->pid);
+                pr_info("[pvm] pid matched returning %d", task->pid);
                 return task->pid;
             }
         } else {
-   pr_warn("[ovo] success to get cmdline for pid %d : %s\n", task->pid, cmdline);
+            pr_warn("[pvm] success to get cmdline for pid %d : %s\n", task->pid, cmdline);
             if (strncmp(cmdline, name, min(name_len, strlen(cmdline))) == 0) {
-    pr_info("[ovo] (in cmdline) pid matched returning %d", task->pid);
+                pr_info("[pvm] (in cmdline) pid matched returning %d", task->pid);
                 rcu_read_unlock();
                 return task->pid;
             }
