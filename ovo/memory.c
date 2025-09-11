@@ -99,15 +99,14 @@ phys_addr_t vaddr_to_phy_addr(struct mm_struct *mm, uintptr_t va) {
 #endif
 
     if (!mm) return 0;
-/*
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0) && defined(OVO_0X202501232139)
     follow_pte(mm, va, &pte, &ptlp); // not export!
 #else
-*/
     ptep = page_from_virt_user(mm, va);
-// #endif
+#endif
 	if (!ptep) {
-		pr_err("[ovo] failed to get ptep NoobExia from 0x%lx\n", va);
+		pr_err("[ovo] failed to get ptep from 0x%lx\n", va);
 		return 0;
 	}
 
