@@ -99,7 +99,7 @@ pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
 }
 #else
 pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
-	/*
+	
     pgd_t * pgd;
 #if __PAGETABLE_P4D_FOLDED == 1
     p4d_t *p4d;
@@ -156,8 +156,8 @@ pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
     }
 
     ret:
-	*/
-
+	
+/*
     pgd_t *pgd;
     #if __PAGETABLE_P4D_FOLDED == 1
     p4d_t *p4d;
@@ -214,6 +214,7 @@ pte_t *page_from_virt_user(struct mm_struct *mm, unsigned long addr) {
     if (!pte_present(*pte)) return NULL;
 
     return pte;
+	*/
 }
 #endif
 
