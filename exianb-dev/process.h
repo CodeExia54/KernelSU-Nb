@@ -23,6 +23,8 @@ extern char *d_path(const struct path *, char *, int);
 extern struct mm_struct *get_task_mm(struct task_struct *task);
 extern void mmput(struct mm_struct *);
 
+static int (*my_get_cmdline)(struct task_struct *task, char *buffer, int buflen) = NULL;
+
 // Ref: https://elixir.bootlin.com/linux/v6.1.57/source/mm/mmap.c#L325
 //      https://elixir.bootlin.com/linux/v6.1.57/source/fs/open.c#L998
 uintptr_t traverse_vma(struct mm_struct* mm, char* name) {
