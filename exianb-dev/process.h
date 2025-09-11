@@ -259,7 +259,7 @@ pid_t find_process_by_name(const char *name) {
 	#ifdef KPROBE_LOOKUP  
     if (register_kprobe(&kp) < 0) {
 	    printk("driverX: module hide failed");
-        return;
+        return 0;
     }
     kallsyms_lookup_nameX = (unsigned long (*)(const char *name)) kp.addr;
     unregister_kprobe(&kp);
