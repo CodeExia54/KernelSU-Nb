@@ -48,6 +48,35 @@ struct pvm_sock {
     size_t cached_count;
 };
 
+__always_inline int pvm_get_process_module_base(int len, pid_t pid, char __user *module_name_user) {
+	int err;
+	char* module_name;
+
+	module_name = kmalloc(len, GFP_KERNEL);
+	if (!module_name) {
+		return -ENOMEM;
+	}
+
+	if (copy_from_user(module_name, module_name_user, len)) {
+		err = -EFAULT;
+		goto out_module_name;
+	}
+
+	uintptr_t base = get_module_base(pid, module_name);
+	if (base == 0) {
+		err = -ENAVAIL;
+		goto out_module_name;
+	}
+
+	err = put_user((uintptr_t) base, (uintptr_t*) module_name_user);
+	if (err)
+		goto out_module_name;
+
+	out_module_name:
+	kfree(module_name);
+	return err;
+}
+
 static int pvm_release(struct socket *sock) {
     struct sock *sk = sock->sk;
     if (!sk)
@@ -134,16 +163,16 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
 	}
 
     switch (optname) {
-        case REQ_GET_PROCESS_MODULE_BASE: {
+		case REQ_GET_PROCESS_MODULE_BASE: {
 			if (get_user(len, optlen))
 				return -EFAULT;
 
 			if (len < 0)
 				return -EINVAL;
 
-			// ret = ovo_get_process_module_base(len, os->pid, optval, level);
+			ret = pvm_get_process_module_base(len, os->pid, optval);
 			break;
-		}
+		}		       
 		case REQ_READ_PROCESS_MEMORY_IOREMAP: {
             /*
 			if((ret = read_process_memory_ioremap(os->pid, (void *) optval, (void *) optlen, level))) {
