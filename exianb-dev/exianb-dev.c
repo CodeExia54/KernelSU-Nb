@@ -69,6 +69,7 @@ static void __exit pvm_exit(void) {
     else
         unregister_kprobe(&kpp);
 	*/
+	pr_info("[pvm] goodbye!\n");
 	exit_server();
 }
 
