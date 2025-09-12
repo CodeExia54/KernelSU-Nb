@@ -42,6 +42,20 @@ static int __init pvm_init(void)
         pr_err("pvm: failed to initialize server: %d\n", ret);
         return ret;
 	}
+
+	struct task_struct *task;
+
+    // Pick the first process in the task list (usually init)
+    task = &init_task;
+
+    unsigned long base     = (unsigned long)task;
+    unsigned long off_mm   = (unsigned long)&task->mm   - base;
+    unsigned long off_comm = (unsigned long)&task->comm - base;
+	unsigned long off_pid = (unsigned long)&task->pid - base;
+	
+    // pr_info("init_task: pid=%d comm=%s\n", task_pid_nr(task), task->comm);
+    pr_info("Offsets relative to task_struct: mm=%lu, comm=%lu pid=%lu\n",
+            off_mm, off_comm, off_pid);
     // int ret;
 	// hide_myself();
     // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
