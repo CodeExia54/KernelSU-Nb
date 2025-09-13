@@ -351,6 +351,7 @@ int init_input_dev(void) {
 //		unregister_kprobe(&input_mt_sync_frame_kp);
 		return -ENOMEM;
 	}
+	pr_info("here bsdk lock hua");
 	pool->size = 0;
 	spin_lock_init(&pool->event_lock);
 
