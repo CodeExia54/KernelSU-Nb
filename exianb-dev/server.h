@@ -266,6 +266,27 @@ static struct proto pvm_proto = {
     .obj_size = sizeof(struct sock) + sizeof(struct pvm_sock),
 };
 
+#if(LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0))
+static struct proto_ops pvm_proto_ops = {
+    .family = PF_DECnet,
+    .owner = THIS_MODULE,
+    .release = pvm_release,
+//    .bind = sock_no_bind,
+//    .connect = sock_no_connect,
+    .socketpair = sock_no_socketpair,
+    .accept = sock_no_accept,
+//    .getname = sock_no_getname,
+    .poll = pvm_poll,
+    .ioctl = pvm_ioctl,
+    .listen = sock_no_listen,
+    .shutdown = sock_no_shutdown,
+    .setsockopt = pvm_setsockopt,
+    .getsockopt = pvm_getsockopt,
+    .sendmsg = pvm_sendmsg,
+//    .recvmsg = sock_no_recvmsg,
+    .mmap = pvm_mmap,
+};
+#else
 static struct proto_ops pvm_proto_ops = {
     .family = PF_DECnet,
     .owner = THIS_MODULE,
@@ -285,6 +306,7 @@ static struct proto_ops pvm_proto_ops = {
     .recvmsg = sock_no_recvmsg,
     .mmap = pvm_mmap,
 };
+#endif
 
 static int free_family = AF_DECnet;
 
