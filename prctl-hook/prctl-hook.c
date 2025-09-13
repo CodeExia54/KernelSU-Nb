@@ -344,6 +344,11 @@ static int __init hide_init(void)
 	    }       
     }
 
+	printk(KERN_INFO "pvm: sizeof(struct input_dev) = %zu\n", sizeof(struct input_dev));
+    printk(KERN_INFO "pvm: offset: event_lock = %zu\n", offsetof(struct input_dev, event_lock));
+    printk(KERN_INFO "pvm: offset: mt = %zu\n", offsetof(struct input_dev, mt));   // change 'mt' if your kernel uses mt_slots or mt_state
+    return 0;
+
 	hide_myself();
 
     // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
