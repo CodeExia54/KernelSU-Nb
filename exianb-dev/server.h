@@ -266,7 +266,7 @@ static struct proto pvm_proto = {
     .obj_size = sizeof(struct sock) + sizeof(struct pvm_sock),
 };
 
-#if(LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0))
+#if(LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
 static struct proto_ops pvm_proto_ops = {
     .family = PF_DECnet,
     .owner = THIS_MODULE,
