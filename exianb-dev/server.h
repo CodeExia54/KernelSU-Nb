@@ -217,9 +217,9 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
 		case REQ_READ_PROCESS_MEMORY_IOREMAP: {
 			int sizer = level - 1000;
 			// remove_this_log
-			pr_info("pvm: pid-%d, readSize: %d | %lx", os->pid, level, (uintptr_t) optval);
+			//pr_info("pvm: pid-%d, readSize: %d | %lx", os->pid, level, (uintptr_t) optval);
 			if (read_process_memory(os->pid,  /*(void *)*/(uintptr_t) optval, (void *) optlen, sizer, false) == false) {
-                 pr_err("pvm: OP_READ_MEM read_process_memory failed.\n");
+                 //pr_err("pvm: OP_READ_MEM read_process_memory failed.\n");
                 // return -1;
 			}
 			ret = 0;
