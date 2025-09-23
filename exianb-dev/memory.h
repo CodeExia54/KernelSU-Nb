@@ -132,7 +132,7 @@ bool read_process_memory(
     // pr_info("read_process_memory - pid: %d, addr: %lx, size: %zu\n", pid, addr, size);
     pid_struct = find_get_pid(pid);
     if (!pid_struct) {
-        pr_err("pvm: a-read_process_memory pid_struct failed.\n");
+      //  pr_err("pvm: a-read_process_memory pid_struct failed.\n");
         return false;
     }
 	task = get_pid_task(pid_struct, PIDTYPE_PID);
