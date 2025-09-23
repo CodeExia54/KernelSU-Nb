@@ -154,7 +154,7 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
 		return -EINVAL;
 	os = ((struct pvm_sock*)((char *) sock->sk + sizeof(struct sock)));
 
-	pr_info("[pvm] getsockopt: %d\n", optname);
+	//pr_info("[pvm] getsockopt: %d\n", optname);
 
 	switch (optname) {
 		case REQ_GET_PROCESS_PID: {
