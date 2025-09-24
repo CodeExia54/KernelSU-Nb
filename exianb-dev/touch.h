@@ -6,6 +6,22 @@
 #include <linux/string.h>      // For strlen, strncmp
 #include <linux/stddef.h>      // For offsetof
 
+#include <linux/module.h>       // For module macros, MODULE_LICENSE, etc.
+#include <linux/kernel.h>       // For printk, pr_info, etc.
+#include <linux/init.h>         // For __init, __exit
+#include <linux/slab.h>         // For kmalloc, kfree, kvmalloc
+#include <linux/vmalloc.h>      // For kvmalloc (internally)
+#include <linux/spinlock.h>     // For spinlock_t, spin_lock_init
+#include <linux/kprobes.h>      // For kprobes, register/unregister_kprobe
+#include <linux/errno.h>        // For error codes like -ENOMEM
+
+static struct event_pool *pool = NULL;
+struct input_dev* touch_dev;
+
+struct event_pool * get_event_pool(void) {
+	return pool;
+}
+
 void print_input_dev_names(struct list_head *input_dev_list) {
     struct list_head *pos;
     struct input_dev *dev;
@@ -79,7 +95,17 @@ struct input_dev* find_touch_device(void) {
 int init_touch() {
     // struct list_head* input_dev_list = (typeof(struct list_head*))kallsyms_lookup_nameX("input_dev_list");
     // print_input_dev_names(input_dev_list);
-    find_touch_device();
+    touch_dev = find_touch_device();
+
+	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
+	if (!pool) {
+//		unregister_kprobe(&input_event_kp);
+//		unregister_kprobe(&input_inject_event_kp);
+//		unregister_kprobe(&input_mt_sync_frame_kp);
+		return -ENOMEM;
+	}
+	pool->size = 0;
+	spin_lock_init(&pool->event_lock);
 	
     return 0;
 }
