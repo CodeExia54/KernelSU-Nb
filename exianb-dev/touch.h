@@ -127,6 +127,66 @@ bool isPressure = false;
 bool isBtnDown = false;
 int currSlot = 0;
 
+void manage_mt(bool isSim) {
+                    unsigned long flags;
+                    spin_lock_irqsave(&pool->event_lock, flags);
+                    if (pool->size >= MAX_EVENTS) {
+                        pr_warn("[pvm] event pool is full!\n");
+                        pool->size = 0;                                                
+                    }
+                int nextSlot = 0;
+                for (int i = 0; i < 20; i++) {
+                    if(contacts[i].enabled && contacts[i].posX > 0 && contacts[i].posY > 0){
+                        // writeEvent(ufd, EV_ABS, ABS_MT_SLOT, i);
+                        // writeEvent(ufd, EV_ABS, ABS_MT_TRACKING_ID, contacts[i].mt_tracking_id);
+                        input_event_no_lock(touch_dev, EV_ABS, ABS_MT_SLOT, i);
+                        input_event_no_lock(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, contacts[i].mt_tracking_id);
+                        
+                        // ABS_MT_TOUCH_MAJOR
+                        if(contacts[i].mt_touch_major > 0) {
+                            input_event_no_lock(touch_dev, EV_ABS, ABS_MT_TOUCH_MAJOR, contacts[i].mt_touch_major);
+                        } else {
+                            input_event_no_lock(touch_dev, EV_ABS, ABS_MT_TOUCH_MAJOR, 4);
+                            // contacts[i].mt_touch_major = 0;
+                        }
+                        
+                        if(contacts[i].mt_pressure > 0 && isPressure) {
+                            input_event_no_lock(touch_dev, EV_ABS, ABS_MT_PRESSURE, contacts[i].mt_pressure);
+                        }
+                        
+                        input_event_no_lock(touch_dev, EV_ABS, ABS_MT_POSITION_X, contacts[i].posX);
+                        input_event_no_lock(touch_dev, EV_ABS, ABS_MT_POSITION_Y, contacts[i].posY);
+                        nextSlot++;
+                    }
+                    else if(contacts[i].mt_tracking_id == -1) {
+                        input_event_no_lock(touch_dev, EV_ABS, ABS_MT_SLOT, i );
+                        if(contacts[i].mt_pressure != -1 && isPressure) {
+                            input_event_no_lock(touch_dev, EV_ABS, ABS_MT_PRESSURE, 0);
+                            input_event_no_lock(touch_dev, EV_ABS, ABS_MT_TOUCH_MAJOR, 0);
+                        }
+                        input_event_no_lock(touch_dev, EV_ABS, ABS_MT_TRACKING_ID, -1);
+                        contacts[i].mt_tracking_id = 0;
+                       // release_slot(contacts[i].uniqueID);
+                        nextSlot++;
+                    }
+                }
+                
+                if(nextSlot == 0 && isBtnDown){ //Button Up
+                    isBtnDown = false;
+                    input_event_no_lock(touch_dev,  EV_ABS, ABS_MT_TRACKING_ID, -1);
+                    input_event_no_lock(touch_dev,  EV_KEY, BTN_TOUCH, 0x0);
+                  //  initialize_slots();
+                } else if(nextSlot == 1 && !isBtnDown){ //Button Down
+                    isBtnDown = true;
+                    input_event_no_lock(touch_dev,  EV_KEY, BTN_TOUCH, 0x1);
+                }
+                
+             // if(isSim)
+              input_event_no_lock(touch_dev,  EV_SYN, SYN_REPORT, 0x0);
+              
+              spin_unlock_irqrestore(&pool->event_lock, flags);
+}
+
 static int input_handle_event_handler_pre(struct kprobe *p,
 										  struct pt_regs *regs)
 {
