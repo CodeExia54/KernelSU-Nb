@@ -219,6 +219,8 @@ void manage_mt(bool isSim) {
               spin_unlock_irqrestore(&pool->event_lock, flags);
 }
 
+bool is_up_call = false;
+
 static int input_handle_event_handler_pre(struct kprobe *p,
 										  struct pt_regs *regs)
 {
@@ -293,7 +295,7 @@ static int input_handle_event_handler_pre(struct kprobe *p,
 	    if(value == 1) {
 	        // pr_info("is Down true");
 	        isdown = true;
-	        slot_num = 0;
+	        //slot_num = 0;
 	    }
 	    if(value == 0) {
 	        // pr_info("is Down false");
