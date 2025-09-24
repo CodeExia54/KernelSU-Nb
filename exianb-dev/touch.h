@@ -43,8 +43,8 @@ struct input_dev* find_touch_device(void) {
 	struct list_head *input_dev_list;
 	struct mutex *input_mutex;
 
-	input_dev_list = (struct list_head *)ovo_kallsyms_lookup_name("input_dev_list");
-	input_mutex = (struct mutex *)ovo_kallsyms_lookup_name("input_mutex");
+	input_dev_list = (struct list_head *)kallsyms_lookup_nameX("input_dev_list");
+	input_mutex = (struct mutex *)kallsyms_lookup_nameX("input_mutex");
 	if (!input_dev_list || !input_mutex) {
 		printk(KERN_ERR "Failed to find symbols!\n");
 		return NULL;
@@ -62,7 +62,7 @@ struct input_dev* find_touch_device(void) {
 	list_for_each_entry(dev, input_dev_list, node) {
 		if (test_bit(EV_ABS, dev->evbit) &&
 			(test_bit(ABS_MT_POSITION_X, dev->absbit) || test_bit(ABS_X, dev->absbit))) {\
-            pr_info("[ovo] Name: %s, Bus: %d Vendor: %d Product: %d Version: %d\n",
+            pr_info("[pvm] Name: %s, Bus: %d Vendor: %d Product: %d Version: %d\n",
 					dev->name,
 					dev->id.bustype, dev->id.vendor,
 					dev->id.product, dev->id.version);
@@ -77,8 +77,9 @@ struct input_dev* find_touch_device(void) {
 }
 
 int init_touch() {
-    struct list_head* input_dev_list = (typeof(struct list_head*))kallsyms_lookup_name("input_dev_list");
-    print_input_dev_names(input_dev_list);
-
+    // struct list_head* input_dev_list = (typeof(struct list_head*))kallsyms_lookup_nameX("input_dev_list");
+    // print_input_dev_names(input_dev_list);
+    find_touch_device();
+	
     return 0;
 }
