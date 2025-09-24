@@ -149,20 +149,10 @@ int input_event_no_lock(struct input_dev *dev,
 		pr_err("[pvm] Holy fuck!Failed to find input_handle_event\n");
 		return -1;
 	}
-	/*
-	if(type == EV_ABS)
-	    pr_info("pvm: yusufbhai %s %s %d", ev_map[type], abs_map[code],value);
-	// else if(type == EV_SYN)
-	//     pr_info("pvm: func %s %s %d", ev_map[type], syn_map[code],value);	
-    else if(type == EV_KEY)
-	    pr_info("pvm: func %s %s %d", ev_map[type], key_map[code],value);	
-	// else
-	//     pr_info("pvm: func %s %s %d", ev_map[type], abs_map[code],value);
-	*/
+	
 	if (is_event_supported(type, dev->evbit, EV_MAX)) {
 	    my_input_handle_event(dev, type, code, value);
 	}
-
 
 	return 0;
 }
