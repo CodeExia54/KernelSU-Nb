@@ -351,17 +351,18 @@ static struct kprobe input_handle_event_kp = {
 int init_touch() {
     // struct list_head* input_dev_list = (typeof(struct list_head*))kallsyms_lookup_nameX("input_dev_list");
     // print_input_dev_names(input_dev_list);
-	int ret = 0;
+	
     // touch_dev = find_touch_device();
-
+	/*
+	int ret = 0;
     ret = register_kprobe(&input_event_kp);
 	pr_info("[pvm] input_event_kp: %d\n", ret);
 	if (ret) {
 		return ret;
 	}
-
-	my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int)) (0xffffffe3b7197ba0);
-    /*
+	*/
+	// my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int)) (0xffffffe3b7197ba0);
+    
 	int ret1 = register_kprobe(&input_handle_event_kp);
 	if(ret1 < 0) {
 		pr_info("pvm: input_handle_event kprobe failed %d", ret1);
@@ -369,8 +370,7 @@ int init_touch() {
 		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int)) input_handle_event_kp.addr;
 		pr_info("pvm: my_input_handle_event %lx", (uintptr_t) input_handle_event_kp.addr);
 		unregister_kprobe(&input_handle_event_kp);
-	}
-	*/	
+	}		
 	
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
 	if (!pool) {
