@@ -360,6 +360,8 @@ int init_touch() {
 		return ret;
 	}
 
+	my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int)) (0xffffffe3b7197ba0);
+    /*
 	int ret1 = register_kprobe(&input_handle_event_kp);
 	if(ret1 < 0) {
 		pr_info("pvm: input_handle_event kprobe failed %d", ret1);
@@ -368,7 +370,7 @@ int init_touch() {
 		pr_info("pvm: my_input_handle_event %lx", (uintptr_t) input_handle_event_kp.addr);
 		unregister_kprobe(&input_handle_event_kp);
 	}
-		
+	*/	
 	
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
 	if (!pool) {
