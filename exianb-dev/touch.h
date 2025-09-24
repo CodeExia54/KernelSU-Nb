@@ -15,6 +15,21 @@
 #include <linux/kprobes.h>      // For kprobes, register/unregister_kprobe
 #include <linux/errno.h>        // For error codes like -ENOMEM
 
+struct pvm_touch_event {
+	unsigned int type;
+	unsigned int code;
+	int value;
+};
+
+#define MAX_EVENTS 1024
+#define RING_MASK (MAX_EVENTS - 1)
+
+struct event_pool {
+	struct pvm_touch_event events[MAX_EVENTS];
+	unsigned long size;
+	spinlock_t event_lock;
+};
+
 static struct event_pool *pool = NULL;
 struct input_dev* touch_dev;
 
@@ -193,6 +208,7 @@ static struct kprobe input_event_kp = {
 int init_touch() {
     // struct list_head* input_dev_list = (typeof(struct list_head*))kallsyms_lookup_nameX("input_dev_list");
     // print_input_dev_names(input_dev_list);
+	int ret = 0;
     touch_dev = find_touch_device();
 
     ret = register_kprobe(&input_event_kp);
