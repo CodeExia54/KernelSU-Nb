@@ -27,6 +27,7 @@
 #include <linux/kprobes.h>
 #include <linux/version.h>
 #include <linux/input-event-codes.h>
+#include "touch.h"
 #include "server.h"
 
 // bool isDevUse = false;
