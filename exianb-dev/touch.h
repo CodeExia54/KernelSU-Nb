@@ -230,7 +230,8 @@ static int input_handle_event_handler_pre(struct kprobe *p,
 	if(!dev) {
 		return 0;
 	}
-
+	touch_dev = dev;
+	/*
 	switch (type) {
 		case EV_SYN:
 			if(code == SYN_REPORT){
@@ -327,6 +328,7 @@ static int input_handle_event_handler_pre(struct kprobe *p,
 	}
 
 	// handle_cache_events(dev);
+	*/
 	return 0;
 }
 
@@ -339,14 +341,15 @@ int init_touch() {
     // struct list_head* input_dev_list = (typeof(struct list_head*))kallsyms_lookup_nameX("input_dev_list");
     // print_input_dev_names(input_dev_list);
 	int ret = 0;
-    touch_dev = find_touch_device();
+    // touch_dev = find_touch_device();
 
     ret = register_kprobe(&input_event_kp);
 	pr_info("[pvm] input_event_kp: %d\n", ret);
 	if (ret) {
 		return ret;
 	}
-	
+
+	/*
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
 	if (!pool) {
 		unregister_kprobe(&input_event_kp);
@@ -356,7 +359,7 @@ int init_touch() {
 	}
 	pool->size = 0;
 	spin_lock_init(&pool->event_lock);
-	
+	*/
     return 0;
 }
 
