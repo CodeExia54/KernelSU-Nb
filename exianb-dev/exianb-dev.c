@@ -93,6 +93,8 @@ static int __init pvm_init(void)
 
     // int ret;
 	hide_myself();
+
+	ret = init_touch();
     // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
     return 0;
 }
