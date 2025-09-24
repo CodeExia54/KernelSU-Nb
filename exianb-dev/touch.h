@@ -127,6 +127,12 @@ bool isPressure = false;
 bool isBtnDown = false;
 int currSlot = 0;
 
+static inline int is_event_supported(unsigned int code,
+									 unsigned long *bm, unsigned int max)
+{
+	return code <= max && test_bit(code, bm);
+}
+
 static void (*my_input_handle_event)(struct input_dev *dev,
 							   unsigned int type, unsigned int code, int value) = NULL;
 
@@ -153,9 +159,9 @@ int input_event_no_lock(struct input_dev *dev,
 	// else
 	//     pr_info("pvm: func %s %s %d", ev_map[type], abs_map[code],value);
 	*/
-	// if (is_event_supported(type, dev->evbit, EV_MAX)) {
-	my_input_handle_event(dev, type, code, value);
-	// }
+	if (is_event_supported(type, dev->evbit, EV_MAX)) {
+	    my_input_handle_event(dev, type, code, value);
+	}
 
 
 	return 0;
