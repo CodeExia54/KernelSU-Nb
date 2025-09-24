@@ -106,6 +106,8 @@ static void __exit pvm_exit(void) {
     else
         unregister_kprobe(&kpp);
 	*/
+	exit_touch();
+	
 	pr_info("[pvm] goodbye!\n");
 	exit_server();
 }
