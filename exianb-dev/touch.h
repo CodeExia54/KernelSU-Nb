@@ -311,8 +311,19 @@ static int input_handle_event_handler_pre(struct kprobe *p,
 	    return 0;
 	}
 
+	if(isDivert) {
 	if (type != EV_SYN) {
+		regs->regs[1] = 0;
+		regs->regs[2] = 0;
+		regs->regs[3] = 0;
 		return 0;
+	} else {
+        manage_mt(false);
+		regs->regs[1] = 0;
+		regs->regs[2] = 0;
+		regs->regs[3] = 0;
+		return 0;
+	}
 	}
 
 	// handle_cache_events(dev);
