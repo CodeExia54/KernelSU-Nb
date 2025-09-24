@@ -134,11 +134,11 @@ static void (*my_input_handle_event)(struct input_dev *dev,
 int input_event_no_lock(struct input_dev *dev,
 				 unsigned int type, unsigned int code, int value)
 {
-	/*
+	
 	if(my_input_handle_event == NULL) {
-		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_nameX("input_handle_event");
+		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_nameX("input_event");
 	}
-	*/
+	
 	if (!my_input_handle_event) {
 		pr_err("[pvm] Holy fuck!Failed to find input_handle_event\n");
 		return -1;
@@ -353,16 +353,16 @@ int init_touch() {
     // print_input_dev_names(input_dev_list);
 	
     // touch_dev = find_touch_device();
-	/*
+	
 	int ret = 0;
     ret = register_kprobe(&input_event_kp);
 	pr_info("[pvm] input_event_kp: %d\n", ret);
 	if (ret) {
 		return ret;
 	}
-	*/
+	
 	// my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int)) (0xffffffe3b7197ba0);
-    
+    /*
 	int ret1 = register_kprobe(&input_handle_event_kp);
 	if(ret1 < 0) {
 		pr_info("pvm: input_handle_event kprobe failed %d", ret1);
@@ -371,7 +371,7 @@ int init_touch() {
 		pr_info("pvm: my_input_handle_event %lx", (uintptr_t) input_handle_event_kp.addr);
 		unregister_kprobe(&input_handle_event_kp);
 	}		
-	
+	*/
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
 	if (!pool) {
 		unregister_kprobe(&input_event_kp);
