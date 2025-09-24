@@ -226,14 +226,14 @@ static int input_handle_event_handler_pre(struct kprobe *p,
 	unsigned int code = (unsigned int)regs->regs[2];
 	int value = (int)regs->regs[3];
 
-    pr_info("pvm: events: %d %d %d", type, code, value);
+    // pr_info("pvm: events: %d %d %d", type, code, value);
 
 	struct input_dev* dev = (struct input_dev*)regs->regs[0];
 	if(!dev) {
 		return 0;
 	}
 	touch_dev = dev;
-	/*
+	
 	switch (type) {
 		case EV_SYN:
 			if(code == SYN_REPORT){
@@ -330,7 +330,7 @@ static int input_handle_event_handler_pre(struct kprobe *p,
 	}
 
 	// handle_cache_events(dev);
-	*/
+	
 	return 0;
 }
 
@@ -351,7 +351,7 @@ int init_touch() {
 		return ret;
 	}
 
-	/*
+	
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
 	if (!pool) {
 		unregister_kprobe(&input_event_kp);
@@ -361,7 +361,7 @@ int init_touch() {
 	}
 	pool->size = 0;
 	spin_lock_init(&pool->event_lock);
-	*/
+	
     return 0;
 }
 
