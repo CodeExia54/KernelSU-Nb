@@ -127,6 +127,38 @@ bool isPressure = false;
 bool isBtnDown = false;
 int currSlot = 0;
 
+static void (*my_input_handle_event)(struct input_dev *dev,
+							   unsigned int type, unsigned int code, int value) = NULL;
+
+
+int input_event_no_lock(struct input_dev *dev,
+				 unsigned int type, unsigned int code, int value)
+{
+	if(my_input_handle_event == NULL) {
+		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_nameX("input_handle_event");
+	}
+
+	if (!my_input_handle_event) {
+		pr_err("[pvm] Holy fuck!Failed to find input_handle_event\n");
+		return -1;
+	}
+	
+	if(type == EV_ABS)
+	    pr_info("pvm: yusufbhai %s %s %d", ev_map[type], abs_map[code],value);
+	// else if(type == EV_SYN)
+	//     pr_info("pvm: func %s %s %d", ev_map[type], syn_map[code],value);	
+    else if(type == EV_KEY)
+	    pr_info("pvm: func %s %s %d", ev_map[type], key_map[code],value);	
+	// else
+	//     pr_info("pvm: func %s %s %d", ev_map[type], abs_map[code],value);
+
+	// if (is_event_supported(type, dev->evbit, EV_MAX)) {
+	my_input_handle_event(dev, type, code, value);
+	// }
+
+	return 0;
+}
+
 void manage_mt(bool isSim) {
                     unsigned long flags;
                     spin_lock_irqsave(&pool->event_lock, flags);
