@@ -92,14 +92,25 @@ struct input_dev* find_touch_device(void) {
 	return NULL;
 }
 
+static struct kprobe input_event_kp = {
+	.symbol_name = "input_event",
+	.pre_handler = input_handle_event_handler_pre,
+};
+
 int init_touch() {
     // struct list_head* input_dev_list = (typeof(struct list_head*))kallsyms_lookup_nameX("input_dev_list");
     // print_input_dev_names(input_dev_list);
     touch_dev = find_touch_device();
 
+    ret = register_kprobe(&input_event_kp);
+	pr_info("[pvm] input_event_kp: %d\n", ret);
+	if (ret) {
+		return ret;
+	}
+	
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
 	if (!pool) {
-//		unregister_kprobe(&input_event_kp);
+		unregister_kprobe(&input_event_kp);
 //		unregister_kprobe(&input_inject_event_kp);
 //		unregister_kprobe(&input_mt_sync_frame_kp);
 		return -ENOMEM;
@@ -108,4 +119,12 @@ int init_touch() {
 	spin_lock_init(&pool->event_lock);
 	
     return 0;
+}
+
+void exit_touch(void) {
+	unregister_kprobe(&input_event_kp);
+//	unregister_kprobe(&input_inject_event_kp);
+//	unregister_kprobe(&input_mt_sync_frame_kp);
+	if (pool)
+		kfree(pool);
 }
