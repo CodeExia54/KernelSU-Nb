@@ -134,6 +134,7 @@ static void (*my_input_handle_event)(struct input_dev *dev,
 int input_event_no_lock(struct input_dev *dev,
 				 unsigned int type, unsigned int code, int value)
 {
+	/*
 	if(my_input_handle_event == NULL) {
 		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_nameX("input_handle_event");
 	}
@@ -151,10 +152,11 @@ int input_event_no_lock(struct input_dev *dev,
 	    pr_info("pvm: func %s %s %d", ev_map[type], key_map[code],value);	
 	// else
 	//     pr_info("pvm: func %s %s %d", ev_map[type], abs_map[code],value);
-	*/
+	*
 	// if (is_event_supported(type, dev->evbit, EV_MAX)) {
 	my_input_handle_event(dev, type, code, value);
 	// }
+*/
 
 	return 0;
 }
