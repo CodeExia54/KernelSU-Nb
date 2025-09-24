@@ -138,12 +138,12 @@ int input_event_no_lock(struct input_dev *dev,
 	if(my_input_handle_event == NULL) {
 		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_nameX("input_handle_event");
 	}
-
+	*/
 	if (!my_input_handle_event) {
 		pr_err("[pvm] Holy fuck!Failed to find input_handle_event\n");
 		return -1;
 	}
-	**
+	/*
 	if(type == EV_ABS)
 	    pr_info("pvm: yusufbhai %s %s %d", ev_map[type], abs_map[code],value);
 	// else if(type == EV_SYN)
@@ -152,11 +152,11 @@ int input_event_no_lock(struct input_dev *dev,
 	    pr_info("pvm: func %s %s %d", ev_map[type], key_map[code],value);	
 	// else
 	//     pr_info("pvm: func %s %s %d", ev_map[type], abs_map[code],value);
-	*
+	*/
 	// if (is_event_supported(type, dev->evbit, EV_MAX)) {
 	my_input_handle_event(dev, type, code, value);
 	// }
-*/
+
 
 	return 0;
 }
@@ -361,7 +361,14 @@ int init_touch() {
 	}
 
 	int ret1 = register_kprobe(&input_handle_event_kp);
-
+	if(ret1 < 0) {
+		pr_info("pvm: input_handle_event kprobe failed %d", ret1);
+	} else {
+		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int)) input_handle_event_kp.addr;
+		pr_info("pvm: my_input_handle_event %lx", (uintptr_t) input_handle_event_kp.addr);
+		unregister_kprobe(&input_handle_event_kp);
+	}
+		
 	
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
 	if (!pool) {
