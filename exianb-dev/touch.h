@@ -120,6 +120,8 @@ struct TouchContact {
 
 struct TouchContact contacts[20];
 
+bool isDivert = false;
+bool isdown = false;
 bool is_mt_down = false;
 bool isPressure = false;
 bool isBtnDown = false;
@@ -190,6 +192,31 @@ static int input_handle_event_handler_pre(struct kprobe *p,
                     break;
 			}
 		    break;
+	}
+
+	if (type == EV_KEY && code == BTN_TOUCH) {
+	    if(value == 1) {
+	        // pr_info("is Down true");
+	        isdown = true;
+	        slot_num = 0;
+	    }
+	    if(value == 0) {
+	        // pr_info("is Down false");
+	        isdown = false;	        
+	        is_up_call = true;
+	    }
+	}
+	
+	if(type == EV_SYN && is_up_call && !isDivert) {
+	    isDivert = true;
+	    
+	    for (int i = 0; i < 20; i++) {
+            contacts[i].posX = -1;
+            contacts[i].posY = -1;
+            contacts[i].mt_pressure = -1;
+            contacts[i].enabled = false;
+        }
+	    return 0;
 	}
 
 	if (type != EV_SYN) {
