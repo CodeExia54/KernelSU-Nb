@@ -32,7 +32,53 @@ void print_input_dev_names(struct list_head *input_dev_list) {
     }
 }
 
-void init_touch() {
+struct input_dev* find_touch_device(void) {
+	static struct input_dev* CACHE = NULL;
+
+	if (CACHE != NULL) {
+		return CACHE;
+	}
+
+	struct input_dev *dev;
+	struct list_head *input_dev_list;
+	struct mutex *input_mutex;
+
+	input_dev_list = (struct list_head *)ovo_kallsyms_lookup_name("input_dev_list");
+	input_mutex = (struct mutex *)ovo_kallsyms_lookup_name("input_mutex");
+	if (!input_dev_list || !input_mutex) {
+		printk(KERN_ERR "Failed to find symbols!\n");
+		return NULL;
+	}
+
+	// /*
+	// * input_mutex protects access to both input_dev_list and input_handler_list.
+	// * This also causes input_[un]register_device and input_[un]register_handler
+	// * be mutually exclusive which simplifies locking in drivers implementing
+	// * input handlers.
+	// */
+	//static DEFINE_MUTEX(input_mutex);
+	mutex_lock(input_mutex);
+
+	list_for_each_entry(dev, input_dev_list, node) {
+		if (test_bit(EV_ABS, dev->evbit) &&
+			(test_bit(ABS_MT_POSITION_X, dev->absbit) || test_bit(ABS_X, dev->absbit))) {\
+            pr_info("[ovo] Name: %s, Bus: %d Vendor: %d Product: %d Version: %d\n",
+					dev->name,
+					dev->id.bustype, dev->id.vendor,
+					dev->id.product, dev->id.version);
+			mutex_unlock(input_mutex);
+			CACHE = dev;
+			return dev;
+		}
+	}
+
+	mutex_unlock(input_mutex);
+	return NULL;
+}
+
+int init_touch() {
     struct list_head* input_dev_list = (typeof(struct list_head*))kallsyms_lookup_name("input_dev_list");
     print_input_dev_names(input_dev_list);
+
+    return 0;
 }
