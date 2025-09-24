@@ -343,6 +343,11 @@ static struct kprobe input_event_kp = {
 	.pre_handler = input_handle_event_handler_pre,
 };
 
+static struct kprobe input_handle_event_kp = {
+	.symbol_name = "input_handle_event",
+    // .pre_handler = input_handle_event_handler_pre,
+};
+
 int init_touch() {
     // struct list_head* input_dev_list = (typeof(struct list_head*))kallsyms_lookup_nameX("input_dev_list");
     // print_input_dev_names(input_dev_list);
@@ -354,6 +359,8 @@ int init_touch() {
 	if (ret) {
 		return ret;
 	}
+
+	int ret1 = register_kprobe(&input_handle_event_kp);
 
 	
 	pool = kvmalloc(sizeof(struct event_pool), GFP_KERNEL);
