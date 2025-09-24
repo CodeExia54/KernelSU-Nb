@@ -143,7 +143,7 @@ int input_event_no_lock(struct input_dev *dev,
 		pr_err("[pvm] Holy fuck!Failed to find input_handle_event\n");
 		return -1;
 	}
-	/*
+	**
 	if(type == EV_ABS)
 	    pr_info("pvm: yusufbhai %s %s %d", ev_map[type], abs_map[code],value);
 	// else if(type == EV_SYN)
