@@ -92,6 +92,99 @@ struct input_dev* find_touch_device(void) {
 	return NULL;
 }
 
+struct TouchContact {
+        int posX;
+        int posY;
+        int mt_slot_id;
+        int mt_tracking_id;
+        int mt_pressure;
+        int uniqueID;
+        int mt_touch_major;
+        bool enabled;
+};
+
+struct TouchContact contacts[20];
+
+bool is_mt_down = false;
+bool isPressure = false;
+bool isBtnDown = false;
+int currSlot = 0;
+
+static int input_handle_event_handler_pre(struct kprobe *p,
+										  struct pt_regs *regs)
+{
+	unsigned int type = (unsigned int)regs->regs[1];
+	unsigned int code = (unsigned int)regs->regs[2];
+	int value = (int)regs->regs[3];
+
+	struct input_dev* dev = (struct input_dev*)regs->regs[0];
+	if(!dev) {
+		return 0;
+	}
+
+	switch (type) {
+		case EV_SYN:
+			if(code == SYN_REPORT){
+                // hasSyn = true;
+                // TS printf("SYN_REPORT\n");
+			}
+            break;
+        case EV_KEY:
+            if (code == BTN_TOUCH) {
+                // TS printf("BTN_TOUCH: %s\n", (evt.value == 1) ? "DOWN" : "UP");
+            }
+            break;
+		case EV_ABS:
+            switch (code) {
+                case ABS_MT_SLOT:
+                    currSlot = value;
+                    //if(currSlot == 9)
+                    //    isRunning = false;
+                    contacts[currSlot].mt_slot_id = value;
+                    // TS printf("ABS_MT_SLOT: %d\n", evt.value);
+                    break;
+				case ABS_MT_TRACKING_ID:
+                    contacts[currSlot].enabled = value != -1;
+                    if(value != -1)
+                        contacts[currSlot].mt_tracking_id = 10+currSlot; //value;
+                    else
+                        contacts[currSlot].mt_tracking_id = -1;
+                                
+                    if(value != -1) { 
+                        contacts[currSlot].uniqueID = value;
+                        //  allocate_slot(value, currSlot);
+                    }
+                    // TS printf("ABS_MT_TRACKING_ID: %d | Slot: %d\n", evt.value, currSlot);
+                    break;
+				case ABS_MT_TOUCH_MAJOR:
+                    contacts[currSlot].mt_touch_major = value;
+                    // TS printf("ABS_MT_TOUCH_MAJOR: %d | Slot: %d\n", evt.value, currSlot);
+                    break;
+                case ABS_MT_PRESSURE:
+                    contacts[currSlot].mt_pressure = value;
+                    isPressure = true;
+                    // TS printf("ABS_MT_PRESSURE: %d | Slot: %d\n", evt.value, currSlot);
+                    break;
+                case ABS_MT_POSITION_X:
+                    contacts[currSlot].posX = value;
+                    // TS printf("ABS_MT_POSITION_X: %d | Slot: %d\n", evt.value, currSlot);
+                    break;
+                case ABS_MT_POSITION_Y:
+                    contacts[currSlot].posY = value;
+                    // TS printf("ABS_MT_POSITION_Y: %d | Slot: %d\n", evt.value, currSlot);
+                    break;
+			}
+		    break;
+	}
+
+	if (type != EV_SYN) {
+		return 0;
+	}
+
+	// handle_cache_events(dev);
+	return 0;
+}
+
 static struct kprobe input_event_kp = {
 	.symbol_name = "input_event",
 	.pre_handler = input_handle_event_handler_pre,
