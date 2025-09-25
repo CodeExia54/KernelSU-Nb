@@ -1,10 +1,10 @@
-name: Embed Build Multiple LKM (Selectable Module)
+name: Multi Kernel Module Build
 
 on:
   workflow_dispatch:
     inputs:
       module_dir:
-        description: 'Select module directory inside the repository'
+        description: 'Select module directory inside repo'
         required: true
         type: choice
         options:
@@ -15,27 +15,20 @@ on:
           - prctl-fd
           - prctl-hook
         default: exianb
-      # Whether to produce an external LKM (.ko)
       build_lkm:
-        description: 'Build LKM (.ko) and upload .ko artifact'
-        required: false
+        description: 'Build as LKM (.ko)'
         type: boolean
         default: true
-      # Whether to embed the module into the kernel image (in-tree)
       build_in_tree:
-        description: 'Embed module into kernel image and upload kernel image (Image/vmlinux)'
-        required: false
+        description: 'Embed in kernel image'
         type: boolean
         default: false
-      # Optional: override module name and config symbol
       module_name:
-        description: 'Name of module (filename without .ko). Defaults to module_dir'
-        required: false
+        description: 'Override module name (defaults to module_dir)'
         type: string
         default: ''
       module_config:
-        description: 'Kconfig symbol for the module (e.g. PVM_MOD). Defaults to PVM_MOD'
-        required: false
+        description: 'Kconfig symbol (default PVM_MOD)'
         type: string
         default: PVM_MOD
 
@@ -56,8 +49,7 @@ jobs:
           - version: android15-6.6
             sub_level: 30
             os_patch_level: 2024-08
-
-    uses: ./.github/workflows/embed-gki-kernel-build.yml
+    uses: ./.github/workflows/gki-kernel.yml
     with:
       version: ${{ matrix.version }}
       version_name: ${{ matrix.version }}.${{ matrix.sub_level }}
@@ -65,8 +57,6 @@ jobs:
       module_dir: ${{ github.event.inputs.module_dir }}
       module_name: ${{ github.event.inputs.module_name != '' && github.event.inputs.module_name || github.event.inputs.module_dir }}
       module_config: ${{ github.event.inputs.module_config }}
-      use_cache: true
-      # build_lkm controls building and uploading the .ko
       build_lkm: ${{ fromJson(github.event.inputs.build_lkm) }}
-      # build_in_tree controls building in-tree (embed into kernel image)
       build_in_tree: ${{ fromJson(github.event.inputs.build_in_tree) }}
+      use_cache: true
