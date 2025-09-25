@@ -1,0 +1,7 @@
+config PVM_MOD
+    bool "Linux Kernel Module for Safe Memory Access"
+    default y
+    help
+      Built-in driver for Safe Memory Access.
+      This will always be compiled into the kernel image (vmlinux/Image).
+      No .ko file will be produced.
