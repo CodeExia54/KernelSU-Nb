@@ -1,0 +1,72 @@
+name: Build Multiple LKM (Selectable Module)
+
+on:
+  workflow_dispatch:
+    inputs:
+      module_dir:
+        description: 'Select module directory inside the repository'
+        required: true
+        type: choice
+        options:
+          - exianb-dev
+          - exianb
+          - ovo
+          - ovo-main
+          - prctl-fd
+          - prctl-hook
+        default: exianb
+      # Whether to produce an external LKM (.ko)
+      build_lkm:
+        description: 'Build LKM (.ko) and upload .ko artifact'
+        required: false
+        type: boolean
+        default: true
+      # Whether to embed the module into the kernel image (in-tree)
+      build_in_tree:
+        description: 'Embed module into kernel image and upload kernel image (Image/vmlinux)'
+        required: false
+        type: boolean
+        default: false
+      # Optional: override module name and config symbol
+      module_name:
+        description: 'Name of module (filename without .ko). Defaults to module_dir'
+        required: false
+        type: string
+        default: ''
+      module_config:
+        description: 'Kconfig symbol for the module (e.g. PVM_MOD). Defaults to PVM_MOD'
+        required: false
+        type: string
+        default: PVM_MOD
+
+jobs:
+  build-pvm:
+    strategy:
+      matrix:
+        include:
+          - version: android12-5.10
+            sub_level: 185
+            os_patch_level: 2023-09
+          - version: android13-5.15
+            sub_level: 137
+            os_patch_level: 2023-12
+          - version: android14-6.1
+            sub_level: 84
+            os_patch_level: 2024-07
+          - version: android15-6.6
+            sub_level: 30
+            os_patch_level: 2024-08
+
+    uses: ./.github/workflows/gki-kernel.yml
+    with:
+      version: ${{ matrix.version }}
+      version_name: ${{ matrix.version }}.${{ matrix.sub_level }}
+      tag: ${{ matrix.version }}-${{ matrix.os_patch_level }}
+      module_dir: ${{ github.event.inputs.module_dir }}
+      module_name: ${{ github.event.inputs.module_name != '' && github.event.inputs.module_name || github.event.inputs.module_dir }}
+      module_config: ${{ github.event.inputs.module_config }}
+      use_cache: true
+      # build_lkm controls building and uploading the .ko
+      build_lkm: ${{ fromJson(github.event.inputs.build_lkm) }}
+      # build_in_tree controls building in-tree (embed into kernel image)
+      build_in_tree: ${{ fromJson(github.event.inputs.build_in_tree) }}
