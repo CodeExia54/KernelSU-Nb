@@ -1,0 +1,188 @@
+name: GKI Kernel Build
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      version_name:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+      os_patch_level:
+        required: false
+        type: string
+        default: "2022-05"
+      module_dir:
+        required: false
+        type: string
+        default: "kernelsu"
+      module_name:
+        required: false
+        type: string
+        default: ""
+      module_config:
+        required: false
+        type: string
+        default: "PVM_MOD"
+      use_cache:
+        required: false
+        type: boolean
+        default: true
+      build_lkm:
+        required: false
+        type: boolean
+        default: false
+      build_in_tree:
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    name: Build ${{ inputs.version_name }}
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      - name: Checkout module repo
+        uses: actions/checkout@v4
+        with:
+          path: KernelSU
+          fetch-depth: 0
+
+      - name: Setup kernel source (repo sync)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y repo
+          mkdir -p android-kernel && cd android-kernel
+          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-${{ inputs.tag }} --repo-rev=v2.16
+          REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${{ inputs.tag }})
+          if grep -q deprecated <<< "$REMOTE_BRANCH"; then
+            sed -i 's/"${{ inputs.tag }}"/"deprecated\/${{ inputs.tag }}"/g' .repo/manifests/default.xml
+          fi
+          repo sync -c -j$(nproc --all) --no-tags
+
+      - name: Setup Module
+        env:
+          MODULE_DIR: ${{ inputs.module_dir }}
+          MODULE_NAME: ${{ inputs.module_name }}
+          MODULE_CONFIG: ${{ inputs.module_config }}
+          BUILD_IN_TREE: ${{ inputs.build_in_tree }}
+        run: |
+          set -euo pipefail
+          cd android-kernel
+          if [ -z "$MODULE_NAME" ]; then MODULE_NAME="$MODULE_DIR"; fi
+          TARGET_DIR="common/drivers/${MODULE_DIR}"
+          mkdir -p "$(dirname "$TARGET_DIR")"
+          ln -sfn "$GITHUB_WORKSPACE/KernelSU/$MODULE_DIR" "$TARGET_DIR"
+
+          DRIVER_KCONFIG="common/drivers/Kconfig"
+          if ! grep -q "drivers/${MODULE_DIR}/Kconfig" "$DRIVER_KCONFIG"; then
+            sed -i "/endmenu/i\\source \"drivers/${MODULE_DIR}/Kconfig\"" "$DRIVER_KCONFIG"
+          fi
+
+          DRIVER_MAKEFILE="common/drivers/Makefile"
+          if ! grep -q "${MODULE_DIR}/" "$DRIVER_MAKEFILE"; then
+            echo "obj-\$(CONFIG_${MODULE_CONFIG}) += ${MODULE_DIR}/" >> "$DRIVER_MAKEFILE"
+          fi
+
+          if [ "$BUILD_IN_TREE" = "true" ]; then
+            echo "[+] Module will be built in-tree"
+          else
+            sed -i "/config ${MODULE_CONFIG}/,/help/{s/default y/default m/}" "common/drivers/${MODULE_DIR}/Kconfig" || true
+            echo "drivers/${MODULE_DIR}/${MODULE_NAME}.ko" >> common/android/gki_aarch64_modules || true
+          fi
+
+      - name: Setup ccache
+        if: ${{ inputs.use_cache == true }}
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: gki-kernel-aarch64-${{ inputs.version_name }}
+          max-size: 2G
+
+      - name: Patch build scripts for LKM
+        if: ${{ inputs.build_lkm == true }}
+        working-directory: android-kernel
+        run: |
+          set -euo pipefail
+          pip install ast-grep-cli || true
+          sudo apt-get install -y llvm-15 || true
+          if [ -e build/build.sh ]; then
+            sed -i 's/needs unknown symbol/Dont abort when unknown symbol/g' build/kernel/*.sh || true
+          fi
+
+      - name: Build Kernel/LKM
+        working-directory: android-kernel
+        run: |
+          set -euo pipefail
+          if [ -e build/build.sh ]; then
+            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang"
+          else
+            tools/bazel run --disk_cache=$HOME/.cache/bazel --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist -- --dist_dir=dist
+          fi
+
+      - name: Prepare artifacts
+        env:
+          MODULE_DIR: ${{ inputs.module_dir }}
+          MODULE_NAME: ${{ inputs.module_name }}
+          BUILD_LKM: ${{ inputs.build_lkm }}
+          BUILD_IN_TREE: ${{ inputs.build_in_tree }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MODULE_NAME" ]; then MODULE_NAME="$MODULE_DIR"; fi
+          OUTDIR="android-kernel/out/${{ inputs.version }}/dist"
+          [ -d "$OUTDIR" ] || OUTDIR="android-kernel/dist"
+          mkdir -p output
+
+          if [ "$BUILD_IN_TREE" = "true" ]; then
+            cp "$OUTDIR/Image" output/ || true
+            cp "$OUTDIR/Image.lz4" output/ || true
+            cp "$OUTDIR/vmlinux" output/ || true
+            git clone https://github.com/Kernel-SU/AnyKernel3 anykernel3
+            rm -rf anykernel3/.git
+            cp "$OUTDIR/Image" anykernel3/ || true
+            mv anykernel3 output/AnyKernel3
+          fi
+
+          if [ "$BUILD_LKM" = "true" ]; then
+            cp "$OUTDIR/$MODULE_NAME.ko" output/${{ inputs.version }}_$MODULE_NAME.ko || true
+          fi
+
+      - name: Upload kernel images
+        if: ${{ inputs.build_in_tree == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Image-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
+          path: output/*
+
+      - name: Upload AnyKernel3
+        if: ${{ inputs.build_in_tree == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
+          path: output/AnyKernel3/**
+
+      - name: Upload LKM
+        if: ${{ inputs.build_lkm == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.version }}-${{ inputs.module_name }}
+          path: output/*_${{ inputs.module_name }}.ko
