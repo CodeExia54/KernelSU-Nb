@@ -1,4 +1,4 @@
-name: GKI Kernel Build (Reusable)
+name: GKI Kernel Build
 
 on:
   workflow_call:
