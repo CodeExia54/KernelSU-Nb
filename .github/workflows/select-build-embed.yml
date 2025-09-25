@@ -1,10 +1,10 @@
-name: Multi Kernel Module Build
+name: Build Multiple In-tree Modules
 
 on:
   workflow_dispatch:
     inputs:
       module_dir:
-        description: 'Select module directory inside repo'
+        description: 'Select module directory inside the repository'
         required: true
         type: choice
         options:
@@ -15,20 +15,14 @@ on:
           - prctl-fd
           - prctl-hook
         default: exianb
-      build_lkm:
-        description: 'Build as LKM (.ko)'
-        type: boolean
-        default: true
-      build_in_tree:
-        description: 'Embed in kernel image'
-        type: boolean
-        default: false
       module_name:
-        description: 'Override module name (defaults to module_dir)'
+        description: 'Name of module (defaults to module_dir)'
+        required: false
         type: string
         default: ''
       module_config:
-        description: 'Kconfig symbol (default PVM_MOD)'
+        description: 'Kconfig symbol for the module'
+        required: false
         type: string
         default: PVM_MOD
 
@@ -49,6 +43,7 @@ jobs:
           - version: android15-6.6
             sub_level: 30
             os_patch_level: 2024-08
+
     uses: ./.github/workflows/gki-kernel.yml
     with:
       version: ${{ matrix.version }}
@@ -57,6 +52,6 @@ jobs:
       module_dir: ${{ github.event.inputs.module_dir }}
       module_name: ${{ github.event.inputs.module_name != '' && github.event.inputs.module_name || github.event.inputs.module_dir }}
       module_config: ${{ github.event.inputs.module_config }}
-      build_lkm: ${{ fromJson(github.event.inputs.build_lkm) }}
-      build_in_tree: ${{ fromJson(github.event.inputs.build_in_tree) }}
       use_cache: true
+      build_lkm: false          # disable .ko builds
+      build_in_tree: true       # always embed into kernel image
