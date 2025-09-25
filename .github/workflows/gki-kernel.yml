@@ -1,4 +1,4 @@
-name: GKI Kernel Build
+name: GKI Kernel Build (Reusable)
 
 on:
   workflow_call:
@@ -137,6 +137,35 @@ jobs:
             LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang"
           else
             tools/bazel run --disk_cache=$HOME/.cache/bazel --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist -- --dist_dir=dist
+          fi
+
+      - name: Sync generated modules.order into gki_aarch64_modules
+        working-directory: android-kernel
+        run: |
+          set -euo pipefail
+          echo "[+] Locating generated modules.order..."
+          OUT1="out/${{ inputs.version }}/common/modules.order"
+          OUT2="out/${{ inputs.version }}/dist/common/modules.order"
+          OUT3="dist/common/modules.order"
+          FOUND=""
+          for f in "$OUT1" "$OUT2" "$OUT3"; do
+            if [ -e "$f" ]; then
+              FOUND="$f"
+              break
+            fi
+          done
+          if [ -z "$FOUND" ]; then
+            FOUND=$(find . -path "*/out/*/common/modules.order" -print -quit || true)
+          fi
+          if [ -z "$FOUND" ]; then
+            echo "Warning: generated modules.order not found; skipping sync"
+            ls -R out || true
+          else
+            echo "Found generated modules.order at: $FOUND"
+            cp "$FOUND" common/android/gki_aarch64_modules
+            echo "Copied $FOUND -> common/android/gki_aarch64_modules"
+            echo "New gki_aarch64_modules contents:"
+            cat common/android/gki_aarch64_modules || true
           fi
 
       - name: Prepare artifacts
