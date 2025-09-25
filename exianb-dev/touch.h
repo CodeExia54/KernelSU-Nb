@@ -222,6 +222,13 @@ bool is_up_call = false;
 static int input_handle_event_handler_pre(struct kprobe *p,
 										  struct pt_regs *regs)
 {
+
+	pr_info("pvm: regs->ip=%px, kallsyms(input_handle_event)=%px, in_interrupt=%d, in_atomic=%d\n",
+        (void *)regs->ip, (void *)kallsyms_lookup_name("input_handle_event"),
+        in_interrupt(), in_atomic());
+dump_stack(); /* temporary to inspect stack frames */
+
+	
 	unsigned int type = (unsigned int)regs->regs[1];
 	unsigned int code = (unsigned int)regs->regs[2];
 	int value = (int)regs->regs[3];
