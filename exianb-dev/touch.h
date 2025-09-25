@@ -142,7 +142,7 @@ int input_event_no_lock(struct input_dev *dev,
 {
 	
 	if(my_input_handle_event == NULL) {
-		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_nameX("input_event");
+		my_input_handle_event = (void (*)(struct input_dev *, unsigned int, unsigned int, int))kallsyms_lookup_nameX("input_handle_event");
 	}
 	
 	if (!my_input_handle_event) {
