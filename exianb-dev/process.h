@@ -264,8 +264,18 @@ pid_t find_process_by_name(const char *name) {
     kallsyms_lookup_nameX = (unsigned long (*)(const char *name)) kp.addr;
     unregister_kprobe(&kp);
     #endif
+
+	bool is6_1up = false;
+	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	is6_1up = true;
+	#endif
+
+	if(is6_1up) 
+		pr_info("pvm: getpid up 6.1 kernel used for cmdline");
+	else
+		pr_info("pvm: getpid below 6.1  kernel used for task threads")
     
-    if (my_get_cmdline == NULL) {
+    if (my_get_cmdline == NULL && is6_1up) {
         my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
         // It can be NULL, because there is a fix below if get_cmdline is NULL
     }
@@ -278,9 +288,9 @@ pid_t find_process_by_name(const char *name) {
         }
 
         cmdline[0] = '\0';
-        if (my_get_cmdline != NULL) {
+        if (my_get_cmdline != NULL && is6_1up) {
             ret = my_get_cmdline(task, cmdline, sizeof(cmdline));
-   // ret = -1;
+			// ret = -1;
         } else {
             ret = -1;
         }
