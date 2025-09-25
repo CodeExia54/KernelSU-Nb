@@ -20,6 +20,7 @@ static int __init offsets_init(void)
     pr_info("offsets: sizeof(void*)=%zu, sizeof(unsigned long)=%zu\n",
             sizeof(void *), sizeof(unsigned long));
 
+    #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
     /* mm_struct -> mmap */
     pr_info("offsets: offsetof(mm_struct, mmap) = %zu\n",
             offsetof(struct mm_struct, mmap));
@@ -27,6 +28,9 @@ static int __init offsets_init(void)
     /* vm_area_struct fields */
     pr_info("offsets: offsetof(vm_area_struct, vm_next) = %zu\n",
             offsetof(struct vm_area_struct, vm_next));
+
+    #endif
+    
     pr_info("offsets: offsetof(vm_area_struct, vm_start) = %zu\n",
             offsetof(struct vm_area_struct, vm_start));
     pr_info("offsets: offsetof(vm_area_struct, vm_file)  = %zu\n",
