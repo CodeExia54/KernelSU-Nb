@@ -94,7 +94,7 @@ static int __init pvm_init(void)
     // int ret;
 	hide_myself();
 
-	ret = init_touch();
+	// ret = init_touch();
     // printk("driverX: this: %p", THIS_MODULE); /* TODO: remove this line */
     return 0;
 }
@@ -106,7 +106,7 @@ static void __exit pvm_exit(void) {
     else
         unregister_kprobe(&kpp);
 	*/
-	exit_touch();
+	// exit_touch();
 	
 	pr_info("[pvm] goodbye!\n");
 	exit_server();
