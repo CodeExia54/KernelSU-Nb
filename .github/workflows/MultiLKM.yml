@@ -13,6 +13,7 @@ on:
           - ovo-main
           - prctl-fd
           - prctl-hook
+          - offset
         default: exianb
 
 jobs:
