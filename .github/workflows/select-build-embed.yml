@@ -1,4 +1,4 @@
-name: Build Multiple LKM (Selectable Module)
+name: Embed Build Multiple LKM (Selectable Module)
 
 on:
   workflow_dispatch:
@@ -57,7 +57,7 @@ jobs:
             sub_level: 30
             os_patch_level: 2024-08
 
-    uses: ./.github/workflows/gki-kernel.yml
+    uses: ./.github/workflows/embed-gki-kernel-build.yml
     with:
       version: ${{ matrix.version }}
       version_name: ${{ matrix.version }}.${{ matrix.sub_level }}
