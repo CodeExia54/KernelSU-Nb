@@ -273,7 +273,7 @@ pid_t find_process_by_name(const char *name) {
 	if(is6_1up) 
 		pr_info("pvm: getpid up 6.1 kernel used for cmdline");
 	else
-		pr_info("pvm: getpid below 6.1  kernel used for task threads")
+		pr_info("pvm: getpid below 6.1  kernel used for task threads");
     
     if (my_get_cmdline == NULL && is6_1up) {
         my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
