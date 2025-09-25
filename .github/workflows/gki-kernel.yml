@@ -1,4 +1,4 @@
-name: GKI Kernel Build
+name: In-tree GKI Kernel Build
 
 on:
   workflow_call:
@@ -39,7 +39,7 @@ on:
       build_in_tree:
         required: false
         type: boolean
-        default: false
+        default: true   # you said you want only inbuilt image builds
 
 jobs:
   build:
@@ -80,18 +80,16 @@ jobs:
           fi
           repo sync -c -j$(nproc --all) --no-tags
 
-      - name: Setup Module
-        env:
-          MODULE_DIR: ${{ inputs.module_dir }}
-          MODULE_NAME: ${{ inputs.module_name }}
-          MODULE_CONFIG: ${{ inputs.module_config }}
-          BUILD_IN_TREE: ${{ inputs.build_in_tree }}
+      - name: Setup Module (embed into kernel tree)
         run: |
           set -euo pipefail
-          cd android-kernel
+          MODULE_DIR="${{ inputs.module_dir }}"
+          MODULE_NAME="${{ inputs.module_name }}"
+          MODULE_CONFIG="${{ inputs.module_config }}"
           if [ -z "$MODULE_NAME" ]; then MODULE_NAME="$MODULE_DIR"; fi
+
+          cd android-kernel
           TARGET_DIR="common/drivers/${MODULE_DIR}"
-          mkdir -p "$(dirname "$TARGET_DIR")"
           ln -sfn "$GITHUB_WORKSPACE/KernelSU/$MODULE_DIR" "$TARGET_DIR"
 
           DRIVER_KCONFIG="common/drivers/Kconfig"
@@ -104,12 +102,7 @@ jobs:
             echo "obj-\$(CONFIG_${MODULE_CONFIG}) += ${MODULE_DIR}/" >> "$DRIVER_MAKEFILE"
           fi
 
-          if [ "$BUILD_IN_TREE" = "true" ]; then
-            echo "[+] Module will be built in-tree"
-          else
-            sed -i "/config ${MODULE_CONFIG}/,/help/{s/default y/default m/}" "common/drivers/${MODULE_DIR}/Kconfig" || true
-            echo "drivers/${MODULE_DIR}/${MODULE_NAME}.ko" >> common/android/gki_aarch64_modules || true
-          fi
+          echo "[+] Module will be built in-tree (no LKM packaging, no gki_aarch64_modules changes)."
 
       - name: Setup ccache
         if: ${{ inputs.use_cache == true }}
@@ -118,18 +111,7 @@ jobs:
           key: gki-kernel-aarch64-${{ inputs.version_name }}
           max-size: 2G
 
-      - name: Patch build scripts for LKM
-        if: ${{ inputs.build_lkm == true }}
-        working-directory: android-kernel
-        run: |
-          set -euo pipefail
-          pip install ast-grep-cli || true
-          sudo apt-get install -y llvm-15 || true
-          if [ -e build/build.sh ]; then
-            sed -i 's/needs unknown symbol/Dont abort when unknown symbol/g' build/kernel/*.sh || true
-          fi
-
-      - name: Build Kernel/LKM
+      - name: Build Kernel (Image + vmlinux)
         working-directory: android-kernel
         run: |
           set -euo pipefail
@@ -139,79 +121,30 @@ jobs:
             tools/bazel run --disk_cache=$HOME/.cache/bazel --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist -- --dist_dir=dist
           fi
 
-      - name: Sync generated modules.order into gki_aarch64_modules
-        working-directory: android-kernel
-        run: |
-          set -euo pipefail
-          echo "[+] Locating generated modules.order..."
-          OUT1="out/${{ inputs.version }}/common/modules.order"
-          OUT2="out/${{ inputs.version }}/dist/common/modules.order"
-          OUT3="dist/common/modules.order"
-          FOUND=""
-          for f in "$OUT1" "$OUT2" "$OUT3"; do
-            if [ -e "$f" ]; then
-              FOUND="$f"
-              break
-            fi
-          done
-          if [ -z "$FOUND" ]; then
-            FOUND=$(find . -path "*/out/*/common/modules.order" -print -quit || true)
-          fi
-          if [ -z "$FOUND" ]; then
-            echo "Warning: generated modules.order not found; skipping sync"
-            ls -R out || true
-          else
-            echo "Found generated modules.order at: $FOUND"
-            cp "$FOUND" common/android/gki_aarch64_modules
-            echo "Copied $FOUND -> common/android/gki_aarch64_modules"
-            echo "New gki_aarch64_modules contents:"
-            cat common/android/gki_aarch64_modules || true
-          fi
-
       - name: Prepare artifacts
-        env:
-          MODULE_DIR: ${{ inputs.module_dir }}
-          MODULE_NAME: ${{ inputs.module_name }}
-          BUILD_LKM: ${{ inputs.build_lkm }}
-          BUILD_IN_TREE: ${{ inputs.build_in_tree }}
         run: |
           set -euo pipefail
-          if [ -z "$MODULE_NAME" ]; then MODULE_NAME="$MODULE_DIR"; fi
           OUTDIR="android-kernel/out/${{ inputs.version }}/dist"
           [ -d "$OUTDIR" ] || OUTDIR="android-kernel/dist"
           mkdir -p output
 
-          if [ "$BUILD_IN_TREE" = "true" ]; then
-            cp "$OUTDIR/Image" output/ || true
-            cp "$OUTDIR/Image.lz4" output/ || true
-            cp "$OUTDIR/vmlinux" output/ || true
-            git clone https://github.com/Kernel-SU/AnyKernel3 anykernel3
-            rm -rf anykernel3/.git
-            cp "$OUTDIR/Image" anykernel3/ || true
-            mv anykernel3 output/AnyKernel3
-          fi
+          cp "$OUTDIR/Image" output/ || true
+          cp "$OUTDIR/Image.lz4" output/ || true
+          cp "$OUTDIR/vmlinux" output/ || true
 
-          if [ "$BUILD_LKM" = "true" ]; then
-            cp "$OUTDIR/$MODULE_NAME.ko" output/${{ inputs.version }}_$MODULE_NAME.ko || true
-          fi
+          git clone https://github.com/Kernel-SU/AnyKernel3 anykernel3
+          rm -rf anykernel3/.git
+          cp "$OUTDIR/Image" anykernel3/ || true
+          mv anykernel3 output/AnyKernel3
 
       - name: Upload kernel images
-        if: ${{ inputs.build_in_tree == true }}
         uses: actions/upload-artifact@v4
         with:
           name: Image-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
           path: output/*
 
       - name: Upload AnyKernel3
-        if: ${{ inputs.build_in_tree == true }}
         uses: actions/upload-artifact@v4
         with:
           name: AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
           path: output/AnyKernel3/**
-
-      - name: Upload LKM
-        if: ${{ inputs.build_lkm == true }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.version }}-${{ inputs.module_name }}
-          path: output/*_${{ inputs.module_name }}.ko
