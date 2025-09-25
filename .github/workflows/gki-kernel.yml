@@ -1,5 +1,4 @@
-# .github/workflows/gki-kernel.yml
-name: GKI Kernel Build (in-tree safe)
+name: Inbuild GKI Kernel Build
 
 on:
   workflow_call:
@@ -24,11 +23,11 @@ on:
       module_name:
         required: false
         type: string
-        default: ""
+        default: "kernelsu"
       module_config:
         required: false
         type: string
-        default: "PVM_MOD"
+        default: "KSU"
       use_cache:
         required: false
         type: boolean
@@ -40,7 +39,7 @@ on:
       build_in_tree:
         required: false
         type: boolean
-        default: true
+        default: false
 
 jobs:
   build:
@@ -50,8 +49,8 @@ jobs:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
-
     steps:
+
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
@@ -62,7 +61,7 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
 
-      - name: Checkout module repo
+      - name: Checkout module repo (caller should checkout kernel/manifest separately)
         uses: actions/checkout@v4
         with:
           path: KernelSU
@@ -71,93 +70,69 @@ jobs:
       - name: Setup kernel source (repo sync)
         run: |
           set -euo pipefail
+          echo "Free space:"
+          df -h
+          cd $GITHUB_WORKSPACE
           sudo apt-get update -y
           sudo apt-get install -y repo
           mkdir -p android-kernel && cd android-kernel
-          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-${{ inputs.tag }} --repo-rev=v2.16
+          repo init --depth=1 --u https://android.googlesource.com/kernel/manifest -b common-${{ inputs.tag }} --repo-rev=v2.16
           REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${{ inputs.tag }})
+          DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
           if grep -q deprecated <<< "$REMOTE_BRANCH"; then
-            sed -i 's/"${{ inputs.tag }}"/"deprecated\/${{ inputs.tag }}"/g' .repo/manifests/default.xml
+            echo "Found deprecated branch: ${{ inputs.tag }}"
+            sed -i 's/"${{ inputs.tag }}"/"deprecated\/${{ inputs.tag }}"/g' $DEFAULT_MANIFEST_PATH
+            cat $DEFAULT_MANIFEST_PATH
           fi
-          repo sync -c -j$(nproc --all) --no-tags
+          repo --version
+          repo --trace sync -c -j$(nproc --all) --no-tags
+          df -h
 
-      - name: Setup Module (install sources into kernel tree)
-        env:
-          MODULE_DIR: ${{ inputs.module_dir }}
-          MODULE_NAME_IN: ${{ inputs.module_name }}
-          MODULE_CONFIG: ${{ inputs.module_config }}
-          BUILD_LKM: ${{ inputs.build_lkm }}
-          BUILD_IN_TREE: ${{ inputs.build_in_tree }}
+      - name: Setup Module (copy into kernel tree & add Kconfig/Makefile entries)
         run: |
           set -euo pipefail
-
-          # default module name to module_dir if empty
-          MODULE_NAME="${MODULE_NAME_IN}"
-          if [ -z "$MODULE_NAME" ]; then
-            MODULE_NAME="${MODULE_DIR}"
-          fi
-
-          echo "[setup] MODULE_DIR=${MODULE_DIR} MODULE_NAME=${MODULE_NAME} MODULE_CONFIG=${MODULE_CONFIG} BUILD_LKM=${BUILD_LKM} BUILD_IN_TREE=${BUILD_IN_TREE}"
-
+          MODULE_DIR="${{ inputs.module_dir }}"
+          MODULE_NAME="${{ inputs.module_name }}"
+          MODULE_CONFIG="${{ inputs.module_config }}"
+          BUILD_IN_TREE="${{ inputs.build_in_tree }}"
           cd android-kernel
+          GKI_ROOT=$(pwd)
+          echo "[+] GKI_ROOT: $GKI_ROOT"
 
+          # copy/symlink module sources into kernel tree
           TARGET_DIR="common/drivers/${MODULE_DIR}"
           mkdir -p "$(dirname "$TARGET_DIR")"
+          rm -rf "$TARGET_DIR"
+          ln -sfn "$GITHUB_WORKSPACE/KernelSU/$MODULE_DIR" "$TARGET_DIR"
+          echo "[+] Linked $MODULE_DIR -> $TARGET_DIR"
 
-          if [ ! -e "$GITHUB_WORKSPACE/KernelSU/${MODULE_DIR}" ]; then
-            echo "ERROR: module source not found at $GITHUB_WORKSPACE/KernelSU/${MODULE_DIR}"
-            exit 1
-          fi
-
-          # symlink module source into kernel tree
-          ln -sfn "$GITHUB_WORKSPACE/KernelSU/${MODULE_DIR}" "$TARGET_DIR"
-          echo "[setup] linked $GITHUB_WORKSPACE/KernelSU/${MODULE_DIR} -> $TARGET_DIR"
-
-          # ensure Kconfig is included
+          # Ensure drivers Kconfig includes module's Kconfig
           DRIVER_KCONFIG="common/drivers/Kconfig"
           if ! grep -q "drivers/${MODULE_DIR}/Kconfig" "$DRIVER_KCONFIG"; then
             sed -i "/endmenu/i\\source \"drivers/${MODULE_DIR}/Kconfig\"" "$DRIVER_KCONFIG"
-            echo "[setup] inserted drivers/${MODULE_DIR}/Kconfig into $DRIVER_KCONFIG"
           fi
 
-          # ensure drivers Makefile entry exists (obj-$(CONFIG_X) += dir/)
+          # Ensure drivers Makefile references config
           DRIVER_MAKEFILE="common/drivers/Makefile"
           if ! grep -q "${MODULE_DIR}/" "$DRIVER_MAKEFILE"; then
             printf "\nobj-\$(CONFIG_${MODULE_CONFIG}) += ${MODULE_DIR}/\n" >> "$DRIVER_MAKEFILE"
-            echo "[setup] added obj-\$(CONFIG_${MODULE_CONFIG}) entry to $DRIVER_MAKEFILE"
           fi
 
-          # If building in-tree, ensure we DO NOT add packaging entries for .ko
-          if [ "${BUILD_IN_TREE}" = "true" ]; then
-            echo "[setup] building in-tree: ensure no .ko packaging entries remain for this driver"
-            # remove any existing line for this module from gki_aarch64_modules (idempotent)
-            if [ -f common/android/gki_aarch64_modules ]; then
-              grep -v "drivers/${MODULE_DIR}/${MODULE_NAME}.ko" common/android/gki_aarch64_modules > common/android/gki_aarch64_modules.tmp || true
-              mv common/android/gki_aarch64_modules.tmp common/android/gki_aarch64_modules || true
-            fi
+          if [ "$BUILD_IN_TREE" = "true" ]; then
+            echo "[+] Module set for built-in build"
           else
-            # Only when LKM requested, append packaging entry (guarded to avoid duplicates)
-            if ! grep -q "drivers/${MODULE_DIR}/${MODULE_NAME}.ko" common/android/gki_aarch64_modules 2>/dev/null; then
-              echo "drivers/${MODULE_DIR}/${MODULE_NAME}.ko" >> common/android/gki_aarch64_modules || true
-              echo "[setup] added module packaging entry to common/android/gki_aarch64_modules"
+            if [ -f "common/drivers/${MODULE_DIR}/Kconfig" ]; then
+              sed -i "/config ${MODULE_CONFIG}/,/help/{s/default y/default m/}" "common/drivers/${MODULE_DIR}/Kconfig" || true
             fi
+            echo "drivers/${MODULE_DIR}/${MODULE_NAME}.ko" >> common/android/gki_aarch64_modules || true
           fi
 
-      - name: Ensure config set correctly for in-tree build
-        if: ${{ inputs.build_in_tree == true }}
-        working-directory: android-kernel
-        run: |
-          set -euo pipefail
-          MODULE_CONFIG="${{ inputs.module_config }}"
-          # use scripts/config to enable config=y so driver is built-in
-          if [ -x scripts/config ]; then
-            echo "[cfg] enabling ${MODULE_CONFIG} (built-in)"
-            scripts/config --enable "${MODULE_CONFIG}" || true
-            # ensure default is applied to .config
-            yes '' | make oldconfig >/dev/null 2>&1 || true
-          else
-            echo "Warning: scripts/config not found; cannot auto-enable ${MODULE_CONFIG}"
+          cd common
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Add ${MODULE_DIR} to drivers (auto)" || true
           fi
+          cd ..
 
       - name: Setup ccache
         if: ${{ inputs.use_cache == true }}
@@ -165,48 +140,19 @@ jobs:
         with:
           key: gki-kernel-aarch64-${{ inputs.version_name }}
           max-size: 2G
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
-      - name: Build full kernel (Image + vmlinux)
+      - name: Build Kernel/LKM (bazel or build script)
         working-directory: android-kernel
+        env:
+          MAKEFLAGS: -j$(nproc)
         run: |
           set -euo pipefail
-          # ensure required toolchain/tools exist (install clang if not present)
-          sudo apt-get update -y
-          sudo apt-get install -y clang llvm || true
-
           if [ -e build/build.sh ]; then
             LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang"
           else
-            tools/bazel run --disk_cache=$HOME/.cache/bazel --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist -- --dist_dir=dist
+            tools/bazel run --disk_cache=/home/runner/.cache/bazel --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist -- --dist_dir=dist
           fi
-
-      - name: Verify module build mode and produced artifacts
-        working-directory: android-kernel
-        env:
-          MODULE_DIR: ${{ inputs.module_dir }}
-          MODULE_NAME_IN: ${{ inputs.module_name }}
-        run: |
-          set -euo pipefail
-          MODULE_NAME="${MODULE_NAME_IN}"
-          if [ -z "${MODULE_NAME}" ]; then MODULE_NAME="${MODULE_DIR}"; fi
-
-          echo "[verify] checking whether kernel built module or built-in"
-          # look for .ko in typical output locations
-          if find out -path "*/common/${MODULE_NAME}.ko" -print -quit | grep -q .; then
-            echo "Warning: .ko found in out - module was built as .ko"
-            find out -name "${MODULE_NAME}.ko" -print || true
-          else
-            echo "[verify] No .ko found for ${MODULE_NAME} in out/"
-          fi
-
-          # display module symbol inclusion (autoksyms)
-          if [ -f include/generated/autoksyms.h ]; then
-            tail -n 50 include/generated/autoksyms.h || true
-          fi
-
-          # list produced kernel images
-          ls -la arch/arm64/boot || true
-          ls -la out || true
 
       - name: Prepare artifacts (Image / vmlinux / AnyKernel3)
         working-directory: android-kernel
@@ -216,34 +162,48 @@ jobs:
           if [ ! -d "$OUTDIR" ]; then
             OUTDIR="dist"
           fi
-          mkdir -p ../output
+          mkdir -p "$GITHUB_WORKSPACE/output"
 
-          # copy image(s)
-          if [ -e "$OUTDIR/Image" ]; then cp "$OUTDIR/Image" ../output/ || true; fi
-          if [ -e "$OUTDIR/Image.lz4" ]; then cp "$OUTDIR/Image.lz4" ../output/ || true; fi
-          if [ -e "$OUTDIR/vmlinux" ]; then cp "$OUTDIR/vmlinux" ../output/ || true; fi
-          if [ -e "arch/arm64/boot/Image" ]; then cp arch/arm64/boot/Image ../output/ || true; fi
-          if [ -e "arch/arm64/boot/Image.lz4" ]; then cp arch/arm64/boot/Image.lz4 ../output/ || true; fi
+          # copy kernel images
+          if [ -e "$OUTDIR/Image" ]; then cp "$OUTDIR/Image" "$GITHUB_WORKSPACE/output/" || true; fi
+          if [ -e "$OUTDIR/Image.lz4" ]; then cp "$OUTDIR/Image.lz4" "$GITHUB_WORKSPACE/output/" || true; fi
+          if [ -e "$OUTDIR/vmlinux" ]; then cp "$OUTDIR/vmlinux" "$GITHUB_WORKSPACE/output/" || true; fi
+          if [ -e "arch/arm64/boot/Image" ]; then cp arch/arm64/boot/Image "$GITHUB_WORKSPACE/output/" || true; fi
+          if [ -e "arch/arm64/boot/Image.lz4" ]; then cp arch/arm64/boot/Image.lz4 "$GITHUB_WORKSPACE/output/" || true; fi
 
-          # AnyKernel packaging (optional)
-          git clone https://github.com/Kernel-SU/AnyKernel3 anykernel3 || true
-          rm -rf anykernel3/.git || true
-          if [ -e "$OUTDIR/Image" ]; then cp "$OUTDIR/Image" anykernel3/ || true; elif [ -e "arch/arm64/boot/Image" ]; then cp arch/arm64/boot/Image anykernel3/ || true; fi
-          if [ -d anykernel3 ]; then mv anykernel3 ../output/AnyKernel3 || true; fi
-
+          # AnyKernel3 packaging
+          rm -rf "$GITHUB_WORKSPACE/output/AnyKernel3" || true
+          git clone https://github.com/Kernel-SU/AnyKernel3 "$GITHUB_WORKSPACE/output/AnyKernel3" || true
+          rm -rf "$GITHUB_WORKSPACE/output/AnyKernel3/.git" || true
+          if [ -e "$OUTDIR/Image" ]; then
+            cp "$OUTDIR/Image" "$GITHUB_WORKSPACE/output/AnyKernel3/" || true
+          elif [ -e "arch/arm64/boot/Image" ]; then
+            cp arch/arm64/boot/Image "$GITHUB_WORKSPACE/output/AnyKernel3/" || true
+          fi
+          cd "$GITHUB_WORKSPACE/output"
+          if [ -d "AnyKernel3" ]; then
+            zip -r AnyKernel3.zip AnyKernel3 || true
+          fi
           echo "[artifacts] output contents:"
-          ls -la ../output || true
+          ls -la "$GITHUB_WORKSPACE/output" || true
 
       - name: Upload kernel images
         if: ${{ inputs.build_in_tree == true }}
         uses: actions/upload-artifact@v4
         with:
           name: Image-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
-          path: android-kernel/../output/*
+          path: output/*
 
       - name: Upload AnyKernel3
         if: ${{ inputs.build_in_tree == true }}
         uses: actions/upload-artifact@v4
         with:
           name: AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
-          path: android-kernel/../output/AnyKernel3/**
+          path: output/AnyKernel3/**,output/AnyKernel3.zip
+
+      - name: Upload LKM
+        if: ${{ inputs.build_lkm == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.version }}-${{ inputs.module_name }}
+          path: output/*_${{ inputs.module_name }}.ko
