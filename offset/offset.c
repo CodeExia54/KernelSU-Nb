@@ -63,8 +63,10 @@ static int __init offsets_init(void)
             offsetof(struct task_struct, pid));
 
     pr_info("offsets: offsetof(task_struct, tasks) = %zu\n",
-            offsetof(struct task_struct, tasks));
-    
+        offsetof(struct task_struct, tasks));
+
+    pr_info("offsets: offsetof(task_struct, next) = %zu\n",
+        offsetof(struct task_struct, next));
     
     pr_info("offsets: DONE\n");
     return 0;
