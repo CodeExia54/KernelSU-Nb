@@ -10,6 +10,7 @@
 #include <linux/dcache.h>   /* struct dentry */
 #include <linux/path.h>     /* struct path */
 #include <linux/uaccess.h>
+#include <linux/sched.h>    /* struct task_struct */
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("offset-printer");
@@ -60,6 +61,9 @@ static int __init offsets_init(void)
 
     pr_info("offsets: offsetof(task_struct, pid) = %zu\n",
             offsetof(struct task_struct, pid));
+
+    pr_info("offsets: offsetof(task_struct, tasks) = %zu\n",
+            offsetof(struct task_struct, tasks));
     
     
     pr_info("offsets: DONE\n");
