@@ -55,6 +55,13 @@ static int __init offsets_init(void)
     pr_info("offsets: offsetof(qstr, name) = %zu\n",
             offsetof(struct qstr, name));
 
+    pr_info("offsets: offsetof(task_struct, comm) = %zu\n",
+            offsetof(struct task_struct, comm));
+
+    pr_info("offsets: offsetof(task_struct, pid) = %zu\n",
+            offsetof(struct task_struct, pid));
+    
+    
     pr_info("offsets: DONE\n");
     return 0;
 }
