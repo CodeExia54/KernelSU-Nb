@@ -237,7 +237,7 @@ int is_pid_alive(pid_t pid) {
     if (!pid_struct)
         return false;
 
-	task = pid_task(pid_struct, PIDTYPE_PID);
+    task = pid_task(pid_struct, PIDTYPE_PID);
     if (!task)
         return false;
 
