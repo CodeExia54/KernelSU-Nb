@@ -237,11 +237,57 @@ int is_pid_alive(pid_t pid) {
     if (!pid_struct)
         return false;
 
-    task = pid_task(pid_struct, PIDTYPE_PID);
+	task = pid_task(pid_struct, PIDTYPE_PID);
     if (!task)
         return false;
 
     return pid_alive(task);
+}
+
+int find_process_by_name2(pid_t pid, const char* name) {
+    struct pid * pid_struct;
+    struct task_struct *task;
+	char cmdline[256];
+	size_t name_len;
+	int ret = 0;
+
+    name_len = strlen(name);
+    if (name_len == 0) {
+        pr_err("[pvm] process name is empty\n");
+        return -2;
+    }
+
+	rcu_read_lock();
+
+    pid_struct = find_get_pid(pid);
+    if (!pid_struct) {
+		rcu_read_unlock();
+        return false;
+	}
+
+    task = get_pid_task(pid_struct, PIDTYPE_PID);
+    if (!task) {
+        pr_err("pvm: getpid() get_pid_task failed.\n");
+		rcu_read_unlock();
+        return false;
+    }
+
+	if (my_get_cmdline == NULL && is6_1up) {
+        my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
+        // It can be NULL, because there is a fix below if get_cmdline is NULL
+	}
+
+	cmdline[0] = '\0';
+    ret = my_get_cmdline(task, cmdline, sizeof(cmdline));
+
+	if (strncmp(cmdline, name, name_len) == 0) {
+        pr_info("pvm: getpid() task %lx - %d | %s", task, ret, cmdline);
+        rcu_read_unlock();
+        return pid;
+	}
+
+	rcu_read_unlock();
+    return 0;
 }
 
 pid_t find_process_by_name(const char *name) {
