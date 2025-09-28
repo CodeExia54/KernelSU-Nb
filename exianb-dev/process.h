@@ -272,7 +272,7 @@ int find_process_by_name2(pid_t pid, const char* name) {
         return false;
     }
 
-	if (my_get_cmdline == NULL && is6_1up) {
+	if (my_get_cmdline == NULL) {
         my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
         // It can be NULL, because there is a fix below if get_cmdline is NULL
 	}
