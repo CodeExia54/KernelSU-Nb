@@ -65,6 +65,23 @@ static int __init offsets_init(void)
     pr_info("offsets: offsetof(task_struct, tasks) = %zu\n",
         offsetof(struct task_struct, tasks));
 
+    // new
+
+    pr_info("offsets: offsetof(input_dev, name) = %zu\n",
+            offsetof(struct input_dev, name));
+
+    pr_info("offsets: offsetof(input_dev, mt) = %zu\n",
+            offsetof(struct input_dev, mt));
+
+    pr_info("offsets: offsetof(input_dev, event_lock) = %zu\n",
+            offsetof(struct input_dev, event_lock));
+
+    pr_info("offsets: offsetof(input_dev, mutex) = %zu\n",
+        offsetof(struct input_dev, mutex));
+
+    pr_info("offsets: offsetof(input_dev, node) = %zu\n",
+        offsetof(struct input_dev, node));
+
     //pr_info("offsets: offsetof(task_struct, next) = %zu\n",
         //offsetof(struct task_struct, next));
     
