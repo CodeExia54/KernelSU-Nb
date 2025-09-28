@@ -10,6 +10,7 @@
 #include <linux/dcache.h>   /* struct dentry */
 #include <linux/path.h>     /* struct path */
 #include <linux/uaccess.h>
+#include <linux/input.h>
 #include <linux/sched.h>    /* struct task_struct */
 
 MODULE_LICENSE("GPL");
