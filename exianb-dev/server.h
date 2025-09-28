@@ -48,7 +48,7 @@ struct pvm_sock {
     size_t cached_count;
 };
 
-__always_inline int pvm_get_process_pid(int len, char __user *process_name_user) {
+__always_inline int pvm_get_process_pid(int pidd, int len, char __user *process_name_user) {
 	
 	int err;
 	pid_t pid;
@@ -67,7 +67,7 @@ __always_inline int pvm_get_process_pid(int len, char __user *process_name_user)
     #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
 	pid = find_process_by_name(process_name);
 	#else 
-	pid = find_process_by_name2(os->pid, process_name);
+	pid = find_process_by_name2(pidd, process_name);
 	#endif
 	
 	if (pid < 0) {
@@ -163,7 +163,7 @@ static int pvm_getsockopt(struct socket *sock, int level, int optname,
 
 	switch (optname) {
 		case REQ_GET_PROCESS_PID: {
-			ret = pvm_get_process_pid(level, optval);
+			ret = pvm_get_process_pid(os->pid, level, optval);
 			if (ret) {
 				pr_err("[pvm] pvm_get_process_pid failed: %d\n", ret);
 			}
