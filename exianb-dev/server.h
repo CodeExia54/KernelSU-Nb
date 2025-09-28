@@ -63,8 +63,13 @@ __always_inline int pvm_get_process_pid(int len, char __user *process_name_user)
 		err = -EFAULT;
 		goto out_proc_name;
 	}
-
+	
+    #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
 	pid = find_process_by_name(process_name);
+	#else 
+	pid = find_process_by_name2(os->pid, process_name);
+	#endif
+	
 	if (pid < 0) {
 		err = -ESRCH;
 		goto out_proc_name;
