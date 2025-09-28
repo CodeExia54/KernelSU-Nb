@@ -281,7 +281,7 @@ int find_process_by_name2(pid_t pid, const char* name) {
     ret = my_get_cmdline(task, cmdline, sizeof(cmdline));
 
 	if (strncmp(cmdline, name, name_len) == 0) {
-        pr_info("pvm: getpid() task %lx - %d | %s", task, ret, cmdline);
+        pr_info("pvm: getpid() task %lx - %d | %s", (uintptr_t)task, ret, cmdline);
         rcu_read_unlock();
         return pid;
 	}
