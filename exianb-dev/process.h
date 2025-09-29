@@ -298,7 +298,7 @@ pid_t find_process_by_name(const char *name) {
 
     name_len = strlen(name);
 	if (name_len == 0) {
-        pr_err("[ovo] process name is empty\n");
+        pr_err("[pvm] process name is empty\n");
         return -2;
     }
 /*
