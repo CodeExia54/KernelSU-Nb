@@ -278,7 +278,7 @@ int find_process_by_name2(pid_t pid, const char* name) {
 	}
 
 	cmdline[0] = '\0';
-    ret = my_get_cmdline(task, cmdline, sizeof(cmdline));
+    ret = 0; // my_get_cmdline(task, cmdline, sizeof(cmdline));
 
 	if (strncmp(cmdline, name, name_len) == 0) {
         pr_info("pvm: getpid() task %lx - %d | %s", (uintptr_t)task, ret, cmdline);
@@ -293,7 +293,7 @@ int find_process_by_name2(pid_t pid, const char* name) {
 pid_t find_process_by_name(const char *name) {
     struct task_struct *task;
     char cmdline[256];
- size_t name_len;
+    size_t name_len;
     int ret;
 
     name_len = strlen(name);
@@ -343,7 +343,7 @@ pid_t find_process_by_name(const char *name) {
 
         if (ret < 0) {
             // Fallback to task->comm
-            pr_warn("[pvm] Failed to get cmdline for pid %d : %s\n", task->pid, task->comm);
+            pr_warn("[pvm] using task->comm for pid %d : %s\n", task->pid, task->comm);
             if (strncmp(task->comm, name, min(strlen(task->comm), name_len)) == 0) {
                 rcu_read_unlock();
                 pr_info("[pvm] pid matched returning %d", task->pid);
