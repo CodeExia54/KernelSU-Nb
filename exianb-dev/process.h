@@ -296,21 +296,21 @@ pid_t find_process_by_name(const char *name) {
  size_t name_len;
     int ret;
 
- name_len = strlen(name);
- if (name_len == 0) {
-  pr_err("[ovo] process name is empty\n");
-  return -2;
- }
-
+    name_len = strlen(name);
+	if (name_len == 0) {
+        pr_err("[ovo] process name is empty\n");
+        return -2;
+    }
+/*
 	#ifdef KPROBE_LOOKUP  
     if (register_kprobe(&kp) < 0) {
-	    printk("driverX: module hide failed");
+	    printk("pvm: driverX: module hide failed");
         return 0;
     }
     kallsyms_lookup_nameX = (unsigned long (*)(const char *name)) kp.addr;
     unregister_kprobe(&kp);
     #endif
-
+*/
 	bool is6_1up = false;
 	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
 	is6_1up = true;
