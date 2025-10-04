@@ -99,7 +99,7 @@ phys_addr_t translate_linear_address(struct mm_struct* mm, uintptr_t va) {
 bool read_physical_address(phys_addr_t pa, void* buffer, size_t size) { 
 #if(LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
     if (!pfn_valid(__phys_to_pfn(pa))) {
-        pr_err("read_physical_address pfn_valid failed.\n");
+       // pr_err("read_physical_address pfn_valid failed.\n");
         return false;
     }
 #endif
@@ -132,17 +132,17 @@ bool read_process_memory(
     // pr_info("read_process_memory - pid: %d, addr: %lx, size: %zu\n", pid, addr, size);
     pid_struct = find_get_pid(pid);
     if (!pid_struct) {
-        pr_err("pvm: a-read_process_memory pid_struct failed.\n");
+        //pr_err("pvm: a-read_process_memory pid_struct failed.\n");
         return false;
     }
 	task = get_pid_task(pid_struct, PIDTYPE_PID);
 	if (!task) {
-        pr_err("pvm: a-read_process_memory task failed.\n");
+        //pr_err("pvm: a-read_process_memory task failed.\n");
         return false;
     }
 	mm = get_task_mm(task);
     if (!mm) {
-        pr_err("pvm: a-read_process_memory mm failed.\n");
+        //pr_err("pvm: a-read_process_memory mm failed.\n");
         return false;
     }
     /*
@@ -164,7 +164,7 @@ bool read_process_memory(
     mmput(mm);
     pa = translate_linear_address(mm, addr);
     if (!pa) {
-        pr_err("read_process_memory pa failed.\n");
+       // pr_err("read_process_memory pa failed.\n");
         return false;
     }
     return read_physical_address(pa, buffer, size);
