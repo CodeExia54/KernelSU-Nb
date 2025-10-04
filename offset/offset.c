@@ -27,6 +27,9 @@ static int __init offsets_init(void)
     pr_info("offsets: offsetof(mm_struct, mmap) = %zu\n",
             offsetof(struct mm_struct, mmap));
 
+    pr_info("offsets: offsetof(mm_struct, mmap_lock) = %zu\n",
+            offsetof(struct mm_struct, mmap_lock));
+
     /* vm_area_struct fields */
     pr_info("offsets: offsetof(vm_area_struct, vm_next) = %zu\n",
             offsetof(struct vm_area_struct, vm_next));
