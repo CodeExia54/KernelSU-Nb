@@ -153,7 +153,7 @@ uintptr_t get_module_base(pid_t pid, char* name) {
 		return 0;
 	}
 	
-
+/*
 #if(LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
     rcu_read_lock();
     pid_struct = find_vpid(pid);
@@ -167,6 +167,7 @@ uintptr_t get_module_base(pid_t pid, char* name) {
     }
     rcu_read_unlock();
 #else
+	*/
     pid_struct = find_get_pid(pid);
     if (!pid_struct) {
         pr_err("get_module_base find_get_pid failed.\n");
@@ -177,7 +178,7 @@ uintptr_t get_module_base(pid_t pid, char* name) {
         pr_err("get_module_base get_pid_task failed.\n");
         return false;
     }
-#endif
+// #endif
 
     mm = get_task_mm(task);
 	put_task_struct(task); // new
