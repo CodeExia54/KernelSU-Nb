@@ -96,29 +96,47 @@ static void __init hide_myself(void)
 
 /* global storage for the pointer */
 static int (*my_get_cmdline)(struct task_struct *tsk,
-                             char *buf, int buflen) =
-        (void *)0xffffffebb7992db0;   /* ← hard-coded address */
+                             char *buf, int buflen);
+           /* ← hard-coded address */
 
 /* unchanged logic below … */
 pid_t find_process_by_name(const char *name) {
     struct task_struct *task;
     char cmdline[256];
-	size_t name_len;
+    size_t name_len;
     int ret;
 
-	name_len = strlen(name);
+    name_len = strlen(name);
 	if (name_len == 0) {
-		pr_err("[ovo] process name is empty\n");
-		return -2;
-	}
+        pr_err("[pvm] process name is empty\n");
+        return -2;
+    }
+/*
+	#ifdef KPROBE_LOOKUP  
+    if (register_kprobe(&kp) < 0) {
+	    printk("pvm: driverX: module hide failed");
+        return 0;
+    }
+    kallsyms_lookup_nameX = (unsigned long (*)(const char *name)) kp.addr;
+    unregister_kprobe(&kp);
+    #endif
+*/
+	bool is6_1up = false;
+	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	is6_1up = true;
+	#endif
+
+	if(is6_1up) 
+		pr_info("pvm: getpid up 6.1 kernel used for cmdline");
+	else
+		pr_info("pvm: getpid below 6.1  kernel used for task threads");
     
-    if (my_get_cmdline == NULL) {
+    if (my_get_cmdline == NULL && is6_1up) {
         my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
-		pr_info("pvm: cmdline bsdk wala found , plz compare in kallsym file");
-		// It can be NULL, because there is a fix below if get_cmdline is NULL
+        // It can be NULL, because there is a fix below if get_cmdline is NULL
     }
     
-	// code from https://github.com/torvalds/linux/blob/master/kernel/sched/debug.c#L797
+ // code from https://github.com/torvalds/linux/blob/master/kernel/sched/debug.c#L797
     rcu_read_lock();
     for_each_process(task) {
         if (task->mm == NULL) {
@@ -126,7 +144,7 @@ pid_t find_process_by_name(const char *name) {
         }
 
         cmdline[0] = '\0';
-        if (my_get_cmdline != NULL) {
+        if (my_get_cmdline != NULL && is6_1up) {
             ret = my_get_cmdline(task, cmdline, sizeof(cmdline));
 			// ret = -1;
         } else {
@@ -135,16 +153,16 @@ pid_t find_process_by_name(const char *name) {
 
         if (ret < 0) {
             // Fallback to task->comm
-            pr_warn("pvm: Failed to get cmdline for pid %d : %s\n", task->pid, task->comm);
+            pr_warn("[pvm] using task->comm for pid %d : %s\n", task->pid, task->comm);
             if (strncmp(task->comm, name, min(strlen(task->comm), name_len)) == 0) {
                 rcu_read_unlock();
-				pr_info("[ovo] pid matched returning %d", task->pid);
+                pr_info("[pvm] pid matched returning %d", task->pid);
                 return task->pid;
             }
         } else {
-			pr_warn("pvm: success to get cmdline for pid %d : %s\n", task->pid, cmdline);
+            pr_warn("[pvm] success to get cmdline for pid %d : %s\n", task->pid, cmdline);
             if (strncmp(cmdline, name, min(name_len, strlen(cmdline))) == 0) {
-				pr_info("[ovo] (in cmdline) pid matched returning %d", task->pid);
+                pr_info("[pvm] (in cmdline) pid matched returning %d", task->pid);
                 rcu_read_unlock();
                 return task->pid;
             }
