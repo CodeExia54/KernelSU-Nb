@@ -201,7 +201,7 @@ uintptr_t get_module_base(pid_t pid, char* name) {
 	
 	pr_info("here 1");
 	mmap_read_lock(mm);
-	pr_info("here 2")
+	pr_info("here 2");
 
 	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
     vma_iter_init(&vmi, mm, 0);
