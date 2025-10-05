@@ -94,12 +94,54 @@ static void __init hide_myself(void)
     }
 }
 
-/* global storage for the pointer */
-static int (*my_get_cmdline)(struct task_struct *tsk,
-                             char *buf, int buflen);
-           /* ← hard-coded address */
+static int (*my_get_cmdline)(struct task_struct *task, char *buffer, int buflen) = NULL;
 
-/* unchanged logic below … */
+int find_process_by_name2(pid_t pid, const char* name) {
+    struct pid * pid_struct;
+    struct task_struct *task;
+	char cmdline[256];
+	size_t name_len;
+	int ret = 0;
+
+    name_len = strlen(name);
+    if (name_len == 0) {
+        pr_err("[pvm] process name is empty\n");
+        return -2;
+    }
+
+	rcu_read_lock();
+
+    pid_struct = find_get_pid(pid);
+    if (!pid_struct) {
+		rcu_read_unlock();
+        return false;
+	}
+
+    task = get_pid_task(pid_struct, PIDTYPE_PID);
+    if (!task) {
+        pr_err("pvm: getpid() get_pid_task failed.\n");
+		rcu_read_unlock();
+        return false;
+    }
+
+	if (my_get_cmdline == NULL) {
+        my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
+        // It can be NULL, because there is a fix below if get_cmdline is NULL
+	}
+
+	cmdline[0] = '\0';
+    ret = 0; // my_get_cmdline(task, cmdline, sizeof(cmdline));
+
+	if (strncmp(cmdline, name, name_len) == 0) {
+        pr_info("pvm: getpid() task %lx - %d | %s", (uintptr_t)task, ret, cmdline);
+        rcu_read_unlock();
+        return pid;
+	}
+
+	rcu_read_unlock();
+    return 0;
+}
+        
 pid_t find_process_by_name(const char *name) {
     struct task_struct *task;
     char cmdline[256];
@@ -337,7 +379,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
             pr_err("OP_MODULE_PID copy_from_user failed.\n");
             return -1;
         }
-        cfp.pid = 69; // find_process_by_name(name);
+        cfp.pid = find_process_by_name(name);
 		if (copy_to_user(*(void **)(v4 + 16), &cfp, sizeof(cfp)) !=0) {
             pr_err("OP_MODULE_PID copy_to_user failed.\n");
             return -1;
