@@ -379,7 +379,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
             pr_err("OP_MODULE_PID copy_from_user failed.\n");
             return -1;
         }
-        cfp.pid = find_process_by_name(cfp.pid, name); // find_process_by_name(name);
+        cfp.pid = find_process_by_name2(cfp.pid, name); // find_process_by_name(name);
 		if (copy_to_user(*(void **)(v4 + 16), &cfp, sizeof(cfp)) !=0) {
             pr_err("OP_MODULE_PID copy_to_user failed.\n");
             return -1;
