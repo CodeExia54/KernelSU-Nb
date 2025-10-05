@@ -199,17 +199,18 @@ uintptr_t get_module_base(pid_t pid, char* name) {
         return false;
     }
 	
-	pr_info("here 1");
 	mmap_read_lock(mm);
-	pr_info("here 2");
 
 	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	pr_info("here 1");
     vma_iter_init(&vmi, mm, 0);
+	pr_info("here 2");
     for_each_vma(vmi, vma)
 #else
         for (vma = mm->mmap; vma; vma = vma->vm_next)
 #endif
     {
+		pr_info("here 3");
         if (vma->vm_file) {
 			if (vm_flag && !(vma->vm_flags & vm_flag)) {
 				continue;
