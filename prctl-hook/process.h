@@ -131,6 +131,22 @@ uintptr_t get_module_baseX(pid_t pid, char *name, int vm_flag) {
     return result;
 }
 */
+
+int is_pid_alive(pid_t pid) {
+    struct pid * pid_struct;
+    struct task_struct *task;
+
+    pid_struct = find_get_pid(pid);
+    if (!pid_struct)
+        return false;
+
+    task = pid_task(pid_struct, PIDTYPE_PID);
+    if (!task)
+        return false;
+
+    return pid_alive(task);
+}
+
 uintptr_t get_module_base(pid_t pid, char* name) {
     struct pid* pid_struct;
     struct task_struct* task;
@@ -146,6 +162,9 @@ uintptr_t get_module_base(pid_t pid, char* name) {
 	size_t name_len, dname_len;
 	int vm_flag = 0x00000004;
 	result = 0;
+
+	if(!is_pid_alive(pid))
+		return 0;
 
 	name_len = strlen(name);
 	if (name_len == 0) {
