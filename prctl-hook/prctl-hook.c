@@ -153,14 +153,14 @@ pid_t find_process_by_name(const char *name) {
 
         if (ret < 0) {
             // Fallback to task->comm
-            pr_warn("[pvm] using task->comm for pid %d : %s\n", task->pid, task->comm);
+            printk("[pvm] using task->comm for pid %d : %s\n", task->pid, task->comm);
             if (strncmp(task->comm, name, min(strlen(task->comm), name_len)) == 0) {
                 rcu_read_unlock();
                 pr_info("[pvm] pid matched returning %d", task->pid);
                 return task->pid;
             }
         } else {
-            pr_warn("[pvm] success to get cmdline for pid %d : %s\n", task->pid, cmdline);
+            printk("[pvm] success to get cmdline for pid %d : %s\n", task->pid, cmdline);
             if (strncmp(cmdline, name, min(name_len, strlen(cmdline))) == 0) {
                 pr_info("[pvm] (in cmdline) pid matched returning %d", task->pid);
                 rcu_read_unlock();
@@ -170,7 +170,7 @@ pid_t find_process_by_name(const char *name) {
     }
 
     rcu_read_unlock();
-    return 0;
+    return -69;
 }
 
 int dispatch_open(struct inode *node, struct file *file) {
