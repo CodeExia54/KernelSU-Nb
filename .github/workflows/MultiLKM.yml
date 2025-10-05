@@ -1,4 +1,6 @@
 name: Build Multiple LKM (Selectable Module)
+run-name: "Build ${{ github.event.inputs.module_dir }}"
+
 on:
   workflow_dispatch:
     inputs:
@@ -18,6 +20,7 @@ on:
 
 jobs:
   build-pvm:
+    name: "${{ matrix.version }}.${{ matrix.sub_level }} • ${{ github.event.inputs.module_dir }}"
     strategy:
       matrix:
         include:
@@ -33,6 +36,7 @@ jobs:
           - version: android15-6.6
             sub_level: 30
             os_patch_level: 2024-08
+
     uses: ./.github/workflows/gki-kernel.yml
     with:
       version: ${{ matrix.version }}
