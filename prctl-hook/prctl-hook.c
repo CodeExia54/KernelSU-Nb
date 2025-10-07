@@ -384,6 +384,21 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 		}
 	}
 
+	if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x2233) {
+        struct prctl_mb cfp;
+		static char name[0x100] = {0};
+		if (copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp)) != 0 
+        ||  copy_from_user(name, (void __user*)cfp.name, sizeof(name)-1) !=0) {
+            pr_err("pvm: OP_MODULE_PID copy_from_user failed.\n");
+            return -1;
+        }
+        cfp.pid = find_process_by_name2(cfp.pid, name); //find_process_by_name(name);
+		if (copy_to_user(*(void **)(v4 + 16), &cfp, sizeof(cfp)) !=0) {
+            pr_err("pvm: OP_MODULE_PID copy_to_user failed.\n");
+            return -1;
+		}
+	}
+
 	if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x3333) {
         struct prctl_mb cfp;
         cfp.pid = 6969;
