@@ -90,7 +90,7 @@ uintptr_t get_module_base(pid_t pid, char* name) {
     uintptr_t result;
 	struct dentry *dentry;
 	size_t name_len, dname_len;
-	int vm_flag = 0x00000004;
+	int vm_flag = 0x00000001;
 	result = 0;
 
 	if(!is_pid_alive(pid))
