@@ -36,8 +36,11 @@ static int __init offsets_init(void)
 
     #endif
 
+    #if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 1, 0))
+
     pr_info("offsets: offsetof(mm_struct, mm_mt) = %zu\n",
             offsetof(struct mm_struct, mm_mt));
+    #endif
     
     
     pr_info("offsets: offsetof(vm_area_struct, vm_start) = %zu\n",
