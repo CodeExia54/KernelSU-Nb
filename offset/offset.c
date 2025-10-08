@@ -35,6 +35,10 @@ static int __init offsets_init(void)
             offsetof(struct vm_area_struct, vm_next));
 
     #endif
+
+    pr_info("offsets: offsetof(mm_struct, mm_mt) = %zu\n",
+            offsetof(struct mm_struct, mm_mt));
+    
     
     pr_info("offsets: offsetof(vm_area_struct, vm_start) = %zu\n",
             offsetof(struct vm_area_struct, vm_start));
