@@ -14,7 +14,8 @@ on:
           - ovo-main
           - prctl-fd
           - prctl-hook
-        default: exianb
+          - hello-world
+        default: hello-world
       module_name:
         description: 'Name of module (defaults to module_dir)'
         required: false
