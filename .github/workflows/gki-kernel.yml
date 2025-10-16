@@ -39,7 +39,7 @@ on:
       build_in_tree:
         required: false
         type: boolean
-        default: true   # you said you want only inbuilt image builds
+        default: true   # inbuilt image builds
 
 jobs:
   build:
@@ -78,7 +78,7 @@ jobs:
           if grep -q deprecated <<< "$REMOTE_BRANCH"; then
             sed -i 's/"${{ inputs.tag }}"/"deprecated\/${{ inputs.tag }}"/g' .repo/manifests/default.xml
           fi
-          repo sync -c -j$(nproc --all) --no-tags
+          repo sync -c -j"$(nproc --all)" --no-tags
 
       - name: Setup Module (embed into kernel tree)
         run: |
@@ -102,7 +102,7 @@ jobs:
             echo "obj-\$(CONFIG_${MODULE_CONFIG}) += ${MODULE_DIR}/" >> "$DRIVER_MAKEFILE"
           fi
 
-          echo "[+] Module will be built in-tree (no LKM packaging, no gki_aarch64_modules changes)."
+          echo "[+] Wired ${MODULE_DIR} into drivers/Makefile and drivers/Kconfig."
 
       - name: Setup ccache
         if: ${{ inputs.use_cache == true }}
@@ -111,14 +111,18 @@ jobs:
           key: gki-kernel-aarch64-${{ inputs.version_name }}
           max-size: 2G
 
-      - name: Build Kernel (Image + vmlinux)
+      - name: Build Kernel (Image)
         working-directory: android-kernel
         run: |
           set -euo pipefail
           if [ -e build/build.sh ]; then
-            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang"
+            # build.sh path
+            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 \
+            build/build.sh CC="/usr/bin/ccache clang"
           else
-            tools/bazel run --disk_cache=$HOME/.cache/bazel --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist -- --dist_dir=dist
+            # Bazel (kleaf) path
+            tools/bazel run --disk_cache=$HOME/.cache/bazel --config=fast --config=stamp --lto=thin \
+              //common:kernel_aarch64_dist -- --dist_dir=dist
           fi
 
       - name: Prepare artifacts
@@ -128,13 +132,12 @@ jobs:
           [ -d "$OUTDIR" ] || OUTDIR="android-kernel/dist"
           mkdir -p output
 
-          cp "$OUTDIR/Image" output/ || true
-          cp "$OUTDIR/Image.lz4" output/ || true
-          cp "$OUTDIR/vmlinux" output/ || true
+          # Only kernel images (no vmlinux)
+          cp "$OUTDIR"/Image* output/ 2>/dev/null || true
 
           git clone https://github.com/Kernel-SU/AnyKernel3 anykernel3
           rm -rf anykernel3/.git
-          cp "$OUTDIR/Image" anykernel3/ || true
+          cp "$OUTDIR"/Image* anykernel3/ 2>/dev/null || true
           mv anykernel3 output/AnyKernel3
 
       - name: Upload kernel images
@@ -148,4 +151,3 @@ jobs:
         with:
           name: AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
           path: output/AnyKernel3/**
-        
