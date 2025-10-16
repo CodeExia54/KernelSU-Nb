@@ -123,27 +123,13 @@ jobs:
           repo status
           echo "[+] $MODULE_NAME setup done."
 
-      # Force built-in for build.sh-based trees (only when building in-tree and not building LKM)
-      - name: Force built-in via fragment (build.sh path)
+      # Create Kconfig fragment OUTSIDE the kernel tree (to keep the source tree clean)
+      - name: Create built-in fragment (outside tree)
         if: ${{ inputs.build_lkm == false && inputs.build_in_tree == true }}
-        working-directory: android-kernel
         run: |
-          if [ -e build/build.sh ]; then
-            echo "CONFIG_${{ inputs.module_config }}=y" > common/arch/arm64/configs/pvm_fragment.config
-            echo 'export POST_DEFCONFIG_CMDS="${POST_DEFCONFIG_CMDS} ${KERNEL_DIR}/scripts/kconfig/merge_config.sh -m -O ${OUT_DIR} ${OUT_DIR}/.config ${KERNEL_DIR}/arch/arm64/configs/pvm_fragment.config && make -C ${KERNEL_DIR} O=${OUT_DIR} olddefconfig"' >> common/build.config.gki.aarch64
-            echo "[+] Added fragment + POST_DEFCONFIG_CMDS for built-in."
-          fi
-
-      # Force built-in for Bazel (kleaf) trees (only when building in-tree and not building LKM)
-      - name: Force built-in by editing gki_defconfig (Bazel path)
-        if: ${{ inputs.build_lkm == false && inputs.build_in_tree == true }}
-        working-directory: android-kernel
-        run: |
-          if [ ! -e build/build.sh ]; then
-            DEFCONFIG=common/arch/arm64/configs/gki_defconfig
-            grep -q "^CONFIG_${{ inputs.module_config }}=y$" "$DEFCONFIG" || echo "CONFIG_${{ inputs.module_config }}=y" >> "$DEFCONFIG"
-            echo "[+] Appended CONFIG_${{ inputs.module_config }}=y to gki_defconfig (kleaf)."
-          fi
+          echo "CONFIG_${{ inputs.module_config }}=y" > $GITHUB_WORKSPACE/pvm_fragment.config
+          echo "[+] Fragment created at $GITHUB_WORKSPACE/pvm_fragment.config"
+          cat $GITHUB_WORKSPACE/pvm_fragment.config
 
       - name: Setup ccache
         if: inputs.use_cache == true
@@ -196,8 +182,23 @@ jobs:
         working-directory: android-kernel
         run: |
           if [ -e build/build.sh ]; then
-            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang"
+            if [ "${{ inputs.build_lkm }}" = "true" ] || [ "${{ inputs.build_in_tree }}" != "true" ]; then
+              # Normal path (no fragment injection)
+              LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 \
+              build/build.sh CC="/usr/bin/ccache clang"
+            else
+              # Inject fragment via POST_DEFCONFIG_CMDS without touching common/*
+              POST_DEFCONFIG_CMDS="${KERNEL_DIR}/scripts/kconfig/merge_config.sh -m -O ${OUT_DIR} ${OUT_DIR}/.config $GITHUB_WORKSPACE/pvm_fragment.config && make -C ${KERNEL_DIR} O=${OUT_DIR} olddefconfig" \
+              LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 \
+              build/build.sh CC="/usr/bin/ccache clang"
+            fi
           else
+            # Kleaf/Bazel path — force built-in by editing gki_defconfig (safe for this path)
+            if [ "${{ inputs.build_lkm }}" = "false" ] && [ "${{ inputs.build_in_tree }}" = "true" ]; then
+              DEFCONFIG=common/arch/arm64/configs/gki_defconfig
+              grep -q "^CONFIG_${{ inputs.module_config }}=y$" "$DEFCONFIG" || echo "CONFIG_${{ inputs.module_config }}=y" >> "$DEFCONFIG"
+              echo "[+] Appended CONFIG_${{ inputs.module_config }}=y to gki_defconfig (kleaf)."
+            fi
             tools/bazel run --disk_cache=/home/runner/.cache/bazel --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist -- --dist_dir=dist
           fi
 
