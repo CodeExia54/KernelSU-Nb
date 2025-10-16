@@ -1,3 +1,6 @@
 config PVM_MOD
-    bool "Linux Kernel Component for Safe Memory Access"
-    default y
+	tristate "Safe Memory Access (PVM)"
+	# no: depends on MODULES
+	default y
+	help
+	  Built-in or module. Set to Y in defconfig fragment to include in the image.
