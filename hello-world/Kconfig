@@ -1,6 +1,3 @@
 config PVM_MOD
-	tristate "Linux Kernel Module for Safe Memory Access"
-	default m
-	depends on MODULES
-	help
-	  Module for Safe Memory Access
+    bool "Linux Kernel Component for Safe Memory Access"
+    default y
