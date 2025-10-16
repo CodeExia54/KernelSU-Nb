@@ -1,4 +1,4 @@
-name: GKI Kernel Build
+name: In-tree GKI Kernel Build
 
 on:
   workflow_call:
@@ -15,19 +15,19 @@ on:
       os_patch_level:
         required: false
         type: string
-        default: 2022-05
+        default: "2022-05"
       module_dir:
         required: false
         type: string
-        default: kernelsu
+        default: "kernelsu"
       module_name:
         required: false
         type: string
-        default: kernelsu
+        default: ""
       module_config:
         required: false
         type: string
-        default: KSU
+        default: "PVM_MOD"
       use_cache:
         required: false
         type: boolean
@@ -39,7 +39,7 @@ on:
       build_in_tree:
         required: false
         type: boolean
-        default: true
+        default: true   # you said you want only inbuilt image builds
 
 jobs:
   build:
@@ -49,6 +49,7 @@ jobs:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
+
     steps:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
@@ -60,163 +61,91 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
 
-      - uses: actions/checkout@v4
+      - name: Checkout module repo
+        uses: actions/checkout@v4
         with:
           path: KernelSU
           fetch-depth: 0
 
-      - name: Setup kernel source
+      - name: Setup kernel source (repo sync)
         run: |
-          echo "Free space:"; df -h
-          cd "$GITHUB_WORKSPACE"
-          sudo apt-get install repo -y
-          mkdir android-kernel && cd android-kernel
-          repo init --depth=1 --u https://android.googlesource.com/kernel/manifest -b common-${{ inputs.tag }} --repo-rev=v2.16
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y repo
+          mkdir -p android-kernel && cd android-kernel
+          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-${{ inputs.tag }} --repo-rev=v2.16
           REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${{ inputs.tag }})
-          DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
           if grep -q deprecated <<< "$REMOTE_BRANCH"; then
-            echo "Found deprecated branch: ${{ inputs.tag }}"
-            sed -i 's/"${{ inputs.tag }}"/"deprecated\/${{ inputs.tag }}"/g' "$DEFAULT_MANIFEST_PATH"
-            cat "$DEFAULT_MANIFEST_PATH"
+            sed -i 's/"${{ inputs.tag }}"/"deprecated\/${{ inputs.tag }}"/g' .repo/manifests/default.xml
           fi
-          repo --version
-          repo --trace sync -c -j"$(nproc --all)" --no-tags
-          df -h
+          repo sync -c -j$(nproc --all) --no-tags
 
-      - name: Setup Module
+      - name: Setup Module (embed into kernel tree)
         run: |
-          MODULE_DIR=${{ inputs.module_dir }}
-          MODULE_NAME=${{ inputs.module_name }}
-          cd "$GITHUB_WORKSPACE/android-kernel"
-          echo "[+] $MODULE_NAME setup"
-          GKI_ROOT=$(pwd)
-          echo "[+] GKI_ROOT: $GKI_ROOT"
-          echo "[+] Link $MODULE_DIR into $GKI_ROOT/common/drivers"
-          ln -sf "$GITHUB_WORKSPACE/KernelSU/$MODULE_DIR" "$GKI_ROOT/common/drivers/$MODULE_DIR"
-          DRIVER_MAKEFILE=$GKI_ROOT/common/drivers/Makefile
-          DRIVER_KCONFIG=$GKI_ROOT/common/drivers/Kconfig
-          grep -q "$MODULE_NAME" "$DRIVER_MAKEFILE" || printf "\nobj-\$(CONFIG_${{ inputs.module_config }}) += $MODULE_NAME/\n" >> "$DRIVER_MAKEFILE"
-          grep -q "drivers/${{ inputs.module_dir }}/Kconfig" "$DRIVER_KCONFIG" || sed -i "/endmenu/i\\source \"drivers/${{ inputs.module_dir }}/Kconfig\"" "$DRIVER_KCONFIG"
-          repo status
-          echo "[+] $MODULE_NAME setup done."
+          set -euo pipefail
+          MODULE_DIR="${{ inputs.module_dir }}"
+          MODULE_NAME="${{ inputs.module_name }}"
+          MODULE_CONFIG="${{ inputs.module_config }}"
+          if [ -z "$MODULE_NAME" ]; then MODULE_NAME="$MODULE_DIR"; fi
 
-      # Create a tiny fragment OUTSIDE the kernel tree
-      - name: Create built-in fragment (outside tree)
-        if: ${{ inputs.build_lkm == false && inputs.build_in_tree == true }}
-        run: |
-          echo "CONFIG_${{ inputs.module_config }}=y" > "$GITHUB_WORKSPACE/pvm_fragment.config"
-          echo "[+] Fragment at $GITHUB_WORKSPACE/pvm_fragment.config"
-          cat "$GITHUB_WORKSPACE/pvm_fragment.config"
+          cd android-kernel
+          TARGET_DIR="common/drivers/${MODULE_DIR}"
+          ln -sfn "$GITHUB_WORKSPACE/KernelSU/$MODULE_DIR" "$TARGET_DIR"
+
+          DRIVER_KCONFIG="common/drivers/Kconfig"
+          if ! grep -q "drivers/${MODULE_DIR}/Kconfig" "$DRIVER_KCONFIG"; then
+            sed -i "/endmenu/i\\source \"drivers/${MODULE_DIR}/Kconfig\"" "$DRIVER_KCONFIG"
+          fi
+
+          DRIVER_MAKEFILE="common/drivers/Makefile"
+          if ! grep -q "${MODULE_DIR}/" "$DRIVER_MAKEFILE"; then
+            echo "obj-\$(CONFIG_${MODULE_CONFIG}) += ${MODULE_DIR}/" >> "$DRIVER_MAKEFILE"
+          fi
+
+          echo "[+] Module will be built in-tree (no LKM packaging, no gki_aarch64_modules changes)."
 
       - name: Setup ccache
-        if: inputs.use_cache == true
+        if: ${{ inputs.use_cache == true }}
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: gki-kernel-aarch64-${{ inputs.version_name }}
           max-size: 2G
-          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
-      - name: Setup for LKM
-        if: ${{ inputs.build_lkm == true }}
+      - name: Build Kernel (Image + vmlinux)
         working-directory: android-kernel
         run: |
-          MODULE_DIR=${{ inputs.module_dir }}
-          MODULE_NAME=${{ inputs.module_name }}
-          pip install ast-grep-cli
-          sudo apt-get install llvm-15 -y
-          ast-grep -U -p '$$$ check_exports($$$) {$$$}' -r '' common/scripts/mod/modpost.c
-          ast-grep -U -p 'check_exports($$$);' -r '' common/scripts/mod/modpost.c
-          sed -i '/config ${{ inputs.module_config }}/,/help/{s/default y/default m/}' "common/drivers/$MODULE_DIR/Kconfig"
-          echo "drivers/$MODULE_DIR/$MODULE_NAME.ko" >> common/android/gki_aarch64_modules
-          if [ ! -e build/build.sh ]; then
-            sed -i 's/needs unknown symbol/Dont abort when unknown symbol/g' build/kernel/*.sh || true
-            if [ -e common/modules.bzl ]; then
-              sed -i 's/_COMMON_GKI_MODULES_LIST = \[/_COMMON_GKI_MODULES_LIST = \[ "drivers\/${{ inputs.module_dir }}\/${{ inputs.module_name }}.ko",/g' common/modules.bzl
-            fi
-          else
-            TARGET_FILE="build/kernel/build.sh"; [ -e "$TARGET_FILE" ] || TARGET_FILE="build/build.sh"
-            sed -i 's/needs unknown symbol/Dont abort when unknown symbol/g' "$TARGET_FILE" || true
-            sed -i 's/if ! diff -u "\${KERNEL_DIR}\/\${MODULES_ORDER}" "\${OUT_DIR}\/modules\.order"; then/if false; then/g' "$TARGET_FILE"
-            sed -i 's@${ROOT_DIR}/build/abi/compare_to_symbol_list@echo@g' "$TARGET_FILE"
-            sed -i 's/needs unknown symbol/Dont abort when unknown symbol/g' build/kernel/*.sh || true
-          fi
-
-      - name: Make working directory clean to avoid dirty
-        working-directory: android-kernel
-        run: |
-          git config --global user.email "bot@lkm.org"
-          git config --global user.name "LKMBot"
-          cd common/ && git add -A && git commit -a -m "Add ${{ inputs.module_dir }}"
-          repo status
-
-      - name: Build Kernel/LKM
-        working-directory: android-kernel
-        run: |
+          set -euo pipefail
           if [ -e build/build.sh ]; then
-            # build.sh path: inject fragment via POST_DEFCONFIG_CMDS (tree stays clean)
-            if [ "${{ inputs.build_lkm }}" = "true" ] || [ "${{ inputs.build_in_tree }}" != "true" ]; then
-              LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 \
-              build/build.sh CC="/usr/bin/ccache clang"
-            else
-              POST_DEFCONFIG_CMDS="${KERNEL_DIR}/scripts/kconfig/merge_config.sh -m -O ${OUT_DIR} ${OUT_DIR}/.config $GITHUB_WORKSPACE/pvm_fragment.config && make -C ${KERNEL_DIR} O=${OUT_DIR} olddefconfig" \
-              LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 \
-              build/build.sh CC="/usr/bin/ccache clang"
-            fi
+            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang"
           else
-            # Bazel (kleaf) path: expose fragment as a label and pass --defconfig_fragment
-            if [ "${{ inputs.build_lkm }}" = "false" ] && [ "${{ inputs.build_in_tree }}" = "true" ]; then
-              # Create a minimal root BUILD.bazel if missing; add a filegroup for the fragment.
-              [ -f BUILD.bazel ] || cat > BUILD.bazel <<'EOF'
-filegroup(
-    name = "pvm_fragment",
-    srcs = ["pvm_fragment.config"],
-    visibility = ["//visibility:public"],
-)
-EOF
-              echo "[+] Root BUILD.bazel ready with :pvm_fragment"
-              tools/bazel run --disk_cache=/home/runner/.cache/bazel --config=fast --config=stamp --lto=thin \
-                --defconfig_fragment=//:pvm_fragment \
-                //common:kernel_aarch64_dist -- --dist_dir=dist
-            else
-              tools/bazel run --disk_cache=/home/runner/.cache/bazel --config=fast --config=stamp --lto=thin \
-                //common:kernel_aarch64_dist -- --dist_dir=dist
-            fi
+            tools/bazel run --disk_cache=$HOME/.cache/bazel --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist -- --dist_dir=dist
           fi
 
       - name: Prepare artifacts
-        id: prepareArtifacts
         run: |
-          MODULE_NAME=${{ inputs.module_name }}
-          OUTDIR=android-kernel/out/${{ inputs.version }}/dist
-          [ -e "$OUTDIR" ] || OUTDIR=android-kernel/dist
+          set -euo pipefail
+          OUTDIR="android-kernel/out/${{ inputs.version }}/dist"
+          [ -d "$OUTDIR" ] || OUTDIR="android-kernel/dist"
           mkdir -p output
-          if [ "${{ inputs.build_lkm}}" = "true" ]; then 
-            llvm-strip-15 -d "$OUTDIR/$MODULE_NAME.ko" || true
-            [ -f "$OUTDIR/$MODULE_NAME.ko" ] && mv "$OUTDIR/$MODULE_NAME.ko" "./output/${{ inputs.version }}_$MODULE_NAME.ko"
-          else
-            cp "$OUTDIR"/Image* ./output/ 2>/dev/null || true
-            git clone https://github.com/Kernel-SU/AnyKernel3
-            rm -rf ./AnyKernel3/.git
-            cp "$OUTDIR"/Image* ./AnyKernel3/ 2>/dev/null || true
-          fi
 
-      - name: Upload Image and Image.gz
+          cp "$OUTDIR/Image" output/ || true
+          cp "$OUTDIR/Image.lz4" output/ || true
+          cp "$OUTDIR/vmlinux" output/ || true
+
+          git clone https://github.com/Kernel-SU/AnyKernel3 anykernel3
+          rm -rf anykernel3/.git
+          cp "$OUTDIR/Image" anykernel3/ || true
+          mv anykernel3 output/AnyKernel3
+
+      - name: Upload kernel images
         uses: actions/upload-artifact@v4
-        if: ${{ inputs.build_lkm == false }}
         with:
           name: Image-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
-          path: ./output/*
+          path: output/*
 
       - name: Upload AnyKernel3
-        if: ${{ inputs.build_lkm == false }}
         uses: actions/upload-artifact@v4
         with:
           name: AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
-          path: ./AnyKernel3/*
-
-      - name: Upload LKM
-        uses: actions/upload-artifact@v4
-        if: ${{ inputs.build_lkm == true }}
-        with:
-          name: ${{ inputs.version }}-${{ inputs.module_name }}
-          path: ./output/*_${{ inputs.module_name }}.ko
+          path: output/AnyKernel3/**
+        
