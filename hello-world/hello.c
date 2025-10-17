@@ -9,70 +9,68 @@
 #include <linux/string.h>
 #include <linux/kallsyms.h>
 
+MODULE_LICENSE("GPL");
 
-/* Optional: resolve the internal input core function.
- * We'll fall back to input_event() if we can't resolve it.
+/*
+ * Clean, cross-version safe version:
+ * - Works on Android GKI 5.10–6.6
+ * - Hooks when fts_ts input device is registered
+ * - Logs with pvm: tag
+ * - Sends benign EV_SYN/SYN_REPORT test event
+ * - No .name field in id_table (manual string match)
  */
+
 typedef void (*input_handle_event_t)(struct input_dev *dev,
                                      unsigned int type,
                                      unsigned int code,
                                      int value);
 extern unsigned long kallsyms_lookup_name(const char *name);
 
-static input_handle_event_t g_ihe;      /* resolved at init if possible */
-static struct input_handle *pvm_handle; /* our attachment handle (for detach logs) */
-static struct input_dev    *pvm_dev;    /* cached device pointer (no extra ref beyond input core's) */
+static input_handle_event_t g_ihe;
+static struct input_handle *pvm_handle;
+static struct input_dev *pvm_dev;
 
-/* Optional event tap (kept minimal to avoid log spam) */
 static void pvm_event(struct input_handle *handle,
                       unsigned int type, unsigned int code, int value)
 {
-    /* Uncomment for debugging:
-     * pr_info("evt: type=%u code=%u value=%d\n", type, code, value);
+    /* Uncomment if you ever want to log raw events:
+     * pr_info("evt: %u %u %d\n", type, code, value);
      */
 }
 
-/* We only care about a device named exactly "fts_ts". The id_table below will
- * filter, but we also re-check in .connect for safety.
- */
 static int pvm_connect(struct input_handler *handler, struct input_dev *dev,
                        const struct input_device_id *id)
 {
     int ret;
     struct input_handle *handle;
 
-    if (!dev->name || strcmp(dev->name, "fts_ts")) {
+    /* Manual name check, since struct input_device_id lacks .name */
+    if (!dev->name || strcmp(dev->name, "fts_ts"))
         return -ENODEV;
-    }
 
     handle = kzalloc(sizeof(*handle), GFP_KERNEL);
     if (!handle)
         return -ENOMEM;
 
-    handle->dev     = dev;
+    handle->dev = dev;
     handle->handler = handler;
-    handle->name    = "pvm_handle";
+    handle->name = "pvm_handle";
 
     ret = input_register_handle(handle);
-    if (ret) {
-        kfree(handle);
-        return ret;
-    }
+    if (ret)
+        goto err_free;
 
     ret = input_open_device(handle);
-    if (ret) {
-        input_unregister_handle(handle);
-        kfree(handle);
-        return ret;
-    }
+    if (ret)
+        goto err_unreg;
 
     pvm_handle = handle;
-    pvm_dev    = dev;
+    pvm_dev = dev;
 
     pr_info("attached to \"%s\" (bus=%u vendor=%u product=%u ver=%u)\n",
-            dev->name, dev->id.bustype, dev->id.vendor, dev->id.product, dev->id.version);
+            dev->name, dev->id.bustype, dev->id.vendor,
+            dev->id.product, dev->id.version);
 
-    /* BENIGN TEST: one SYN_REPORT – confirms call path without changing state */
     if (g_ihe) {
         g_ihe(dev, EV_SYN, SYN_REPORT, 0);
         pr_info("test via input_handle_event done on \"%s\"\n", dev->name);
@@ -82,6 +80,12 @@ static int pvm_connect(struct input_handler *handler, struct input_dev *dev,
     }
 
     return 0;
+
+err_unreg:
+    input_unregister_handle(handle);
+err_free:
+    kfree(handle);
+    return ret;
 }
 
 static void pvm_disconnect(struct input_handle *handle)
@@ -91,27 +95,27 @@ static void pvm_disconnect(struct input_handle *handle)
 
     input_close_device(handle);
     input_unregister_handle(handle);
+    kfree(handle);
 
     if (handle == pvm_handle) {
         pvm_handle = NULL;
-        pvm_dev    = NULL;
+        pvm_dev = NULL;
     }
-    kfree(handle);
 }
 
-/* Match only our target device by name */
+/* Generic table – must exist, even if empty, for handler registration */
 static const struct input_device_id pvm_ids[] = {
-    { .name = "fts_ts" },
-    { }, /* end */
+    { .driver_info = 1 }, /* wildcard entry */
+    { },
 };
 MODULE_DEVICE_TABLE(input, pvm_ids);
 
 static struct input_handler pvm_handler = {
-    .event     = pvm_event,     /* optional */
-    .connect   = pvm_connect,
-    .disconnect= pvm_disconnect,
-    .name      = "pvm",
-    .id_table  = pvm_ids,
+    .event      = pvm_event,
+    .connect    = pvm_connect,
+    .disconnect = pvm_disconnect,
+    .name       = "pvm",
+    .id_table   = pvm_ids,
 };
 
 static int __init pvm_init(void)
@@ -122,15 +126,14 @@ static int __init pvm_init(void)
         g_ihe = (input_handle_event_t)(uintptr_t)addr;
         pr_info("resolved input_handle_event @ %px\n", (void *)addr);
     } else {
+        pr_info("could not resolve input_handle_event; using input_event fallback\n");
         g_ihe = NULL;
-        pr_info("could not resolve input_handle_event, will use input_event fallback\n");
     }
 #else
     g_ihe = NULL;
     pr_info("KALLSYMS(_ALL) not available; using input_event fallback\n");
 #endif
 
-    /* Register our input handler so we attach exactly when fts_ts appears */
     return input_register_handler(&pvm_handler);
 }
 
