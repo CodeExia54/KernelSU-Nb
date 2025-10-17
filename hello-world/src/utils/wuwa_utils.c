@@ -592,8 +592,8 @@ pid_t find_process_by_name(const char* name) {
 }
 #endif
 
-static struct list_head* module_previous;
-static struct list_head* module_kobj_previous;
+// static struct list_head* module_previous;
+// static struct list_head* module_kobj_previous;
 static short module_hidden = 0;
 
 void show_module(void) {
