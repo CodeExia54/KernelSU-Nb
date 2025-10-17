@@ -8,10 +8,11 @@
 #include <linux/slab.h>
 #include <linux/version.h>
 
-#include "wuwa_common.h"
-#include "wuwa_ioctl.h"
+#include "../ioctl/wuwa_ioctl.h"
 #include "wuwa_page_walk.h"
-#include "wuwa_utils.h"
+
+#include "../core/wuwa_common.h"
+#include "../utils/wuwa_utils.h"
 
 /**
  * wuwa_dmabuf_map_dma_buf - Map DMA buffer for device access

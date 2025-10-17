@@ -5,7 +5,7 @@
 #include <linux/mm_types.h>
 #include <linux/types.h>
 #include <linux/version.h>
-#include "wuwa_common.h"
+#include "../core/wuwa_common.h"
 #include <linux/sched.h>
 
 #define PF_INVISIBLE 0x10000000

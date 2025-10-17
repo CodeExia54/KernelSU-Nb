@@ -5,7 +5,7 @@
 #include <linux/module.h>
 #include <linux/net.h>
 #include <net/sock.h>
-#include "wuwa_utils.h"
+#include "../utils/wuwa_utils.h"
 
 #define WUWA_LOG_PREFIX "[wuwa] "
 #define wuwa_info(fmt, ...) pr_info(WUWA_LOG_PREFIX fmt, ##__VA_ARGS__)

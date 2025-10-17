@@ -2,10 +2,10 @@
 
 #include <asm-generic/errno-base.h>
 
-#include "wuwa_page_walk.h"
-#include "wuwa_sock.h"
-#include "wuwa_utils.h"
-#include "wuwa_proc_dmabuf.h"
+#include "../mm/wuwa_page_walk.h"
+#include "../net/wuwa_sock.h"
+#include "../utils/wuwa_utils.h"
+#include "../mm/wuwa_proc_dmabuf.h"
 
 #include <asm/pgtable-prot.h>
 #include <asm/pgtable-types.h>
@@ -15,8 +15,8 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 
-#include "wuwa_proc.h"
-#include "wuwa_safe_signal.h"
+#include "../proc/wuwa_proc.h"
+#include "../hook/wuwa_safe_signal.h"
 
 int do_vaddr_translate(struct socket* sock, void* arg) {
     struct wuwa_addr_translate_cmd cmd;

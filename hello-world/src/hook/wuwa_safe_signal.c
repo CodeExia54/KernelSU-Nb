@@ -5,8 +5,8 @@
 #include <linux/signal_types.h>
 #include <linux/stddef.h>
 #include <linux/vmalloc.h>
-#include "wuwa_common.h"
-#include "wuwa_utils.h"
+#include "../core/wuwa_common.h"
+#include "../utils/wuwa_utils.h"
 
 struct unsafe_region_area {
     u64 addr;

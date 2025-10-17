@@ -7,9 +7,9 @@
 #include <linux/sched/signal.h>
 #include <linux/seq_file.h>
 #include <linux/uaccess.h>
-#include "wuwa_common.h"
 
-#include "wuwa_utils.h"
+#include "../core/wuwa_common.h"
+#include "../utils/wuwa_utils.h"
 
 // Function to merge and print contiguous memory regions
 static void print_merged_region(unsigned long* start, unsigned long* end) {

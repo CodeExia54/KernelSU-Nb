@@ -10,13 +10,13 @@
 #include <linux/syscalls.h>
 #include <linux/types.h>
 #include "wuwa_common.h"
-#include "wuwa_d0_mm_fault.h"
-#include "wuwa_kallsyms.h"
-#include "wuwa_protocol.h"
-#include "wuwa_safe_signal.h"
-#include "wuwa_sock.h"
-#include "wuwa_utils.h"
-#include "hijack_arm64.h"
+#include "../hook/wuwa_d0_mm_fault.h"
+#include "../utils/wuwa_kallsyms.h"
+#include "../net/wuwa_protocol.h"
+#include "../hook/wuwa_safe_signal.h"
+#include "../net/wuwa_sock.h"
+#include "../utils/wuwa_utils.h"
+#include "../inlinehook/hijack_arm64.h"
 
 static int __init wuwa_init(void) {
     int ret;

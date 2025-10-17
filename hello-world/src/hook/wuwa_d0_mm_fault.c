@@ -4,8 +4,8 @@
 #include <linux/stddef.h>
 #include <linux/vmalloc.h>
 
-#include "wuwa_common.h"
-#include "wuwa_utils.h"
+#include "../core/wuwa_common.h"
+#include "../utils/wuwa_utils.h"
 
 struct fault_probe_data {
     unsigned long far;
