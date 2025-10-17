@@ -8,7 +8,7 @@
 #include <linux/proc_fs.h>
 #include <linux/vmalloc.h>
 
-#include "hijack_arm64.h"
+#include "../inlinehook/hijack_arm64.h"
 
 #ifdef CONFIG_CFI_CLANG
 #define NO_CFI __nocfi

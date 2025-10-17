@@ -2,11 +2,11 @@
 
 #include <asm-generic/errno.h>
 
-#include "wuwa_common.h"
+#include "../core/wuwa_common.h"
 
 #include <net/sock.h>
 
-#include "wuwa_ioctl.h"
+#include "../ioctl/wuwa_ioctl.h"
 #include "wuwa_sock.h"
 
 static int free_family = AF_DECnet;

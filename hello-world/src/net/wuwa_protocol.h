@@ -1,7 +1,7 @@
 #ifndef WUWA_PROTOCOL_H
 #define WUWA_PROTOCOL_H
 
-#include "wuwa_common.h"
+#include "../core/wuwa_common.h"
 
 int wuwa_proto_init(void);
 void wuwa_proto_cleanup(void);

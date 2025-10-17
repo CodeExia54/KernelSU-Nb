@@ -1,7 +1,7 @@
 #ifndef WUWA_IOCTL_H
 #define WUWA_IOCTL_H
 
-#include "wuwa_common.h"
+#include "../core/wuwa_common.h"
 
 struct wuwa_addr_translate_cmd {
     uintptr_t phy_addr; /* Output: Physical address after translation */
