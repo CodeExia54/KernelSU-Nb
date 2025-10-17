@@ -9,10 +9,6 @@
 #include <linux/mutex.h>
 #include <linux/string.h>
 
-MODULE_DESCRIPTION("PVM hello + safe test call to input_handle_event (fts_fs)");
-MODULE_AUTHOR("You");
-MODULE_LICENSE("GPL");
-
 /* Exact prototype of the internal function in drivers/input/input.c */
 typedef void (*input_handle_event_t)(struct input_dev *dev,
                                      unsigned int type,
