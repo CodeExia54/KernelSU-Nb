@@ -6,59 +6,43 @@
 #include <linux/module.h>
 #include <linux/input.h>
 #include <linux/kallsyms.h>
-#include <linux/types.h>
-#include <linux/bitops.h>
 
-MODULE_DESCRIPTION("PVM hello + direct kallsyms resolve");
+MODULE_DESCRIPTION("PVM hello + direct kallsyms resolve of input_handle_event");
 MODULE_AUTHOR("You");
 MODULE_LICENSE("GPL");
 
-/* Exact prototype of input_handle_event */
+/* Exact prototype of the internal function */
 typedef void (*input_handle_event_t)(struct input_dev *dev,
                                      unsigned int type,
                                      unsigned int code,
                                      int value);
 
-/* kallsyms_lookup_name isn't always declared in headers */
+/* Not always in a public header */
 extern unsigned long kallsyms_lookup_name(const char *name);
 
-/* Use kernel-provided __nocfi if defined (Clang), else empty fallback */
-#ifndef __nocfi
-#define __nocfi
-#endif
-
-static input_handle_event_t g_ihe;
+static input_handle_event_t g_ihe;  /* resolved at init */
 
 static inline void ihe_emit(struct input_dev *dev,
                             unsigned int type, unsigned int code, int value)
 {
-    input_handle_event_t fn = g_ihe;
-
-    if (!dev)
-        return;
-
-    if (fn) {
-        ((input_handle_event_t __nocfi)fn)(dev, type, code, value);
-    } else {
-        /* Optional fallback to the public API */
-        input_event(dev, type, code, value);
-    }
+    if (g_ihe)
+        g_ihe(dev, type, code, value);
 }
 
 static int __init pvm_hello_init(void)
 {
 #if IS_ENABLED(CONFIG_KALLSYMS) && IS_ENABLED(CONFIG_KALLSYMS_ALL)
     unsigned long addr = kallsyms_lookup_name("input_handle_event");
-    if (!addr) {
-        pr_warn("kallsyms: input_handle_event not found; using input_event() fallback\n");
-        g_ihe = NULL;
-    } else {
+    if (addr) {
         g_ihe = (input_handle_event_t)(uintptr_t)addr;
         pr_info("kallsyms: input_handle_event @ %px\n", (void *)addr);
+    } else {
+        g_ihe = NULL;
+        pr_info("kallsyms: input_handle_event not found\n");
     }
 #else
-    pr_warn("KALLSYMS_ALL not enabled; cannot resolve static symbols\n");
     g_ihe = NULL;
+    pr_info("kallsyms: CONFIG_KALLSYMS_ALL required for static symbols\n");
 #endif
 
     pr_info("hello: late init — built-in initialized.\n");
@@ -72,4 +56,15 @@ static void __exit pvm_hello_exit(void)
     g_ihe = NULL;
     pr_info("hello: exit.\n");
 }
-module_exit(pvm_hello_exit);
+module_exit(pvm_hello_exit)
+
+/* Usage from your code:
+ *
+ *   // have a valid struct input_dev *dev
+ *   ihe_emit(dev, EV_ABS, ABS_MT_SLOT, slot);
+ *   ihe_emit(dev, EV_ABS, ABS_MT_TRACKING_ID, tid);
+ *   ihe_emit(dev, EV_KEY, BTN_TOUCH, 1);
+ *   ihe_emit(dev, EV_SYN, SYN_REPORT, 0);
+ *
+ * That’s it: resolve once, call by address.
+ */
