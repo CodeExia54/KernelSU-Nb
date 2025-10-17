@@ -5,7 +5,7 @@
 #include <linux/mm_types.h>
 #include <linux/types.h>
 #include <linux/version.h>
-#include "wuwa_common.h"
+#include "../core/wuwa_common.h"
 #include "karray_list.h"
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
