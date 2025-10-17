@@ -9,25 +9,39 @@
 #include <linux/string.h>
 #include <linux/jiffies.h>
 #include <linux/workqueue.h>
+#include <linux/kallsyms.h>
 
 MODULE_LICENSE("GPL");
 
 /*
- * Safe plan:
+ * Behavior:
  *  - Wait pvm_delay_ms, then register an input_handler.
  *  - Attach only to device named "fts_ts".
- *  - Do NOT inject inside .connect(); schedule a work item and emit once later.
- *  - Use exported input_event() for the benign test (no kallsyms, no CFI issues).
+ *  - Do NOT inject inside .connect(); schedule a work item shortly after.
+ *  - In the work item, call input_handle_event() directly if resolved
+ *    via kallsyms; otherwise fall back to input_event().
+ *  - All logs keep the "pvm:" prefix.
  */
 
 static unsigned int pvm_delay_ms = 15000;   /* ~boot complete */
 module_param(pvm_delay_ms, uint, 0444);
 MODULE_PARM_DESC(pvm_delay_ms, "Delay (ms) before registering input handler");
 
-static struct input_handle *pvm_handle; /* our attachment handle */
-static struct input_dev    *pvm_dev;    /* cached dev (owned by input core) */
+static struct input_handle *pvm_handle;
+static struct input_dev    *pvm_dev;
 
-/* Work to emit a single benign event AFTER connect has finished */
+/* --- direct call support (private symbol) ------------------------------ */
+
+typedef void (*input_handle_event_t)(struct input_dev *dev,
+                                     unsigned int type,
+                                     unsigned int code,
+                                     int value);
+
+extern unsigned long kallsyms_lookup_name(const char *name);
+static input_handle_event_t g_ihe;  /* resolved at init if available */
+
+/* --- one-shot test work (runs after connect) -------------------------- */
+
 static struct delayed_work pvm_emit_work;
 
 static void pvm_emit_workfn(struct work_struct *w)
@@ -39,23 +53,24 @@ static void pvm_emit_workfn(struct work_struct *w)
 		return;
 	}
 
-	/* Benign frame completion: safe on all input stacks */
-	input_event(dev, EV_SYN, SYN_REPORT, 0);
-	pr_info("emit: test via input_event done on \"%s\"\n", dev->name ?: "?");
-
-	/* If you want to try the private function later (after you confirm stability):
-	 * typedef void (*input_handle_event_t)(struct input_dev *, unsigned int, unsigned int, int);
-	 * extern unsigned long kallsyms_lookup_name(const char *name);
-	 * unsigned long addr = kallsyms_lookup_name("input_handle_event");
-	 * if (addr) ((input_handle_event_t)(uintptr_t)addr)(dev, EV_SYN, SYN_REPORT, 0);
-	 */
+	if (g_ihe) {
+		/* Benign frame completion through the internal handler */
+		g_ihe(dev, EV_SYN, SYN_REPORT, 0);
+		pr_info("emit: test via input_handle_event done on \"%s\"\n",
+		        dev->name ?: "?");
+	} else {
+		/* Fallback to public API if symbol not resolved */
+		input_event(dev, EV_SYN, SYN_REPORT, 0);
+		pr_info("emit: test via input_event fallback done on \"%s\"\n",
+		        dev->name ?: "?");
+	}
 }
 
+/* Optional: see live events if you want (keep empty to avoid spam) */
 static void pvm_event(struct input_handle *handle,
                       unsigned int type, unsigned int code, int value)
 {
-	/* Keep empty to avoid recursion/log spam. */
-	/* Uncomment for debugging:
+	/* Example:
 	 * pr_info("evt: %u %u %d\n", type, code, value);
 	 */
 }
@@ -66,7 +81,7 @@ static int pvm_connect(struct input_handler *handler, struct input_dev *dev,
 	int ret;
 	struct input_handle *handle;
 
-	/* Manual name filter (struct input_device_id lacks .name on many GKI trees) */
+	/* Manual name filter (struct input_device_id often lacks .name on GKI) */
 	if (!dev->name || strcmp(dev->name, "fts_ts"))
 		return -ENODEV;
 
@@ -95,11 +110,12 @@ static int pvm_connect(struct input_handler *handler, struct input_dev *dev,
 	pvm_dev    = dev;
 
 	pr_info("attached to \"%s\" (bus=%u vendor=%u product=%u ver=%u)\n",
-	        dev->name, dev->id.bustype, dev->id.vendor, dev->id.product, dev->id.version);
+	        dev->name, dev->id.bustype, dev->id.vendor,
+	        dev->id.product, dev->id.version);
 
 	/* Schedule a one-shot benign emit AFTER connect fully completes */
 	INIT_DELAYED_WORK(&pvm_emit_work, pvm_emit_workfn);
-	schedule_delayed_work(&pvm_emit_work, msecs_to_jiffies(500)); /* 0.5s later */
+	schedule_delayed_work(&pvm_emit_work, msecs_to_jiffies(500)); /* ~0.5s later */
 
 	return 0;
 }
@@ -158,6 +174,23 @@ static void pvm_register_workfn(struct work_struct *w)
 
 static int __init pvm_init(void)
 {
+	/* Try to resolve the private symbol once. Safe to proceed if not found. */
+#if IS_ENABLED(CONFIG_KALLSYMS) && IS_ENABLED(CONFIG_KALLSYMS_ALL)
+	{
+		unsigned long addr = kallsyms_lookup_name("input_handle_event");
+		if (addr) {
+			g_ihe = (input_handle_event_t)(uintptr_t)addr;
+			pr_info("resolved input_handle_event @ %px\n", (void *)addr);
+		} else {
+			g_ihe = NULL;
+			pr_info("could not resolve input_handle_event; will use input_event fallback\n");
+		}
+	}
+#else
+	g_ihe = NULL;
+	pr_info("KALLSYMS(_ALL) not available; using input_event fallback\n");
+#endif
+
 	INIT_DELAYED_WORK(&pvm_register_work, pvm_register_workfn);
 	schedule_delayed_work(&pvm_register_work, msecs_to_jiffies(pvm_delay_ms));
 	pr_info("scheduled input handler registration in %u ms\n", pvm_delay_ms);
