@@ -43,8 +43,8 @@ jobs:
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
 
-        # Build the module
-        make -C ${{ inputs.module_dir }} KDIR=$KERNEL_SRC
+        # Build the module - CORRECT: Run from workspace root
+        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
         
         echo "=== Build completed ==="
 
