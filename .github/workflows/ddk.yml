@@ -28,7 +28,7 @@ on:
 jobs:
   ddk-build:
     if: inputs.build_mode == 'ddk'
-    name: Build android-${{ inputs.module_dir }}.ko for ${{ matrix.kmi }}
+    name: "${{ matrix.kmi }} • ${{ inputs.module_dir }}"
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -48,9 +48,9 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Build android-${{ inputs.module_dir }}.ko
+    - name: Build ${{ inputs.module_dir }}.ko
       run: |
-        echo "=== Building android-${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
+        echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
 
         # Build the module
         make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
@@ -61,7 +61,7 @@ jobs:
         mkdir -p /github/workspace/out
         
         # Copy with KMI-specific naming
-        OUTPUT_NAME="android-${{ inputs.module_dir }}-${{ matrix.kmi }}.ko"
+        OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}.ko"
         if [ -f "${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko" ]; then
             cp "${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko" "/github/workspace/out/$OUTPUT_NAME"
             echo "Copied to: /github/workspace/out/$OUTPUT_NAME"
@@ -76,15 +76,15 @@ jobs:
             exit 1
         fi
 
-    - name: Upload android-${{ inputs.module_dir }}.ko artifact
+    - name: Upload ${{ inputs.module_dir }}.ko artifact
       uses: actions/upload-artifact@v4
       with:
-        name: android-${{ inputs.module_dir }}-${{ matrix.kmi }}
-        path: /github/workspace/out/android-${{ inputs.module_dir }}-${{ matrix.kmi }}.ko
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
+        path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}.ko
 
   legacy-build:
     if: inputs.build_mode == 'legacy'
-    name: Legacy Build - ${{ inputs.module_dir }}
+    name: "Legacy • ${{ inputs.module_dir }}"
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
