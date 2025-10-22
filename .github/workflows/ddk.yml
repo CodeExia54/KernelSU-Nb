@@ -11,8 +11,8 @@ on:
         - exianb-dev
         - exianb
         - ovo
-        - prctl-fd
-        - prctl-hook
+        - proti-fd
+        - proti-hook
         - offset
         - hello-world
         default: 'exianb-dev'
@@ -22,36 +22,59 @@ on:
         type: choice
         options:
         - ddk
-        - legacy
+        - lkm
         default: 'ddk'
 
 jobs:
-  build-modules:
-    name: Build ${{ inputs.module_dir }}.ko for ${{ matrix.kmi }}
+  build:
+    name: Build ${{ inputs.module_dir }}.ko ${{ inputs.build_mode == 'ddk' && format('for {0}', matrix.kmi) || format('{0}.{1}', matrix.version, matrix.sub_level) }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        kmi:
-          - android12-5.10
-          - android13-5.10
-          - android13-5.15
-          - android14-5.15
-          - android14-6.1
-          - android15-6.6
-          #- android16-6.12
-
-    container:
-      image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
+        include:
+          # DDK builds
+          - build_mode: ddk
+            kmi: android12-5.10
+          - build_mode: ddk
+            kmi: android13-5.10
+          - build_mode: ddk
+            kmi: android13-5.15
+          - build_mode: ddk
+            kmi: android14-5.15
+          - build_mode: ddk
+            kmi: android14-6.1
+          - build_mode: ddk
+            kmi: android15-6.6
+          #- build_mode: ddk
+          #  kmi: android16-6.12
+          # LKM builds
+          - build_mode: lkm
+            version: android12-5.10
+            sub_level: 185
+            os_patch_level: 2023-09
+          - build_mode: lkm
+            version: android13-5.15
+            sub_level: 137
+            os_patch_level: 2023-12
+          - build_mode: lkm
+            version: android14-6.1
+            sub_level: 84
+            os_patch_level: 2024-07
+          - build_mode: lkm
+            version: android15-6.6
+            sub_level: 30
+            os_patch_level: 2024-08
 
     steps:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Build ${{ inputs.module_dir }}.ko
+    - name: DDK Build
+      if: inputs.build_mode == 'ddk' && matrix.build_mode == 'ddk'
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
-
-        # Build the module
+        
+        # Build with DDK
         make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
         
         echo "=== Build completed ==="
@@ -61,50 +84,25 @@ jobs:
         
         # Copy with KMI-specific naming
         OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}.ko"
-        if [ -f "${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko" ]; then
-            cp "${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko" "/github/workspace/out/$OUTPUT_NAME"
-            echo "Copied to: /github/workspace/out/$OUTPUT_NAME"
-            ls -la "/github/workspace/out/$OUTPUT_NAME"
-            echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
-            llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
-            echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
-        else
-            echo "ERROR: Module file not found in ${{ inputs.module_dir }}/!"
-            echo "Files in directory:"
-            ls -la "${{ inputs.module_dir }}/"
-            exit 1
-        fi
+        cp "${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko" "/github/workspace/out/$OUTPUT_NAME"
+        llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
+        echo "Built: $OUTPUT_NAME"
 
-    - name: Upload ${{ inputs.module_dir }}.ko artifact
+    - name: LKM Build
+      if: inputs.build_mode == 'lkm' && matrix.build_mode == 'lkm'
+      uses: ./.github/workflows/gki-kernel.yml
+      with:
+        version: ${{ matrix.version }}
+        version_name: ${{ matrix.version }}.${{ matrix.sub_level }}
+        tag: ${{ matrix.version }}-${{ matrix.os_patch_level }}
+        module_dir: ${{ inputs.module_dir }}
+        module_name: ${{ inputs.module_dir }}
+        module_config: PVM_MOD
+        build_lkm: true
+
+    - name: Upload DDK Artifact
+      if: inputs.build_mode == 'ddk' && matrix.build_mode == 'ddk'
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
         path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}.ko
-
-  legacy-build:
-    if: inputs.build_mode == 'legacy'
-    name: "${{ matrix.version }}.${{ matrix.sub_level }} • ${{ inputs.module_dir }}"
-    strategy:
-      matrix:
-        include:
-          - version: android12-5.10
-            sub_level: 185
-            os_patch_level: 2023-09
-          - version: android13-5.15
-            sub_level: 137
-            os_patch_level: 2023-12
-          - version: android14-6.1
-            sub_level: 84
-            os_patch_level: 2024-07
-          - version: android15-6.6
-            sub_level: 30
-            os_patch_level: 2024-08
-    uses: ./.github/workflows/gki-kernel.yml
-    with:
-      version: ${{ matrix.version }}
-      version_name: ${{ matrix.version }}.${{ matrix.sub_level }}
-      tag: ${{ matrix.version }}-${{ matrix.os_patch_level }}
-      module_dir: ${{ inputs.module_dir }}
-      module_name: ${{ inputs.module_dir }}
-      module_config: PVM_MOD
-      build_lkm: true
