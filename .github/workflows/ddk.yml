@@ -1,4 +1,4 @@
-name: Build Kernel Module
+name: Build ${{ github.event.inputs.module_dir || 'kernel-module' }} [mode-${{ github.event.inputs.build_mode || 'ddk' }}]
 
 on:
   workflow_dispatch:
@@ -16,10 +16,19 @@ on:
         - offset
         - hello-world
         default: 'exianb-dev'
+      build_mode:
+        description: 'Build mode'
+        required: true
+        type: choice
+        options:
+        - ddk
+        - legacy
+        default: 'ddk'
 
 jobs:
-  build-modules:
-    name: Build ${{ inputs.module_dir }}.ko for ${{ matrix.kmi }}
+  ddk-build:
+    if: inputs.build_mode == 'ddk'
+    name: Build android-${{ inputs.module_dir }}.ko for ${{ matrix.kmi }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -39,11 +48,11 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Build ${{ inputs.module_dir }}.ko
+    - name: Build android-${{ inputs.module_dir }}.ko
       run: |
-        echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
+        echo "=== Building android-${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
 
-        # Build the module - CORRECT: Run from workspace root
+        # Build the module
         make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
         
         echo "=== Build completed ==="
@@ -52,7 +61,7 @@ jobs:
         mkdir -p /github/workspace/out
         
         # Copy with KMI-specific naming
-        OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}.ko"
+        OUTPUT_NAME="android-${{ inputs.module_dir }}-${{ matrix.kmi }}.ko"
         if [ -f "${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko" ]; then
             cp "${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko" "/github/workspace/out/$OUTPUT_NAME"
             echo "Copied to: /github/workspace/out/$OUTPUT_NAME"
@@ -67,8 +76,22 @@ jobs:
             exit 1
         fi
 
-    - name: Upload ${{ inputs.module_dir }}.ko artifact
+    - name: Upload android-${{ inputs.module_dir }}.ko artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
-        path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}.ko
+        name: android-${{ inputs.module_dir }}-${{ matrix.kmi }}
+        path: /github/workspace/out/android-${{ inputs.module_dir }}-${{ matrix.kmi }}.ko
+
+  legacy-build:
+    if: inputs.build_mode == 'legacy'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Legacy Build Placeholder
+      run: |
+        echo "Legacy build mode selected for module: ${{ inputs.module_dir }}"
+        echo "This will use the traditional kernel build method"
+        echo "You can implement the legacy build logic here later"
+        echo "For now, this is a placeholder"
