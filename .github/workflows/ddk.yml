@@ -1,0 +1,83 @@
+name: Build Kernel Module ddk
+
+on:
+  workflow_dispatch:
+    inputs:
+      module_dir:
+        description: 'Module directory to build'
+        required: true
+        type: choice
+        options:
+        - exianb-dev
+        - exianb
+        - ovo
+        - proti-fd
+        - proti-hook
+        - offset
+        - hello-world
+        default: 'exianb-dev'
+      build_mode:
+        description: 'Build mode'
+        required: true
+        type: choice
+        options:
+        - legacy
+        - ddk
+        default: 'ddk'
+
+jobs:
+  legacy-build:
+    if: inputs.build_mode == 'legacy'
+    uses: ./.github/workflows/build-lkm-multi.yml
+    with:
+      module_dir: ${{ inputs.module_dir }}
+      module_name: ${{ inputs.module_dir }}
+      module_config: PVM_MOD
+
+  ddk-build:
+    if: inputs.build_mode == 'ddk'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup DDK
+      run: |
+        sudo curl -fsSL https://raw.githubusercontent.com/Ylarod/ddk/main/scripts/ddk -o /usr/local/bin/ddk
+        sudo chmod +x /usr/local/bin/ddk
+
+    - name: Build All KMI Versions
+      run: |
+        echo "Building ${{ inputs.module_dir }} for all KMI versions using DDK"
+        
+        KMI_VERSIONS=(
+          "android12-5.10"
+          "android13-5.10" 
+          "android13-5.15"
+          "android14-5.15"
+          "android14-6.1"
+          "android15-6.6"
+          "android16-6.12"
+        )
+        
+        for KMI in "${KMI_VERSIONS[@]}"; do
+          echo "=== Building for $KMI ==="
+          ddk pull "$KMI" || true
+          cd "${{ inputs.module_dir }}"
+          ddk build --target "$KMI"
+          
+          if [ -f "${{ inputs.module_dir }}.ko" ]; then
+            mv "${{ inputs.module_dir }}.ko" "${{ inputs.module_dir }}-$KMI.ko"
+            llvm-strip -d "${{ inputs.module_dir }}-$KMI.ko"
+            echo "Built: ${{ inputs.module_dir }}-$KMI.ko"
+          fi
+          cd ..
+          echo ""
+        done
+
+    - name: Upload DDK Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.module_dir }}-ddk-all
+        path: ${{ inputs.module_dir }}/*.ko
