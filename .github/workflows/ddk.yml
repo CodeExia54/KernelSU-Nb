@@ -32,19 +32,24 @@ jobs:
           - android15-6.6
           - android16-6.12
 
-    container:
-      image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
-
     steps:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Build ${{ inputs.module_dir }}.ko
+    - name: Build ${{ inputs.module_dir }}.ko for ${{ matrix.kmi }}
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
         
-        cd "${{ inputs.module_dir }}"
-        make KDIR=$KERNEL_SRC
+        # Setup DDK with non-interactive mode
+        sudo curl -fsSL https://raw.githubusercontent.com/Ylarod/ddk/main/scripts/ddk -o /usr/local/bin/ddk
+        sudo chmod +x /usr/local/bin/ddk
+        echo "github" | sudo tee /root/.ddk/source > /dev/null 2>&1 || true
+        
+        # Pre-pull the image to avoid timeout
+        ddk pull "${{ matrix.kmi }}"
+        
+        # Build with DDK using absolute path
+        ddk build --target "${{ matrix.kmi }}" --path "$(pwd)/${{ inputs.module_dir }}"
         
         echo "=== Build completed ==="
 
@@ -53,8 +58,8 @@ jobs:
         
         # Copy with KMI-specific naming
         OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}.ko"
-        if [ -f "${{ inputs.module_dir }}.ko" ]; then
-            cp "${{ inputs.module_dir }}.ko" "/github/workspace/out/$OUTPUT_NAME"
+        if [ -f "${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko" ]; then
+            cp "${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko" "/github/workspace/out/$OUTPUT_NAME"
             echo "Copied to: /github/workspace/out/$OUTPUT_NAME"
             ls -la "/github/workspace/out/$OUTPUT_NAME"
             echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
@@ -62,7 +67,7 @@ jobs:
             echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
         else
             echo "ERROR: Module file not found!"
-            ls -la
+            ls -la "${{ inputs.module_dir }}/"
             exit 1
         fi
 
