@@ -1,7 +1,8 @@
-# Simple Kernel Module Makefile
-obj-m += $(MODULE_NAME).o
+# Simple Kernel Module Makefile - Works with DDK
+obj-m := exianb-dev.o
 
-MODULE_NAME ?= $(notdir $(CURDIR))
+# Add all your source files here if you have multiple
+# exianb-dev-y := file1.o file2.o
 
 # Compiler flags
 ccflags-y += -Wno-implicit-function-declaration -Wno-strict-prototypes
@@ -9,13 +10,5 @@ ccflags-y += -Wno-int-conversion -Wno-gcc-compat
 ccflags-y += -Wno-declaration-after-statement -Wno-unused-function
 ccflags-y += -Wno-unused-variable
 
-# Include path
-ccflags-y += -I$(src)
-
-all:
-	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
-
-clean:
-	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
-
-.PHONY: all clean
+# Include current directory for headers
+ccflags-y += -I$(PWD)
