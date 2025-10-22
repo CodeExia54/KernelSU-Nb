@@ -1,4 +1,4 @@
-name: Build Kernel Module ddk
+name: Build Kernel Module
 
 on:
   workflow_dispatch:
@@ -11,31 +11,14 @@ on:
         - exianb-dev
         - exianb
         - ovo
-        - proti-fd
-        - proti-hook
+        - prctl-fd
+        - prctl-hook
         - offset
         - hello-world
         default: 'exianb-dev'
-      build_mode:
-        description: 'Build mode'
-        required: true
-        type: choice
-        options:
-        - legacy
-        - ddk
-        default: 'ddk'
 
 jobs:
-  legacy-build:
-    if: inputs.build_mode == 'legacy'
-    uses: ./.github/workflows/build-lkm-multi.yml
-    with:
-      module_dir: ${{ inputs.module_dir }}
-      module_name: ${{ inputs.module_dir }}
-      module_config: PVM_MOD
-
   ddk-build:
-    if: inputs.build_mode == 'ddk'
     runs-on: ubuntu-latest
     
     steps:
