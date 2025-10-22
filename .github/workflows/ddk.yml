@@ -39,7 +39,7 @@ jobs:
           - android14-5.15
           - android14-6.1
           - android15-6.6
-          - android16-6.12
+         # - android16-6.12
 
     container:
       image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
@@ -84,7 +84,7 @@ jobs:
 
   legacy-build:
     if: inputs.build_mode == 'legacy'
-    name: "${{ matrix.version }}.${{ matrix.sub_level }} • ${{ inputs.module_dir }}"
+    name: Build ${{ inputs.module_dir }}.ko for ${{ matrix.version }}
     strategy:
       matrix:
         include:
