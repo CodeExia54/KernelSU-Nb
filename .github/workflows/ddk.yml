@@ -26,9 +26,8 @@ on:
         default: 'ddk'
 
 jobs:
-  ddk-build:
-    if: inputs.build_mode == 'ddk'
-    name: "${{ matrix.kmi }} • ${{ inputs.module_dir }}"
+  build-modules:
+    name: Build ${{ inputs.module_dir }}.ko for ${{ matrix.kmi }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -81,18 +80,3 @@ jobs:
       with:
         name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
         path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}.ko
-
-  legacy-build:
-    if: inputs.build_mode == 'legacy'
-    name: "Legacy • ${{ inputs.module_dir }}"
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-    
-    - name: Legacy Build Placeholder
-      run: |
-        echo "Legacy build mode selected for module: ${{ inputs.module_dir }}"
-        echo "This will use the traditional kernel build method"
-        echo "You can implement the legacy build logic here later"
-        echo "For now, this is a placeholder"
