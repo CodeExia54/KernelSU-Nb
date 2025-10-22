@@ -1,16 +1,7 @@
-# Unified Makefile - Supports both Traditional and DDK builds
+# Simple Makefile for DDK builds
+obj-m := $(MODULE_NAME).o
+$(MODULE_NAME)-y := $(MODULE_NAME).o
 
-# Detect build mode
-ifdef DDK_BUILD
-    # DDK Fast Build Mode
-    obj-m := $(MODULE_NAME).o
-    $(MODULE_NAME)-y := $(MODULE_NAME).o
-else
-    # Traditional Slow Build Mode  
-    obj-$(CONFIG_PVM_MOD) += $(MODULE_NAME).o
-endif
-
-# Common variables
 MODULE_NAME ?= $(notdir $(CURDIR))
 KDIR ?= /lib/modules/$(shell uname -r)/build
 
