@@ -1,4 +1,4 @@
-name: Build ${{ github.event.inputs.module_dir || 'kernel-module' }} [mode-${{ github.event.inputs.build_mode || 'ddk' }}]
+name: Build Kernel Module
 
 on:
   workflow_dispatch:
@@ -84,6 +84,7 @@ jobs:
 
   legacy-build:
     if: inputs.build_mode == 'legacy'
+    name: Legacy Build - ${{ inputs.module_dir }}
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
