@@ -32,21 +32,19 @@ jobs:
           - android15-6.6
           - android16-6.12
 
+    container:
+      image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
+
     steps:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Build ${{ inputs.module_dir }}.ko for ${{ matrix.kmi }}
+    - name: Build ${{ inputs.module_dir }}.ko
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
         
-        # Setup DDK
-        sudo curl -fsSL https://raw.githubusercontent.com/Ylarod/ddk/main/scripts/ddk -o /usr/local/bin/ddk
-        sudo chmod +x /usr/local/bin/ddk
-        
-        # Build with DDK
         cd "${{ inputs.module_dir }}"
-        ddk build --target "${{ matrix.kmi }}"
+        make KDIR=$KERNEL_SRC
         
         echo "=== Build completed ==="
 
@@ -55,13 +53,18 @@ jobs:
         
         # Copy with KMI-specific naming
         OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}.ko"
-        cp "${{ inputs.module_dir }}.ko" "/github/workspace/out/$OUTPUT_NAME"
-
-        echo "Copied to: /github/workspace/out/$OUTPUT_NAME"
-        ls -la "/github/workspace/out/$OUTPUT_NAME"
-        echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
-        llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
-        echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+        if [ -f "${{ inputs.module_dir }}.ko" ]; then
+            cp "${{ inputs.module_dir }}.ko" "/github/workspace/out/$OUTPUT_NAME"
+            echo "Copied to: /github/workspace/out/$OUTPUT_NAME"
+            ls -la "/github/workspace/out/$OUTPUT_NAME"
+            echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+            llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
+            echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+        else
+            echo "ERROR: Module file not found!"
+            ls -la
+            exit 1
+        fi
 
     - name: Upload ${{ inputs.module_dir }}.ko artifact
       uses: actions/upload-artifact@v4
