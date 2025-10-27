@@ -11,8 +11,8 @@ on:
         - exianb-dev
         - exianb
         - ovo
-        - proti-fd
-        - proti-hook
+        - prctl-fd
+        - prctl-hook
         - offset
         - hello-world
         default: 'exianb-dev'
