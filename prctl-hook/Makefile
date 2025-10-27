@@ -1,6 +1,7 @@
-obj-$(CONFIG_PVM_MOD) += prctl-hook.o
+obj-m := prctl-hook.o
 
-ccflags-y += -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat
+# Compiler flags
+ccflags-y += -Wno-implicit-function-declaration -Wno-strict-prototypes
+ccflags-y += -Wno-int-conversion -Wno-gcc-compat
 ccflags-y += -Wno-declaration-after-statement -Wno-unused-function
-
-# Keep a new line here!! Because someone may append config
+ccflags-y += -Wno-unused-variable
