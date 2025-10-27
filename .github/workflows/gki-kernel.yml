@@ -28,6 +28,18 @@ on:
         required: false
         type: string
         default: "PVM_MOD"
+      use_cache:
+        required: false
+        type: boolean
+        default: true
+      build_lkm:
+        required: false
+        type: boolean
+        default: false
+      build_in_tree:
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -99,36 +111,45 @@ jobs:
           cd "$CONFIG"
           echo "CONFIG_${{ inputs.module_config }}=y" >> "common/arch/arm64/configs/gki_defconfig"
 
-      - name: Remove dirty marks (EXACTLY like clean workflow)
+      - name: Configure kernel name and version
         run: |
           cd "$CONFIG"
           
-          # 1. Set controlled timestamp
+          # Custom version editing
+          if [ ! -z "${{ inputs.version }}" ]; then
+            echo "Version is not empty"
+            sed -i '$s|echo "$res"|echo "${{ inputs.version }}"|' ./common/scripts/setlocalversion
+          else
+            echo "Version is empty, using default"
+            sed -i '$s|echo "$res"|echo "$res-custom-build"|' ./common/scripts/setlocalversion
+          fi
+
+          # Set controlled timestamp
           CURRENT_TIME=$(date -u +"%a %b %d %H:%M:%S UTC %Y")
           echo "CURRENT_TIME=$CURRENT_TIME"
           
-          # 2. Fix UTS_VERSION in mkcompile_h
+          # Fix UTS_VERSION in mkcompile_h
           perl -pi -e "s{UTS_VERSION=\"\\\$\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \\| cut -b -\\\$UTS_LEN\)\"}{UTS_VERSION=\"#1 SMP PREEMPT $CURRENT_TIME\"}" ./common/scripts/mkcompile_h
 
-          # 3. Remove -dirty from setlocalversion
+          # Remove -dirty from setlocalversion
           sed -i 's/-dirty//' ./common/scripts/setlocalversion
 
-          # 4. Fix Makefile timestamp for 6.1/6.6 kernels
+          # Fix Makefile timestamp for 6.1/6.6 kernels
           KERNEL_VERSION=$(echo "${{ inputs.tag }}" | grep -oE '[0-9]+\.[0-9]+' | head -1)
           if [ "$KERNEL_VERSION" = "6.1" ] || [ "$KERNEL_VERSION" = "6.6" ]; then
             sed -i -e "s|\$(preempt-flag-y) \"\$(build-timestamp)\"|\$(preempt-flag-y) \"$CURRENT_TIME\"|" ./common/init/Makefile
           fi
           
-          # 5. Bazel-specific cleanups
+          # Bazel-specific cleanups
           if [ ! -f "build/build.sh" ]; then
             sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' ./common/BUILD.bazel
             rm -rf ./common/android/abi_gki_protected_exports_*
             sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
-          fi
-
-          # 6. Set custom version if provided (like clean workflow)
-          if [ ! -z "${{ inputs.version }}" ]; then
-            sed -i '$s|echo "$res"|echo "${{ inputs.version }}"|' ./common/scripts/setlocalversion
+            
+            # Also set version in gki_defconfig for Bazel builds
+            if [ ! -z "${{ inputs.version }}" ]; then
+              sed -i '/^CONFIG_LOCALVERSION=/ s/="\([^"]*\)"/="${{ inputs.version }}"/' ./common/arch/arm64/configs/gki_defconfig
+            fi
           fi
 
       - name: Build kernel
