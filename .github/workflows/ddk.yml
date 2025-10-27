@@ -87,7 +87,6 @@ jobs:
       uses: actions/delete-artifact@v4
       with:
         pattern: '*'
-        repository: ${{ github.repository }}
 
   legacy-build:
     if: inputs.build_mode == 'legacy'
