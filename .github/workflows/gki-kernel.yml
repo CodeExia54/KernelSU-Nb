@@ -1,0 +1,306 @@
+name: In-tree GKI Kernel Build
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      version_name:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+      os_patch_level:
+        required: false
+        type: string
+        default: "2022-05"
+      module_dir:
+        required: false
+        type: string
+        default: "kernelsu"
+      module_name:
+        required: false
+        type: string
+        default: ""
+      module_config:
+        required: false
+        type: string
+        default: "PVM_MOD"
+      use_cache:
+        required: false
+        type: boolean
+        default: true
+      build_lkm:
+        required: false
+        type: boolean
+        default: false
+      build_in_tree:
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    name: Build ${{ inputs.version_name }}
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      - name: Clean workspace
+        run: |
+          sudo rm -rf android-kernel output bootimgs AnyKernel3 $CONFIG
+          mkdir -p output bootimgs
+
+      - name: Checkout module repo
+        uses: actions/checkout@v4
+        with:
+          path: KernelSU
+          fetch-depth: 0
+
+      - name: Set CONFIG environment variable
+        run: |
+          CONFIG="${{ inputs.version_name }}"
+          echo "CONFIG=$CONFIG" >> $GITHUB_ENV
+          echo "CONFIG set to: $CONFIG"
+
+      - name: Install dependencies
+        run: |
+          sudo apt update && sudo apt upgrade -y
+          sudo apt install -y ccache python3 git curl
+
+      - name: Configure ccache
+        run: |
+          mkdir -p ~/.cache/bazel
+          ccache --max-size=2G
+          ccache --set-config=compression=true
+          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+
+      - name: Restore ccache from cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ inputs.version_name }}-ccache-${{ github.sha }}
+          restore-keys: |
+            ${{ inputs.version_name }}-ccache-
+
+      - name: Install repo tool
+        run: |
+          mkdir -p ./git-repo
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
+          chmod a+rx ./git-repo/repo
+          echo "REPO=$GITHUB_WORKSPACE/git-repo/repo" >> $GITHUB_ENV
+
+      - name: Clone AnyKernel3
+        run: |
+          git clone https://github.com/Kernel-SU/AnyKernel3.git
+          rm -rf AnyKernel3/.git
+
+      - name: Initialize and sync kernel source
+        run: |
+          echo "Creating folder for configuration: $CONFIG..."
+          mkdir -p "$CONFIG"
+          cd "$CONFIG"
+
+          # Initialize and sync kernel source (like clean workflow)
+          echo "Initializing and syncing kernel source..."
+          $REPO init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-${{ inputs.tag }} --repo-rev=v2.16
+          REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${{ inputs.tag }})
+          DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
+          
+          # Check if branch is deprecated (like clean workflow)
+          if grep -q deprecated <<< "$REMOTE_BRANCH"; then
+            echo "Found deprecated branch: ${{ inputs.tag }}"
+            sed -i "s/\"${{ inputs.tag }}\"/\"deprecated\/${{ inputs.tag }}\"/g" $DEFAULT_MANIFEST_PATH
+          fi
+          
+          # Sync repo with same parameters as clean workflow
+          $REPO --version
+          $REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast
+          echo "REMOTE_BRANCH=$REMOTE_BRANCH" >> $GITHUB_ENV
+
+      - name: Clean kernel build directories
+        run: |
+          cd "$CONFIG"
+          # Remove any existing build artifacts (more aggressive cleaning)
+          rm -rf out build-out dist
+          # Clean common directory
+          make -C common clean 2>/dev/null || true
+          make -C common mrproper 2>/dev/null || true
+
+      - name: Setup Module (embed into kernel tree)
+        run: |
+          set -euo pipefail
+          MODULE_DIR="${{ inputs.module_dir }}"
+          MODULE_NAME="${{ inputs.module_name }}"
+          MODULE_CONFIG="${{ inputs.module_config }}"
+          if [ -z "$MODULE_NAME" ]; then MODULE_NAME="$MODULE_DIR"; fi
+
+          cd "$CONFIG"
+          TARGET_DIR="common/drivers/${MODULE_DIR}"
+          
+          # Remove any existing symlink or directory
+          rm -rf "$TARGET_DIR"
+          # Create fresh symlink
+          ln -sfn "$GITHUB_WORKSPACE/KernelSU/$MODULE_DIR" "$TARGET_DIR"
+
+          DRIVER_KCONFIG="common/drivers/Kconfig"
+          # Remove existing entries to avoid duplicates
+          sed -i "/source \"drivers\/${MODULE_DIR}\/Kconfig\"/d" "$DRIVER_KCONFIG"
+          # Add fresh entry
+          sed -i "/endmenu/i\\source \"drivers/${MODULE_DIR}/Kconfig\"" "$DRIVER_KCONFIG"
+
+          DRIVER_MAKEFILE="common/drivers/Makefile"
+          # Remove existing entries to avoid duplicates
+          sed -i "/${MODULE_DIR}\//d" "$DRIVER_MAKEFILE"
+          # Add fresh entry
+          echo "obj-\$(CONFIG_${MODULE_CONFIG}) += ${MODULE_DIR}/" >> "$DRIVER_MAKEFILE"
+
+          echo "[+] Cleanly wired ${MODULE_DIR} into drivers/Makefile and drivers/Kconfig."
+
+      - name: Configure kernel version and timestamps
+        run: |
+          set -euo pipefail
+          cd "$CONFIG"
+          
+          # Set consistent build timestamp (EXACTLY like clean workflow)
+          CURRENT_TIME=$(date -u +"%a %b %d %H:%M:%S UTC %Y")
+          echo "CURRENT_TIME=$CURRENT_TIME"
+
+          # Apply the SAME timestamp modifications as clean workflow
+          perl -pi -e "s{UTS_VERSION=\"\\\$\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \\| cut -b -\\\$UTS_LEN\)\"}{UTS_VERSION=\"#1 SMP PREEMPT $CURRENT_TIME\"}" ./common/scripts/mkcompile_h
+
+          # Apply specific Makefile modification for kernel versions 6.1 and 6.6 only (EXACT logic)
+          KERNEL_VERSION=$(echo "${{ inputs.tag }}" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+          if [ "$KERNEL_VERSION" = "6.1" ] || [ "$KERNEL_VERSION" = "6.6" ]; then
+            sed -i -e "s|\$(preempt-flag-y) \"\$(build-timestamp)\"|\$(preempt-flag-y) \"$CURRENT_TIME\"|" ./common/init/Makefile
+          fi
+          
+          # Remove dirty markers (EXACTLY like clean workflow)
+          if [ -f "build/build.sh" ]; then
+            sed -i 's/-dirty//' ./common/scripts/setlocalversion
+          else
+            # For Bazel builds - EXACT same cleanup
+            sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' ./common/BUILD.bazel
+            rm -rf ./common/android/abi_gki_protected_exports_*
+            sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
+          fi
+
+          # Set version if provided (like clean workflow)
+          if [ ! -z "${{ inputs.version }}" ]; then
+            echo "Version provided: ${{ inputs.version }}"
+            sed -i '$s|echo "$res"|echo "${{ inputs.version }}"|' ./common/scripts/setlocalversion
+          fi
+
+      - name: Build with retry (like clean workflow)
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 3
+          retry_on: timeout
+          command: |
+            set -e
+            set -x
+            cd "$CONFIG"
+            
+            # Apply the SAME build config modifications as clean workflow
+            sed -i 's/BUILD_SYSTEM_DLKM=1/BUILD_SYSTEM_DLKM=0/' common/build.config.gki.aarch64
+            sed -i '/MODULES_ORDER=android\/gki_aarch64_modules/d' common/build.config.gki.aarch64
+            sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' common/build.config.gki.aarch64
+
+            echo "Building the kernel..."
+            if [ -f "build/build.sh" ]; then
+              LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
+            else
+              tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast --lto=thin //common:kernel_aarch64_dist || exit 1
+            fi
+            ccache --show-stats
+
+      - name: Prepare artifacts and create boot images
+        run: |
+          set -euo pipefail
+          
+          # Determine output directory (EXACT logic from clean workflow)
+          if [ -d "$CONFIG/out/${{ inputs.version }}/dist" ]; then
+            OUTDIR="$CONFIG/out/${{ inputs.version }}/dist"
+          elif [ -d "$CONFIG/dist" ]; then
+            OUTDIR="$CONFIG/dist"
+          elif [ -d "$CONFIG/bazel-bin/common/kernel_aarch64" ]; then
+            OUTDIR="$CONFIG/bazel-bin/common/kernel_aarch64"
+          else
+            echo "ERROR: Could not find kernel output directory"
+            exit 1
+          fi
+
+          echo "Using output directory: $OUTDIR"
+          
+          # Create directories (like clean workflow)
+          mkdir -p output bootimgs
+
+          # Copy kernel images to multiple locations (like clean workflow)
+          cp "$OUTDIR"/Image* ./ 2>/dev/null || true
+          cp "$OUTDIR"/Image* ./bootimgs/ 2>/dev/null || true
+
+          # Create compressed versions (EXACTLY like clean workflow)
+          if [ -f "Image" ]; then
+            gzip -n -k -f -9 ./Image > ./Image.gz
+            cp ./Image.gz ./bootimgs/
+          fi
+
+      - name: Create AnyKernel3 zip files (like clean workflow)
+        run: |
+          set -euo pipefail
+          
+          # Copy images to AnyKernel3
+          cp bootimgs/Image* AnyKernel3/ 2>/dev/null || true
+          
+          cd AnyKernel3
+
+          # Create multiple zip formats (EXACTLY like clean workflow)
+          ZIP_BASE="${{ inputs.version_name }}_${{ inputs.os_patch_level }}"
+
+          # Regular Image zip
+          if [ -f "Image" ]; then
+            zip -r "../output/${ZIP_BASE}-AnyKernel3.zip" ./*
+            rm -f Image
+          fi
+
+          # LZ4 zip  
+          if [ -f "Image.lz4" ]; then
+            zip -r "../output/${ZIP_BASE}-AnyKernel3-lz4.zip" ./*
+            rm -f Image.lz4
+          fi
+
+          # GZ zip
+          if [ -f "Image.gz" ]; then
+            zip -r "../output/${ZIP_BASE}-AnyKernel3-gz.zip" ./*
+            rm -f Image.gz
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-Build-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
+          path: |
+            output/*
+            bootimgs/*
+
+      - name: Upload AnyKernel3 separately
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
+          path: output/*AnyKernel3*.zip
