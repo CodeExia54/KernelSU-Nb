@@ -65,17 +65,11 @@ jobs:
         if [ -f "${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko" ]; then
             cp "${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko" "/github/workspace/out/$OUTPUT_NAME"
             echo "Copied to: /github/workspace/out/$OUTPUT_NAME"
-            ls -la "/github/workspace/out/$OUTPUT_NAME"
             echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
             llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
             echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
         else
             echo "ERROR: Module file not found in ${{ inputs.module_dir }}/!"
-            echo "Looking for: ${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko"
-            echo "Files in directory:"
-            ls -la "${{ inputs.module_dir }}/"
-            echo "=== Checking for any .ko files ==="
-            find "${{ inputs.module_dir }}/" -name "*.ko" -ls
             exit 1
         fi
 
