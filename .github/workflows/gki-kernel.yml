@@ -39,18 +39,27 @@ on:
       build_in_tree:
         required: false
         type: boolean
-        default: true
+        default: true   # inbuilt image builds
 
 jobs:
   build:
     name: Build ${{ inputs.version_name }}
     runs-on: ubuntu-latest
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
 
     steps:
-      - name: Clean workspace
-        run: |
-          sudo rm -rf android-kernel output bootimgs AnyKernel3 $CONFIG
-          mkdir -p output bootimgs
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
 
       - name: Checkout module repo
         uses: actions/checkout@v4
@@ -58,195 +67,120 @@ jobs:
           path: KernelSU
           fetch-depth: 0
 
-      - name: Set CONFIG environment variable
+      - name: Setup kernel source (repo sync)
         run: |
-          CONFIG="${{ inputs.version_name }}"
-          echo "CONFIG=$CONFIG" >> $GITHUB_ENV
-
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y python3 git curl repo
-
-      - name: Clone AnyKernel3
-        run: |
-          git clone https://github.com/Kernel-SU/AnyKernel3.git
-          rm -rf AnyKernel3/.git
-
-      - name: Initialize and sync kernel source
-        run: |
-          mkdir -p "$CONFIG"
-          cd "$CONFIG"
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y repo
+          mkdir -p android-kernel && cd android-kernel
           repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-${{ inputs.tag }} --repo-rev=v2.16
           REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${{ inputs.tag }})
           if grep -q deprecated <<< "$REMOTE_BRANCH"; then
-            sed -i "s/\"${{ inputs.tag }}\"/\"deprecated\/${{ inputs.tag }}\"/g" .repo/manifests/default.xml
+            sed -i 's/"${{ inputs.tag }}"/"deprecated\/${{ inputs.tag }}"/g' .repo/manifests/default.xml
           fi
-          repo sync -c -j$(nproc --all) --no-tags --fail-fast
+          repo sync -c -j"$(nproc --all)" --no-tags
 
-      - name: Clean kernel build directories
+      - name: Remove dirty marks (ADDED CLEANING)
+        working-directory: android-kernel
         run: |
-          cd "$CONFIG"
-          rm -rf out build-out dist
-          make -C common clean 2>/dev/null || true
-          make -C common mrproper 2>/dev/null || true
-
-      - name: Disable defconfig check (FIX FOR CONFIG ERROR)
-        run: |
-          cd "$CONFIG"
-          # Remove the defconfig validation that causes the error
-          if [ -f "build/build.sh" ]; then
-            sed -i 's/check_defconfig//' ./common/build.config.gki.aarch64
-            sed -i 's/check_defconfig//' ./common/build.config.gki
-          fi
-
-      - name: Setup Module (embed into kernel tree)
-        run: |
-          cd "$CONFIG"
-          MODULE_DIR="${{ inputs.module_dir }}"
-          MODULE_CONFIG="${{ inputs.module_config }}"
+          set -euo pipefail
           
-          # Clean existing module directory
-          rm -rf "common/drivers/${MODULE_DIR}"
-          
-          # Create symlink to your module
-          ln -sfn "$GITHUB_WORKSPACE/KernelSU/$MODULE_DIR" "common/drivers/${MODULE_DIR}"
-          
-          # Clean and add to Kconfig
-          sed -i "/source \"drivers\/${MODULE_DIR}\/Kconfig\"/d" "common/drivers/Kconfig"
-          sed -i "/endmenu/i\\source \"drivers/${MODULE_DIR}/Kconfig\"" "common/drivers/Kconfig"
-          
-          # Clean and add to Makefile
-          sed -i "/${MODULE_DIR}\//d" "common/drivers/Makefile"
-          echo "obj-\$(CONFIG_${MODULE_CONFIG}) += ${MODULE_DIR}/" >> "common/drivers/Makefile"
-          
-          echo "✅ Successfully embedded $MODULE_DIR into kernel tree"
-
-      - name: Enable module in kernel config (PROPER METHOD)
-        run: |
-          cd "$CONFIG"
-          CONFIG_FILE="common/arch/arm64/configs/gki_defconfig"
-          
-          # Remove any existing config to avoid duplicates
-          sed -i "/CONFIG_${MODULE_CONFIG}=/d" "$CONFIG_FILE"
-          
-          # Add the config at the end of the file (safest location)
-          echo "# ${{ inputs.module_name }} module" >> "$CONFIG_FILE"
-          echo "CONFIG_${MODULE_CONFIG}=y" >> "$CONFIG_FILE"
-          
-          echo "✅ Added CONFIG_${MODULE_CONFIG}=y to kernel config"
-
-      - name: Configure kernel name and version
-        run: |
-          cd "$CONFIG"
-          
-          # Custom version editing
-          if [ ! -z "${{ inputs.version }}" ]; then
-            echo "Version is not empty: ${{ inputs.version }}"
-            sed -i '$s|echo "$res"|echo "${{ inputs.version }}"|' ./common/scripts/setlocalversion
-          else
-            echo "Version is empty, using default"
-            sed -i '$s|echo "$res"|echo "$res-custom-build"|' ./common/scripts/setlocalversion
-          fi
-
           # Set controlled timestamp
           CURRENT_TIME=$(date -u +"%a %b %d %H:%M:%S UTC %Y")
           echo "CURRENT_TIME=$CURRENT_TIME"
           
-          # Fix UTS_VERSION in mkcompile_h
+          # 1. Fix UTS_VERSION in mkcompile_h
           perl -pi -e "s{UTS_VERSION=\"\\\$\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \\| cut -b -\\\$UTS_LEN\)\"}{UTS_VERSION=\"#1 SMP PREEMPT $CURRENT_TIME\"}" ./common/scripts/mkcompile_h
 
-          # Remove -dirty from setlocalversion
+          # 2. Remove -dirty from setlocalversion
           sed -i 's/-dirty//' ./common/scripts/setlocalversion
 
-          # Fix Makefile timestamp for 6.1/6.6 kernels
+          # 3. Fix Makefile timestamp for 6.1/6.6 kernels
           KERNEL_VERSION=$(echo "${{ inputs.tag }}" | grep -oE '[0-9]+\.[0-9]+' | head -1)
           if [ "$KERNEL_VERSION" = "6.1" ] || [ "$KERNEL_VERSION" = "6.6" ]; then
             sed -i -e "s|\$(preempt-flag-y) \"\$(build-timestamp)\"|\$(preempt-flag-y) \"$CURRENT_TIME\"|" ./common/init/Makefile
           fi
           
-          # Bazel-specific cleanups
+          # 4. Bazel-specific cleanups
           if [ ! -f "build/build.sh" ]; then
             sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' ./common/BUILD.bazel
             rm -rf ./common/android/abi_gki_protected_exports_*
             sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
-            
-            # Also set version in gki_defconfig for Bazel builds
-            if [ ! -z "${{ inputs.version }}" ]; then
-              sed -i '/^CONFIG_LOCALVERSION=/ s/="\([^"]*\)"/="${{ inputs.version }}"/' ./common/arch/arm64/configs/gki_defconfig
-            fi
           fi
 
-      - name: Apply build config modifications
-        run: |
-          cd "$CONFIG"
-          # Apply build config cleanups to prevent various issues
-          sed -i 's/BUILD_SYSTEM_DLKM=1/BUILD_SYSTEM_DLKM=0/' common/build.config.gki.aarch64
-          sed -i '/MODULES_ORDER=android\/gki_aarch64_modules/d' common/build.config.gki.aarch64
-          sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' common/build.config.gki.aarch64
-          
-          echo "✅ Applied build config modifications"
+          # 5. Set custom version if provided
+          if [ ! -z "${{ inputs.version }}" ]; then
+            sed -i '$s|echo "$res"|echo "${{ inputs.version }}"|' ./common/scripts/setlocalversion
+          fi
 
-      - name: Build kernel
+      - name: Setup Module (embed into kernel tree)
         run: |
-          cd "$CONFIG"
-          
-          if [ -f "build/build.sh" ]; then
-            echo "Building with build.sh..."
-            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+          set -euo pipefail
+          MODULE_DIR="${{ inputs.module_dir }}"
+          MODULE_NAME="${{ inputs.module_name }}"
+          MODULE_CONFIG="${{ inputs.module_config }}"
+          if [ -z "$MODULE_NAME" ]; then MODULE_NAME="$MODULE_DIR"; fi
+
+          cd android-kernel
+          TARGET_DIR="common/drivers/${MODULE_DIR}"
+          ln -sfn "$GITHUB_WORKSPACE/KernelSU/$MODULE_DIR" "$TARGET_DIR"
+
+          DRIVER_KCONFIG="common/drivers/Kconfig"
+          if ! grep -q "drivers/${MODULE_DIR}/Kconfig" "$DRIVER_KCONFIG"; then
+            sed -i "/endmenu/i\\source \"drivers/${MODULE_DIR}/Kconfig\"" "$DRIVER_KCONFIG"
+          fi
+
+          DRIVER_MAKEFILE="common/drivers/Makefile"
+          if ! grep -q "${MODULE_DIR}/" "$DRIVER_MAKEFILE"; then
+            echo "obj-\$(CONFIG_${MODULE_CONFIG}) += ${MODULE_DIR}/" >> "$DRIVER_MAKEFILE"
+          fi
+
+          echo "[+] Wired ${MODULE_DIR} into drivers/Makefile and drivers/Kconfig."
+
+      - name: Setup ccache
+        if: ${{ inputs.use_cache == true }}
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: gki-kernel-aarch64-${{ inputs.version_name }}
+          max-size: 2G
+
+      - name: Build Kernel (Image)
+        working-directory: android-kernel
+        run: |
+          set -euo pipefail
+          if [ -e build/build.sh ]; then
+            # build.sh path
+            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 \
+            build/build.sh CC="/usr/bin/ccache clang"
           else
-            echo "Building with Bazel..."
-            tools/bazel build --config=fast --lto=thin //common:kernel_aarch64_dist
+            # Bazel (kleaf) path
+            tools/bazel run --disk_cache=$HOME/.cache/bazel --config=fast --config=stamp --lto=thin \
+              //common:kernel_aarch64_dist -- --dist_dir=dist
           fi
-          
-          echo "✅ Kernel build completed successfully"
 
       - name: Prepare artifacts
         run: |
-          # Find output directory
-          if [ -d "$CONFIG/out/${{ inputs.version }}/dist" ]; then
-            OUTDIR="$CONFIG/out/${{ inputs.version }}/dist"
-          elif [ -d "$CONFIG/dist" ]; then
-            OUTDIR="$CONFIG/dist" 
-          elif [ -d "$CONFIG/bazel-bin/common/kernel_aarch64" ]; then
-            OUTDIR="$CONFIG/bazel-bin/common/kernel_aarch64"
-          else
-            echo "ERROR: Could not find kernel output directory"
-            find "$CONFIG" -name "Image*" -type f | head -10
-            exit 1
-          fi
+          set -euo pipefail
+          OUTDIR="android-kernel/out/${{ inputs.version }}/dist"
+          [ -d "$OUTDIR" ] || OUTDIR="android-kernel/dist"
+          mkdir -p output
 
-          echo "Found kernel output in: $OUTDIR"
-          ls -la "$OUTDIR" || echo "Output directory listing failed"
+          # Only kernel images (no vmlinux)
+          cp "$OUTDIR"/Image* output/ 2>/dev/null || true
 
-          # Copy kernel images
-          cp "$OUTDIR"/Image* ./ 2>/dev/null || true
-          cp "$OUTDIR"/Image* ./AnyKernel3/ 2>/dev/null || true
-          
-          # List what we found
-          echo "Kernel images found:"
-          ls -la ./Image* 2>/dev/null || echo "No Image files in root"
-          echo "AnyKernel3 contents:"
-          ls -la ./AnyKernel3/ 2>/dev/null || echo "AnyKernel3 directory issue"
+          git clone https://github.com/Kernel-SU/AnyKernel3 anykernel3
+          rm -rf anykernel3/.git
+          cp "$OUTDIR"/Image* anykernel3/ 2>/dev/null || true
+          mv anykernel3 output/AnyKernel3
 
-      - name: Create AnyKernel3 zip
-        run: |
-          cd AnyKernel3
-          
-          # Check if we have kernel images
-          if [ ! -f "Image" ] && [ ! -f "Image.lz4" ] && [ ! -f "Image.gz" ]; then
-            echo "❌ No kernel images found in AnyKernel3 directory!"
-            ls -la
-            exit 1
-          fi
-          
-          zip -r "../output/${{ inputs.version_name }}_${{ inputs.os_patch_level }}-AnyKernel3.zip" ./*
-          echo "✅ Created AnyKernel3 zip"
-
-      - name: Upload artifacts
+      - name: Upload kernel images
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
-          path: |
-            output/*
-            AnyKernel3/Image*
+          name: Image-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
+          path: output/*
+
+      - name: Upload AnyKernel3
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
+          path: output/AnyKernel3/**
