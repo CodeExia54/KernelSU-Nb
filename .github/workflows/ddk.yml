@@ -79,8 +79,9 @@ jobs:
     - name: Upload ${{ inputs.module_dir }}.ko artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}.ko  # ← Added .ko extension like working workflow
         path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}.ko
+        retention-days: 3  # ← Added retention to prevent accumulation
 
   legacy-build:
     if: inputs.build_mode == 'legacy'
