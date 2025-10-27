@@ -1,4 +1,4 @@
-name: In-tree GKI Kernel Build
+name: GKI Kernel Build
 
 on:
   workflow_call:
