@@ -80,40 +80,6 @@ jobs:
           fi
           repo sync -c -j"$(nproc --all)" --no-tags
 
-      - name: Remove dirty marks
-        if: ${{ inputs.build_in_tree == true }}  # Only needed for embedded builds
-        working-directory: android-kernel
-        run: |
-          set -euo pipefail
-          
-          # Set controlled timestamp
-          CURRENT_TIME=$(date -u +"%a %b %d %H:%M:%S UTC %Y")
-          echo "CURRENT_TIME=$CURRENT_TIME"
-          
-          # 1. Fix UTS_VERSION in mkcompile_h
-          perl -pi -e "s{UTS_VERSION=\"\\\$\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \\| cut -b -\\\$UTS_LEN\)\"}{UTS_VERSION=\"#1 SMP PREEMPT $CURRENT_TIME\"}" ./common/scripts/mkcompile_h
-
-          # 2. Remove -dirty from setlocalversion
-          sed -i 's/-dirty//' ./common/scripts/setlocalversion
-
-          # 3. Fix Makefile timestamp for 6.1/6.6 kernels
-          KERNEL_VERSION=$(echo "${{ inputs.tag }}" | grep -oE '[0-9]+\.[0-9]+' | head -1)
-          if [ "$KERNEL_VERSION" = "6.1" ] || [ "$KERNEL_VERSION" = "6.6" ]; then
-            sed -i -e "s|\$(preempt-flag-y) \"\$(build-timestamp)\"|\$(preempt-flag-y) \"$CURRENT_TIME\"|" ./common/init/Makefile
-          fi
-          
-          # 4. Bazel-specific cleanups
-          if [ ! -f "build/build.sh" ]; then
-            sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' ./common/BUILD.bazel
-            rm -rf ./common/android/abi_gki_protected_exports_*
-            sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
-          fi
-
-          # 5. Set custom version if provided
-          if [ ! -z "${{ inputs.version }}" ]; then
-            sed -i '$s|echo "$res"|echo "${{ inputs.version }}"|' ./common/scripts/setlocalversion
-          fi
-
       - name: Setup Module (embed into kernel tree)
         run: |
           set -euo pipefail
@@ -138,6 +104,7 @@ jobs:
 
           echo "[+] Wired ${MODULE_DIR} into drivers/Makefile and drivers/Kconfig."
 
+      # LKM-specific steps
       - name: Setup for LKM builds
         if: ${{ inputs.build_lkm == true }}
         working-directory: android-kernel
@@ -180,6 +147,42 @@ jobs:
             sed -i 's/needs unknown symbol/Dont abort when unknown symbol/g' build/kernel/*.sh || echo "No unknown symbol scripts found"
           fi
 
+      # Embedded-specific steps
+      - name: Remove dirty marks for embedded build
+        if: ${{ inputs.build_in_tree == true && inputs.build_lkm == false }}
+        working-directory: android-kernel
+        run: |
+          set -euo pipefail
+          echo "[+] Removing dirty marks for embedded build"
+          
+          # Set controlled timestamp
+          CURRENT_TIME=$(date -u +"%a %b %d %H:%M:%S UTC %Y")
+          echo "CURRENT_TIME=$CURRENT_TIME"
+          
+          # 1. Fix UTS_VERSION in mkcompile_h
+          perl -pi -e "s{UTS_VERSION=\"\\\$\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \\| cut -b -\\\$UTS_LEN\)\"}{UTS_VERSION=\"#1 SMP PREEMPT $CURRENT_TIME\"}" ./common/scripts/mkcompile_h
+
+          # 2. Remove -dirty from setlocalversion
+          sed -i 's/-dirty//' ./common/scripts/setlocalversion
+
+          # 3. Fix Makefile timestamp for 6.1/6.6 kernels
+          KERNEL_VERSION=$(echo "${{ inputs.tag }}" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+          if [ "$KERNEL_VERSION" = "6.1" ] || [ "$KERNEL_VERSION" = "6.6" ]; then
+            sed -i -e "s|\$(preempt-flag-y) \"\$(build-timestamp)\"|\$(preempt-flag-y) \"$CURRENT_TIME\"|" ./common/init/Makefile
+          fi
+          
+          # 4. Bazel-specific cleanups
+          if [ ! -f "build/build.sh" ]; then
+            sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' ./common/BUILD.bazel
+            rm -rf ./common/android/abi_gki_protected_exports_*
+            sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
+          fi
+
+          # 5. Set custom version if provided
+          if [ ! -z "${{ inputs.version }}" ]; then
+            sed -i '$s|echo "$res"|echo "${{ inputs.version }}"|' ./common/scripts/setlocalversion
+          fi
+
       - name: Setup for Embedded builds
         if: ${{ inputs.build_in_tree == true && inputs.build_lkm == false }}
         working-directory: android-kernel
@@ -189,8 +192,10 @@ jobs:
           sed -i '/config ${{ inputs.module_config }}/,/help/{s/default m/default y/}' common/drivers/${{ inputs.module_dir }}/Kconfig
 
       - name: Make working directory clean to avoid dirty
+        if: ${{ inputs.build_in_tree == true && inputs.build_lkm == false }}
         working-directory: android-kernel
         run: |
+          echo "[+] Cleaning working directory for embedded build"
           git config --global user.email "bot@lkm.org"
           git config --global user.name "LKMBot"
           cd common/ && git add -A && git commit -a -m "Add ${{ inputs.module_dir }}"
