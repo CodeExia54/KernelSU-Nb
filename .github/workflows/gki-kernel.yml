@@ -177,8 +177,9 @@ jobs:
           
           # Create AnyKernel3 zip directly with proper name
           cd anykernel3
-          zip -r "../output/AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}.zip" . -x "*.git*" "README.md" "LICENSE"
+          zip -r "AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}.zip" . -x "*.git*" "README.md" "LICENSE"
           cd ..
+          mv anykernel3/AnyKernel3-*.zip output/
           rm -rf anykernel3
 
           # Prepare individual compressed images for separate artifacts
