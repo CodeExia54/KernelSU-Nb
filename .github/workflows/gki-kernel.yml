@@ -165,22 +165,43 @@ jobs:
           [ -d "$OUTDIR" ] || OUTDIR="android-kernel/dist"
           mkdir -p output
 
-          # Only kernel images (no vmlinux)
+          # Copy all kernel images
           cp "$OUTDIR"/Image* output/ 2>/dev/null || true
 
+          # Prepare AnyKernel3 with only one image format
           git clone https://github.com/Kernel-SU/AnyKernel3 anykernel3
           rm -rf anykernel3/.git
-          cp "$OUTDIR"/Image* anykernel3/ 2>/dev/null || true
-          mv anykernel3 output/AnyKernel3
+          
+          # Copy only the uncompressed Image to AnyKernel3
+          cp output/Image anykernel3/ 2>/dev/null || true
+          
+          # Create AnyKernel3 zip with only Image (not gz/lz4)
+          cd anykernel3
+          zip -r AnyKernel3.zip . -x "*.git*" "README.md" "LICENSE"
+          cd ..
+          mv anykernel3/AnyKernel3.zip output/
+          rm -rf anykernel3
 
-      - name: Upload kernel images
-        uses: actions/upload-artifact@v4
-        with:
-          name: Image-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
-          path: output/*
+          # Prepare individual compressed images for separate artifacts
+          mkdir -p output/individual
+          if [ -f "output/Image" ]; then
+            cp output/Image "output/individual/${{ inputs.version_name }}_${{ inputs.os_patch_level }}"
+          fi
+          if [ -f "output/Image.gz" ]; then
+            cp output/Image.gz "output/individual/${{ inputs.version_name }}_${{ inputs.os_patch_level }}.gz"
+          fi
+          if [ -f "output/Image.lz4" ]; then
+            cp output/Image.lz4 "output/individual/${{ inputs.version_name }}_${{ inputs.os_patch_level }}.lz4"
+          fi
 
-      - name: Upload AnyKernel3
+      - name: Upload AnyKernel3 Zip (Single Format)
         uses: actions/upload-artifact@v4
         with:
           name: AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
-          path: output/AnyKernel3/**
+          path: output/AnyKernel3.zip
+
+      - name: Upload Individual Compressed Images
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-images-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
+          path: output/individual/*
