@@ -37,8 +37,9 @@ on:
         default: PVM_MOD
 
 jobs:
-  build-modules:
-    name: "${{ matrix.version }}.${{ matrix.sub_level }} • ${{ github.event.inputs.module_dir }} • ${{ github.event.inputs.build_type }}"
+  build-lkm:
+    if: github.event.inputs.build_type == 'lkm'
+    name: "${{ matrix.version }}.${{ matrix.sub_level }} • ${{ github.event.inputs.module_dir }} • LKM"
     strategy:
       matrix:
         include:
@@ -55,7 +56,7 @@ jobs:
             sub_level: 30
             os_patch_level: 2024-08
 
-    uses: ./.github/workflows/gki-kernel-universal.yml
+    uses: ./.github/workflows/gki-kernel-lkm.yml
     with:
       version: ${{ matrix.version }}
       version_name: ${{ matrix.version }}.${{ matrix.sub_level }}
@@ -65,5 +66,33 @@ jobs:
       module_name: ${{ github.event.inputs.module_name != '' && github.event.inputs.module_name || github.event.inputs.module_dir }}
       module_config: ${{ github.event.inputs.module_config }}
       use_cache: true
-      build_lkm: ${{ github.event.inputs.build_type == 'lkm' }}
-      build_in_tree: ${{ github.event.inputs.build_type == 'embedded' }}
+
+  build-embedded:
+    if: github.event.inputs.build_type == 'embedded'
+    name: "${{ matrix.version }}.${{ matrix.sub_level }} • ${{ github.event.inputs.module_dir }} • Embedded"
+    strategy:
+      matrix:
+        include:
+          - version: android12-5.10
+            sub_level: 185
+            os_patch_level: 2023-09
+          - version: android13-5.15
+            sub_level: 137
+            os_patch_level: 2023-12
+          - version: android14-6.1
+            sub_level: 84
+            os_patch_level: 2024-07
+          - version: android15-6.6
+            sub_level: 30
+            os_patch_level: 2024-08
+
+    uses: ./.github/workflows/gki-kernel-embedded.yml
+    with:
+      version: ${{ matrix.version }}
+      version_name: ${{ matrix.version }}.${{ matrix.sub_level }}
+      tag: ${{ matrix.version }}-${{ matrix.os_patch_level }}
+      os_patch_level: ${{ matrix.os_patch_level }}
+      module_dir: ${{ github.event.inputs.module_dir }}
+      module_name: ${{ github.event.inputs.module_name != '' && github.event.inputs.module_name || github.event.inputs.module_dir }}
+      module_config: ${{ github.event.inputs.module_config }}
+      use_cache: true
