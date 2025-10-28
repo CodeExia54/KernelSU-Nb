@@ -1,0 +1,185 @@
+name: GKI Kernel LKM Build
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      version_name:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+      os_patch_level:
+        required: false
+        type: string
+        default: "2022-05"
+      module_dir:
+        required: false
+        type: string
+        default: "kernelsu"
+      module_name:
+        required: false
+        type: string
+        default: ""
+      module_config:
+        required: false
+        type: string
+        default: "KSU"
+      use_cache:
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  build-lkm:
+    name: Build LKM ${{ inputs.version_name }}
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      - name: Checkout module repo
+        uses: actions/checkout@v4
+        with:
+          path: KernelSU
+          fetch-depth: 0
+
+      - name: Setup kernel source (repo sync)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y repo
+          mkdir -p android-kernel && cd android-kernel
+          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-${{ inputs.tag }} --repo-rev=v2.16
+          REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${{ inputs.tag }})
+          if grep -q deprecated <<< "$REMOTE_BRANCH"; then
+            sed -i 's/"${{ inputs.tag }}"/"deprecated\/${{ inputs.tag }}"/g' .repo/manifests/default.xml
+          fi
+          repo sync -c -j"$(nproc --all)" --no-tags
+
+      - name: Setup Module
+        run: |
+          set -euo pipefail
+          MODULE_DIR="${{ inputs.module_dir }}"
+          MODULE_NAME="${{ inputs.module_name }}"
+          MODULE_CONFIG="${{ inputs.module_config }}"
+          if [ -z "$MODULE_NAME" ]; then MODULE_NAME="$MODULE_DIR"; fi
+
+          cd android-kernel
+          TARGET_DIR="common/drivers/${MODULE_DIR}"
+          ln -sfn "$GITHUB_WORKSPACE/KernelSU/$MODULE_DIR" "$TARGET_DIR"
+
+          DRIVER_KCONFIG="common/drivers/Kconfig"
+          if ! grep -q "drivers/${MODULE_DIR}/Kconfig" "$DRIVER_KCONFIG"; then
+            sed -i "/endmenu/i\\source \"drivers/${MODULE_DIR}/Kconfig\"" "$DRIVER_KCONFIG"
+          fi
+
+          DRIVER_MAKEFILE="common/drivers/Makefile"
+          if ! grep -q "${MODULE_DIR}/" "$DRIVER_MAKEFILE"; then
+            echo "obj-\$(CONFIG_${MODULE_CONFIG}) += ${MODULE_DIR}/" >> "$DRIVER_MAKEFILE"
+          fi
+
+          echo "[+] Wired ${MODULE_DIR} into drivers/Makefile and drivers/Kconfig."
+
+      - name: Setup for LKM build
+        working-directory: android-kernel
+        run: |
+          set -euo pipefail
+          MODULE_DIR="${{ inputs.module_dir }}"
+          MODULE_NAME="${{ inputs.module_name }}"
+          if [ -z "$MODULE_NAME" ]; then MODULE_NAME="$MODULE_DIR"; fi
+
+          echo "[+] Setting up for LKM build: $MODULE_NAME"
+
+          # Install required tools
+          pip install ast-grep-cli
+          sudo apt-get install llvm-15 -y
+
+          # Modify Kconfig to build as module (default m instead of y)
+          sed -i '/config ${{ inputs.module_config }}/,/help/{s/default y/default m/}' common/drivers/$MODULE_DIR/Kconfig
+
+          # Add module to modules list
+          echo "drivers/$MODULE_DIR/$MODULE_NAME.ko" >> common/android/gki_aarch64_modules
+
+          # Handle modpost changes to prevent unknown symbol errors
+          ast-grep -U -p '$$$ check_exports($$$) {$$$}' -r '' common/scripts/mod/modpost.c
+          ast-grep -U -p 'check_exports($$$);' -r '' common/scripts/mod/modpost.c
+
+          # Bazel build modifications for LKM
+          if [ ! -e build/build.sh ]; then
+            sed -i 's/needs unknown symbol/Dont abort when unknown symbol/g' build/kernel/*.sh || echo "No unknown symbol scripts found"
+            if [ -e common/modules.bzl ]; then
+              sed -i 's/_COMMON_GKI_MODULES_LIST = \[/_COMMON_GKI_MODULES_LIST = \[ "drivers\/${{ inputs.module_dir }}\/${{ inputs.module_name }}.ko",/g' common/modules.bzl
+            fi
+          else
+            TARGET_FILE="build/kernel/build.sh"
+            if [ ! -e "$TARGET_FILE" ]; then
+              TARGET_FILE="build/build.sh"
+            fi
+            sed -i 's/needs unknown symbol/Dont abort when unknown symbol/g' $TARGET_FILE || echo "No unknown symbol in $TARGET_FILE"
+            sed -i 's/if ! diff -u "\${KERNEL_DIR}\/\${MODULES_ORDER}" "\${OUT_DIR}\/modules\.order"; then/if false; then/g' $TARGET_FILE
+            sed -i 's@${ROOT_DIR}/build/abi/compare_to_symbol_list@echo@g' $TARGET_FILE
+            sed -i 's/needs unknown symbol/Dont abort when unknown symbol/g' build/kernel/*.sh || echo "No unknown symbol scripts found"
+          fi
+
+      - name: Setup ccache
+        if: ${{ inputs.use_cache == true }}
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: gki-kernel-aarch64-${{ inputs.version_name }}-lkm
+          max-size: 2G
+
+      - name: Build LKM
+        working-directory: android-kernel
+        run: |
+          set -euo pipefail
+          if [ -e build/build.sh ]; then
+            # build.sh path
+            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 \
+            build/build.sh CC="/usr/bin/ccache clang"
+          else
+            # Bazel (kleaf) path
+            tools/bazel run --disk_cache=$HOME/.cache/bazel --config=fast --config=stamp --lto=thin \
+              //common:kernel_aarch64_dist -- --dist_dir=dist
+          fi
+
+      - name: Prepare LKM artifact
+        run: |
+          set -euo pipefail
+          MODULE_NAME="${{ inputs.module_name }}"
+          if [ -z "$MODULE_NAME" ]; then MODULE_NAME="${{ inputs.module_dir }}"; fi
+          
+          OUTDIR="android-kernel/out/${{ inputs.version }}/dist"
+          [ -d "$OUTDIR" ] || OUTDIR="android-kernel/dist"
+          mkdir -p output
+
+          echo "[+] Preparing LKM artifact: $MODULE_NAME.ko"
+          if [ -f "$OUTDIR/$MODULE_NAME.ko" ]; then
+            llvm-strip-15 -d "$OUTDIR/$MODULE_NAME.ko"
+            mv "$OUTDIR/$MODULE_NAME.ko" "./output/${{ inputs.version }}_$MODULE_NAME.ko"
+          else
+            echo "[-] ERROR: $MODULE_NAME.ko not found in $OUTDIR/"
+            ls -la "$OUTDIR/" || echo "OUTDIR does not exist"
+            exit 1
+          fi
+
+      - name: Upload LKM Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.version }}-${{ inputs.module_name }}.ko
+          path: output/${{ inputs.version }}_${{ inputs.module_name }}.ko
