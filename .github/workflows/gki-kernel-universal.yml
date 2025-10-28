@@ -6,49 +6,28 @@ on:
       version:
         required: true
         type: string
-        description: >
-          Output directory of gki,
-          for example: android12-5.10
       version_name:
         required: true
         type: string
-        description: >
-          With SUBLEVEL of kernel,
-          for example: android12-5.10.66
       tag:
         required: true
         type: string
-        description: >
-          Part of branch name of common kernel manifest,
-          for example: android12-5.10-2021-11
       os_patch_level:
         required: false
         type: string
-        description: >
-          Patch level of common kernel manifest,
-          for example: 2021-11
-        default: 2022-05
+        default: "2022-05"
       module_dir:
         required: false
         type: string
-        description: >
-          Directory of the kernel module to build,
-          for example: kernelsu
-        default: kernelsu
+        default: "kernelsu"
       module_name:
         required: false
         type: string
-        description: >
-          Name of the kernel module,
-          for example: kernelsu
-        default: kernelsu
+        default: ""
       module_config:
         required: false
         type: string
-        description: >
-          Config switch name of the module,
-          for example: KSU
-        default: KSU
+        default: "KSU"
       use_cache:
         required: false
         type: boolean
@@ -102,6 +81,7 @@ jobs:
           repo sync -c -j"$(nproc --all)" --no-tags
 
       - name: Remove dirty marks
+        if: ${{ inputs.build_in_tree == true }}  # Only needed for embedded builds
         working-directory: android-kernel
         run: |
           set -euo pipefail
@@ -282,16 +262,19 @@ jobs:
             mv anykernel3/AnyKernel3-*.zip output/
             rm -rf anykernel3
 
-            # Prepare individual compressed images for separate artifacts
-            mkdir -p output/individual
+            # Copy all kernel images to individual folder for combined upload
+            mkdir -p output/embedded-artifacts
             if [ -f "output/Image" ]; then
-              cp output/Image "output/individual/${{ inputs.version_name }}_${{ inputs.os_patch_level }}"
+              cp output/Image "output/embedded-artifacts/${{ inputs.version_name }}_${{ inputs.os_patch_level }}"
             fi
             if [ -f "output/Image.gz" ]; then
-              cp output/Image.gz "output/individual/${{ inputs.version_name }}_${{ inputs.os_patch_level }}.gz"
+              cp output/Image.gz "output/embedded-artifacts/${{ inputs.version_name }}_${{ inputs.os_patch_level }}.gz"
             fi
             if [ -f "output/Image.lz4" ]; then
-              cp output/Image.lz4 "output/individual/${{ inputs.version_name }}_${{ inputs.os_patch_level }}.lz4"
+              cp output/Image.lz4 "output/embedded-artifacts/${{ inputs.version_name }}_${{ inputs.os_patch_level }}.lz4"
+            fi
+            if [ -f "output/AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}.zip" ]; then
+              cp "output/AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}.zip" "output/embedded-artifacts/"
             fi
           fi
 
@@ -302,16 +285,9 @@ jobs:
           name: ${{ inputs.version }}-${{ inputs.module_name }}.ko
           path: output/${{ inputs.version }}_${{ inputs.module_name }}.ko
 
-      - name: Upload AnyKernel3 Zip (Embedded Build)
+      - name: Upload Embedded Artifacts
         if: ${{ inputs.build_lkm == false }}
         uses: actions/upload-artifact@v4
         with:
-          name: AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
-          path: output/AnyKernel3-${{ inputs.version_name }}_${{ inputs.os_patch_level }}.zip
-
-      - name: Upload Individual Kernel Images (Embedded Build)
-        if: ${{ inputs.build_lkm == false }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-images-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
-          path: output/individual/*
+          name: kernel-${{ inputs.version_name }}_${{ inputs.os_patch_level }}
+          path: output/embedded-artifacts/*
