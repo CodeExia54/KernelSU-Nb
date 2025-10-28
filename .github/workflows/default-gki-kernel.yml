@@ -1,4 +1,4 @@
-name: GKI Kernel Build
+name: Default GKI Kernel Build
 
 on:
   workflow_call:
