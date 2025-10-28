@@ -39,7 +39,7 @@ on:
       build_in_tree:
         required: false
         type: boolean
-        default: true   # inbuilt image builds
+        default: true
 
 jobs:
   build:
@@ -104,24 +104,12 @@ jobs:
 
           echo "[+] Wired ${MODULE_DIR} into drivers/Makefile and drivers/Kconfig."
 
-      - name: Remove dirty marks (MOVED AFTER MODULE SETUP)
+      - name: Remove dirty tag (MINIMAL - ONLY THIS)
         working-directory: android-kernel
         run: |
-          set -euo pipefail
-          
-          # Set controlled timestamp
-          CURRENT_TIME=$(date -u +"%a %b %d %H:%M:%S UTC %Y")
-          echo "CURRENT_TIME=$CURRENT_TIME"
-          
-          # 1. Remove -dirty from setlocalversion (SAFEST CLEAN)
+          # ONLY remove the -dirty suffix from setlocalversion script
           sed -i 's/-dirty//' ./common/scripts/setlocalversion
-          
-          # 2. Set custom version if provided
-          if [ ! -z "${{ inputs.version }}" ]; then
-            sed -i '$s|echo "$res"|echo "${{ inputs.version }}"|' ./common/scripts/setlocalversion
-          fi
-          
-          echo "✅ Applied dirty mark removal"
+          echo "✅ Removed dirty tag from kernel version"
 
       - name: Setup ccache
         if: ${{ inputs.use_cache == true }}
@@ -154,7 +142,7 @@ jobs:
           # Only kernel images (no vmlinux)
           cp "$OUTDIR"/Image* output/ 2>/dev/null || true
 
-          git clone https://github.com/Kernel-SU/AnyKernel3 anykernel3
+          git clone https://github.com/KernelSU/AnyKernel3 anykernel3
           rm -rf anykernel3/.git
           cp "$OUTDIR"/Image* anykernel3/ 2>/dev/null || true
           mv anykernel3 output/AnyKernel3
