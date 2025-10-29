@@ -1,6 +1,10 @@
-obj-$(CONFIG_PVM_MOD) += offset.o
+# Simple Kernel Module Makefile
+obj-m := offset.o
 
-ccflags-y += -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat
+# Compiler flags
+ccflags-y += -Wno-implicit-function-declaration -Wno-strict-prototypes
+ccflags-y += -Wno-int-conversion -Wno-gcc-compat
 ccflags-y += -Wno-declaration-after-statement -Wno-unused-function
+ccflags-y += -Wno-unused-variable
 
-# Keep a new line here!! Because someone may append config
+# Remove ALL other targets - let kernel build system handle everything
