@@ -1,4 +1,4 @@
-name: Build Kernel Module
+name: Build Kernel Module ddk
 
 on:
   workflow_dispatch:
@@ -15,6 +15,7 @@ on:
         - prctl-hook
         - offset
         - hello-world
+        - wuwa
         default: 'exianb-dev'
 
 jobs:
