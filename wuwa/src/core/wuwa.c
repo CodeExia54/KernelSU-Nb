@@ -17,6 +17,55 @@
 #include "wuwa_utils.h"
 #include "hijack_arm64.h"
 
+bool isPHook = false;
+int pid_hide = 0;
+#define PF_INVISIBLE 0x10000000
+
+#include <linux/dirent.h>	/* struct dirent refers to directory entry. */
+
+struct linux_dirent {
+        unsigned long   d_ino;		/* inode number */
+        unsigned long   d_off;		/* offset to the next dirent */
+        unsigned short  d_reclen;	/* length of this record */
+        char            d_name[1];	/* filename */
+};
+
+struct my_kretprobe_data {
+    int sys_ns;
+    pid_t pid;
+    int fd;
+    struct linux_dirent *dirent;
+};
+
+struct prctl_cf {
+    int pid;
+    uintptr_t addr;
+    void* buffer;
+    int size;
+};
+
+static int handler_post(struct kretprobe_instance *ri, struct pt_regs *regs)
+// struct kprobe *p, struct pt_regs *regs, unsigned long flags)
+{
+    uint64_t v4;
+    return 0;
+}
+
+static int handler_pre(struct kretprobe_instance *ri, struct pt_regs *regs)
+// struct kprobe *p, struct pt_regs *regs)
+{
+    uint64_t v4;
+    return 1;
+}
+
+static struct kretprobe my_kretprobe = {
+    .kp.symbol_name = "invoke_syscall", /* or use .kp.addr */
+    .handler = handler_post,                 /* return handler */
+    .entry_handler = handler_pre,         /* entry handler */
+    .data_size = sizeof(struct my_kretprobe_data),
+    .maxactive = 512,                           /* concurrency depth */
+};
+
 static int __init wuwa_init(void) {
     int ret;
     wuwa_info("helo!\n");
@@ -39,6 +88,17 @@ static int __init wuwa_init(void) {
     if (ret) {
         wuwa_err("wuwa_socket_init failed: %d\n", ret);
         goto out;
+    }
+
+    ret = register_kretprobe(&my_kretprobe);
+	// if(ret < 0) {
+	if(ret) {
+		isPHook = false;
+	    wuwa_err("wuwa: driverX: Failed to register kprobe: %d (%s)\n", ret, kpp.symbol_name);
+	    return ret;
+	 } else {
+		isPHook = true;
+        wuwa_info("p probe success");
     }
 
 #if defined(BUILD_HIDE_SIGNAL)
@@ -76,6 +136,8 @@ out:
 static void __exit wuwa_exit(void) {
     wuwa_info("bye!\n");
     wuwa_proto_cleanup();
+    if(isPHook) 
+		unregister_kretprobe(&my_kretprobe);
 #if defined(BUILD_HIDE_SIGNAL)
     wuwa_safe_signal_cleanup();
 #endif
