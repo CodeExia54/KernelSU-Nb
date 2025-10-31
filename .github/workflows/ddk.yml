@@ -52,21 +52,26 @@ jobs:
         # Create output directory
         mkdir -p /github/workspace/out
         
-        # Copy with KMI-specific naming
-        OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}.ko"
-        if [ -f "${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko" ]; then
-            cp "${{ inputs.module_dir }}/${{ inputs.module_dir }}.ko" "/github/workspace/out/$OUTPUT_NAME"
-            echo "Copied to: /github/workspace/out/$OUTPUT_NAME"
+        # Find the first .ko file in the module directory
+        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
+        
+        TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+        OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
+        if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
+            cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
+            echo "Copied: $KO_FILE -> /github/workspace/out/$OUTPUT_NAME"
             echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
             llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
             echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
         else
-            echo "ERROR: Module file not found in ${{ inputs.module_dir }}/!"
+            echo "ERROR: No .ko file found in ${{ inputs.module_dir }}/!"
+            echo "Available files in ${{ inputs.module_dir }}/:"
+            ls -la "${{ inputs.module_dir }}/" || echo "Directory doesn't exist"
             exit 1
         fi
 
     - name: Upload ${{ inputs.module_dir }}.ko artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
-        path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}.ko
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ github.run_id }}
+        path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-*.ko
