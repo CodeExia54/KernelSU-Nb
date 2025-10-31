@@ -129,13 +129,6 @@ static int handler_post(struct kretprobe_instance *ri, struct pt_regs *regs)
 	return 0;
 }
 
-struct prctl_cf {
-    int pid;
-    uintptr_t addr;
-    void* buffer;
-    int size;
-};
-
 static int handler_pre(struct kretprobe_instance *ri, struct pt_regs *regs)
 // struct kprobe *p, struct pt_regs *regs)
 {
