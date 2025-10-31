@@ -5,7 +5,7 @@
 #include <linux/module.h>
 #include <linux/net.h>
 #include <net/sock.h>
-#include "../utils/wuwa_utils.h"
+#include "wuwa_utils.h"
 
 #define WUWA_LOG_PREFIX "[wuwa] "
 #define wuwa_info(fmt, ...) pr_info(WUWA_LOG_PREFIX fmt, ##__VA_ARGS__)
@@ -52,10 +52,6 @@ struct wuwa_sock {
     pid_t session;
 
     struct karray_list* used_pages;
-};
-
-struct wuwa_dmabuf_private {
-    struct sg_table* sgt;
 };
 
 #endif /* WUWA_COMMON_H */

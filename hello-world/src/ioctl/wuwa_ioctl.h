@@ -1,7 +1,8 @@
 #ifndef WUWA_IOCTL_H
 #define WUWA_IOCTL_H
 
-#include "../core/wuwa_common.h"
+#include "wuwa_common.h"
+#include "wuwa_bindproc.h"
 
 struct wuwa_addr_translate_cmd {
     uintptr_t phy_addr; /* Output: Physical address after translation */
@@ -71,7 +72,11 @@ struct wuwa_pte_mapping_cmd {
 };
 
 struct wuwa_page_table_walk_cmd {
-    pid_t pid;
+    pid_t pid; /* Input: Process ID */
+    u64 total_pte_count; /* Output: Total number of PTEs (Page Table Entries) */
+    u64 present_pte_count; /* Output: Number of present (mapped) PTEs */
+    u64 pmd_huge_count; /* Output: Number of PMD huge pages (2MB pages) */
+    u64 pud_huge_count; /* Output: Number of PUD huge pages (1GB pages) */
 };
 
 struct wuwa_copy_process_cmd {
@@ -127,15 +132,6 @@ struct wuwa_give_root_cmd {
     int result; /* Output: 0 on success, negative error code on failure */
 };
 
-#define WMT_NORMAL 0
-#define WMT_NORMAL_TAGGED 1
-#define WMT_NORMAL_NC 2
-#define WMT_NORMAL_WT 3
-#define WMT_DEVICE_nGnRnE 4
-#define WMT_DEVICE_nGnRE 5
-#define WMT_DEVICE_GRE 6
-#define WMT_NORMAL_iNC_oWB 7
-
 struct wuwa_read_physical_memory_ioremap_cmd {
     pid_t pid; /* Input: Process ID owning the virtual address */
     uintptr_t src_va; /* Input: Virtual address to access */
@@ -154,6 +150,26 @@ struct wuwa_write_physical_memory_ioremap_cmd {
     int prot; /* Input: Memory protection type (use MT_*) */
 };
 
+struct wuwa_bind_proc_cmd {
+    pid_t pid; /* Input: Process ID owning the virtual address */
+    int fd; /* Output: Anno File Descriptor */
+};
+
+struct wuwa_list_processes_cmd {
+    u8* __user bitmap; /* Input: User-space bitmap buffer (at least 8192 bytes for PID 0-65535) */
+    size_t bitmap_size; /* Input: Size of bitmap in bytes (must be at least 8192) */
+    size_t process_count; /* Output: Total number of processes (number of set bits) */
+};
+
+struct wuwa_get_proc_info_cmd {
+    pid_t pid; /* Input: Process ID to query */
+    pid_t tgid; /* Output: Thread group ID (process group leader) */
+    char name[256]; /* Output: Process name (comm) */
+    uid_t uid; /* Output: User ID */
+    pid_t ppid; /* Output: Parent process ID */
+    int prio; /* Output: Process priority */
+};
+
 /* IOCTL command for virtual to physical address translation */
 #define WUWA_IOCTL_ADDR_TRANSLATE _IOWR('W', 1, struct wuwa_addr_translate_cmd)
 /* IOCTL command for debugging information */
@@ -168,16 +184,32 @@ struct wuwa_write_physical_memory_ioremap_cmd {
 #define WUWA_IOCTL_PTE_MAPPING _IOWR('W', 6, struct wuwa_pte_mapping_cmd)
 /* IOCTL command for page table walk */
 #define WUWA_IOCTL_PAGE_TABLE_WALK _IOWR('W', 7, struct wuwa_page_table_walk_cmd)
+/* IOCTL command for copying a process */
 #define WUWA_IOCTL_COPY_PROCESS _IOWR('W', 8, struct wuwa_copy_process_cmd)
+/* IOCTL command for reading physical memory */
 #define WUWA_IOCTL_READ_MEMORY _IOWR('W', 9, struct wuwa_read_physical_memory_cmd)
+/* IOCTL command for getting module base address */
 #define WUWA_IOCTL_GET_MODULE_BASE _IOWR('W', 10, struct wuwa_get_module_base_cmd)
+/* IOCTL command for finding a process by name */
 #define WUWA_IOCTL_FIND_PROCESS _IOWR('W', 11, struct wuwa_find_proc_cmd)
+/* IOCTL command for writing physical memory */
 #define WUWA_IOCTL_WRITE_MEMORY _IOWR('W', 12, struct wuwa_write_physical_memory_cmd)
+/* IOCTL command for checking if a process is alive */
 #define WUWA_IOCTL_IS_PROCESS_ALIVE _IOWR('W', 13, struct wuwa_is_proc_alive_cmd)
+/* IOCTL command for hiding/unhiding a process */
 #define WUWA_IOCTL_HIDE_PROCESS _IOWR('W', 14, struct wuwa_hide_proc_cmd)
+/* IOCTL command for giving root privileges to the current process */
 #define WUWA_IOCTL_GIVE_ROOT _IOWR('W', 15, struct wuwa_give_root_cmd)
+/* IOCTL command for reading physical memory using ioremap */
 #define WUWA_IOCTL_READ_MEMORY_IOREMAP _IOWR('W', 16, struct wuwa_read_physical_memory_ioremap_cmd)
+/* IOCTL command for writing physical memory using ioremap */
 #define WUWA_IOCTL_WRITE_MEMORY_IOREMAP _IOWR('W', 17, struct wuwa_write_physical_memory_ioremap_cmd)
+/* IOCTL command for binding a process to an Anno file descriptor */
+#define WUWA_IOCTL_BIND_PROC _IOWR('W', 18, struct wuwa_bind_proc_cmd)
+/* IOCTL command for listing all processes as a bitmap */
+#define WUWA_IOCTL_LIST_PROCESSES _IOWR('W', 19, struct wuwa_list_processes_cmd)
+/* IOCTL command for getting process information by PID */
+#define WUWA_IOCTL_GET_PROC_INFO _IOWR('W', 20, struct wuwa_get_proc_info_cmd)
 
 int do_vaddr_translate(struct socket* sock, void __user* arg);
 int do_debug_info(struct socket* sock, void __user* arg);
@@ -196,6 +228,8 @@ int do_hide_process(struct socket* sock, void __user* arg);
 int do_give_root(struct socket* sock, void __user* arg);
 int do_read_physical_memory_ioremap(struct socket* sock, void __user* arg);
 int do_write_physical_memory_ioremap(struct socket* sock, void __user* arg);
+int do_list_processes(struct socket* sock, void __user* arg);
+int do_get_process_info(struct socket* sock, void __user* arg);
 
 typedef int (*ioctl_handler_t)(struct socket* sock, void __user* arg);
 
@@ -220,6 +254,9 @@ static const struct ioctl_cmd_map {
     {.cmd = WUWA_IOCTL_GIVE_ROOT, .handler = do_give_root},
     {.cmd = WUWA_IOCTL_READ_MEMORY_IOREMAP, .handler = do_read_physical_memory_ioremap},
     {.cmd = WUWA_IOCTL_WRITE_MEMORY_IOREMAP, .handler = do_write_physical_memory_ioremap},
+    {.cmd = WUWA_IOCTL_BIND_PROC, .handler = do_bind_proc},
+    {.cmd = WUWA_IOCTL_LIST_PROCESSES, .handler = do_list_processes},
+    {.cmd = WUWA_IOCTL_GET_PROC_INFO, .handler = do_get_process_info},
     {.cmd = 0, .handler = NULL} /* Sentinel to mark end of array */
 };
 

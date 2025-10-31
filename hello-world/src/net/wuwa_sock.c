@@ -1,11 +1,11 @@
 #include "wuwa_sock.h"
 #include <asm/pgalloc.h>
 #include <asm/pgtable-hwdef.h>
-#include "../ioctl/wuwa_ioctl.h"
+#include "wuwa_ioctl.h"
 #include "wuwa_protocol.h"
-#include "../utils/wuwa_utils.h"
+#include "wuwa_utils.h"
 
-#include "../hook/wuwa_safe_signal.h"
+#include "wuwa_safe_signal.h"
 
 static int wuwa_release(struct socket* sock) {
     wuwa_info("release wuwa sock\n");
@@ -30,7 +30,7 @@ static int wuwa_release(struct socket* sock) {
                 __free_page(page);
             }
         }
-        ovo_info("free %lu used pages\n", ws->used_pages->size);
+        wuwa_info("free %lu used pages\n", ws->used_pages->size);
         arraylist_destroy(ws->used_pages);
     }
 

@@ -1,7 +1,7 @@
 #ifndef WUWA_SAFE_SIGNAL_H
 #define WUWA_SAFE_SIGNAL_H
 
-#include "../core/wuwa_common.h"
+#include "wuwa_common.h"
 
 int wuwa_safe_signal_init(void);
 void wuwa_safe_signal_cleanup(void);

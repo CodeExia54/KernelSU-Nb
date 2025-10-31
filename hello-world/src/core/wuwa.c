@@ -10,13 +10,12 @@
 #include <linux/syscalls.h>
 #include <linux/types.h>
 #include "wuwa_common.h"
-#include "../hook/wuwa_d0_mm_fault.h"
-#include "../utils/wuwa_kallsyms.h"
-#include "../net/wuwa_protocol.h"
-#include "../hook/wuwa_safe_signal.h"
-#include "../net/wuwa_sock.h"
-#include "../utils/wuwa_utils.h"
-#include "../inlinehook/hijack_arm64.h"
+#include "wuwa_kallsyms.h"
+#include "wuwa_protocol.h"
+#include "wuwa_safe_signal.h"
+#include "wuwa_sock.h"
+#include "wuwa_utils.h"
+#include "hijack_arm64.h"
 
 static int __init wuwa_init(void) {
     int ret;
@@ -48,12 +47,6 @@ static int __init wuwa_init(void) {
         wuwa_err("wuwa_safe_signal_init failed: %d\n", ret);
         goto clean_sig;
     }
-
-    ret = init_d0_mm_fault();
-    if (ret) {
-        wuwa_err("init_d0_mm_fault failed: %d\n", ret);
-        goto clean_d0;
-    }
 #endif
 
 
@@ -80,23 +73,20 @@ out:
     return ret;
 }
 
-late_initcall_sync(wuwa_init);
-
 static void __exit wuwa_exit(void) {
     wuwa_info("bye!\n");
     wuwa_proto_cleanup();
 #if defined(BUILD_HIDE_SIGNAL)
     wuwa_safe_signal_cleanup();
-    cleanup_d0_mm_fault();
 #endif
 }
 
-// module_init(wuwa_init);
+module_init(wuwa_init);
 module_exit(wuwa_exit);
 
 MODULE_AUTHOR("fuqiuluo");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("https://github.com/fuqiuluo/android-wuwa");
-MODULE_VERSION("1.0.4");
+MODULE_VERSION("1.0.5");
 
 MODULE_IMPORT_NS(DMA_BUF);

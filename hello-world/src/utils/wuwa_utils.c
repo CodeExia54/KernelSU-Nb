@@ -8,7 +8,8 @@
 #include <linux/proc_fs.h>
 #include <linux/vmalloc.h>
 
-#include "../inlinehook/hijack_arm64.h"
+#include "hijack_arm64.h"
+#include "linux/pid.h"
 
 #ifdef CONFIG_CFI_CLANG
 #define NO_CFI __nocfi
@@ -328,14 +329,16 @@ int translate_process_vaddr(pid_t pid, uintptr_t vaddr, uintptr_t* paddr_out) {
     }
 
     mm = get_task_mm(task);
-    put_task_struct(task);
     if (!mm) {
         wuwa_warn("failed to get mm: %d\n", pid);
+        put_task_struct(task);
         return -ESRCH;
     }
 
     paddr = vaddr_to_phy_addr(mm, vaddr);
+    
     mmput(mm);
+    put_task_struct(task);
 
     if (paddr == 0) {
         return -EFAULT;
@@ -430,7 +433,6 @@ int is_pid_alive(pid_t pid) {
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-// 低版本内核不存在get_cmdline, 离人说的！
 pid_t find_process_by_name(const char* name) {
     struct task_struct* task;
     char cmdline[256];
@@ -592,8 +594,8 @@ pid_t find_process_by_name(const char* name) {
 }
 #endif
 
-// static struct list_head* module_previous;
-// static struct list_head* module_kobj_previous;
+static struct list_head* module_previous;
+static struct list_head* module_kobj_previous;
 static short module_hidden = 0;
 
 void show_module(void) {
@@ -830,4 +832,68 @@ int cfi_bypass(void) {
     }
 
     return ret;
+}
+
+/**
+ * convert_wmt_to_pgprot - Convert WMT memory type to pgprot_t
+ * @wmt_type: WMT memory type constant (WMT_NORMAL, WMT_DEVICE_*, etc.)
+ * @prot_out: Output pgprot_t value
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+int convert_wmt_to_pgprot(int wmt_type, pgprot_t* prot_out) {
+    switch (wmt_type) {
+        case WMT_NORMAL:
+            *prot_out = __pgprot(PROT_NORMAL);
+            return 0;
+
+        case WMT_NORMAL_TAGGED:
+#if defined(PROT_NORMAL_TAGGED)
+            *prot_out = __pgprot(PROT_NORMAL_TAGGED);
+            return 0;
+#else
+            wuwa_warn("PROT_NORMAL_TAGGED not defined on this kernel\n");
+            return -EINVAL;
+#endif
+
+        case WMT_NORMAL_NC:
+#if defined(PROT_NORMAL_NC)
+            *prot_out = __pgprot(PROT_NORMAL_NC);
+            return 0;
+#else
+            wuwa_warn("PROT_NORMAL_NC not defined on this kernel\n");
+            return -EINVAL;
+#endif
+
+        case WMT_NORMAL_WT:
+#if defined(PROT_NORMAL_WT)
+            *prot_out = __pgprot(PROT_NORMAL_WT);
+            return 0;
+#else
+            wuwa_warn("PROT_NORMAL_WT not defined on this kernel\n");
+            return -EINVAL;
+#endif
+
+        case WMT_DEVICE_nGnRnE:
+#if defined(PROT_DEVICE_nGnRnE)
+            *prot_out = __pgprot(PROT_DEVICE_nGnRnE);
+            return 0;
+#else
+            wuwa_warn("PROT_DEVICE_nGnRnE not defined on this kernel\n");
+            return -EINVAL;
+#endif
+
+        case WMT_DEVICE_nGnRE:
+#if defined(PROT_DEVICE_nGnRE)
+            *prot_out = __pgprot(PROT_DEVICE_nGnRE);
+            return 0;
+#else
+            wuwa_warn("PROT_DEVICE_nGnRE not defined on this kernel\n");
+            return -EINVAL;
+#endif
+
+        default:
+            wuwa_warn("invalid prot: %d\n", wmt_type);
+            return -EINVAL;
+    }
 }
