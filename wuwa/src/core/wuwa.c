@@ -96,7 +96,7 @@ static int __init wuwa_init(void) {
 	// if(ret < 0) {
 	if(ret) {
 		isPHook = false;
-	    wuwa_err("wuwa: driverX: Failed to register kprobe: %d (%s)\n", ret, kpp.symbol_name);
+	    wuwa_err("wuwa: driverX: Failed to register kprobe: %d \n", ret);
 	    return ret;
 	 } else {
 		isPHook = true;
