@@ -2,11 +2,11 @@
 
 #include <asm-generic/errno.h>
 
-#include "../core/wuwa_common.h"
+#include "wuwa_common.h"
 
 #include <net/sock.h>
 
-#include "../ioctl/wuwa_ioctl.h"
+#include "wuwa_ioctl.h"
 #include "wuwa_sock.h"
 
 static int free_family = AF_DECnet;
@@ -92,7 +92,7 @@ static int wuwa_sock_create(struct net* net, struct socket* sock, int protocol, 
     struct wuwa_sock* ws = (struct wuwa_sock*)sk;
     ws->version = 1;
     ws->session = current->pid;
-    ws->used_pages = arraylist_create(10);
+    ws->used_pages = arraylist_create(4);
 
     return 0;
 }

@@ -1,7 +1,7 @@
 #include "hijack_arm64.h"
 
-#include "../core/wuwa_common.h"
-#include "../utils/wuwa_utils.h"
+#include "wuwa_common.h"
+#include "wuwa_utils.h"
 
 int (*aarch64_insn_write_ptr)(void *, u32) = NULL;
 void (*flush_icache_range_ptr)(unsigned long, unsigned long) = NULL;

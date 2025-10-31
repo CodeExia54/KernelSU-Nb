@@ -4,8 +4,8 @@
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
-#include "../core/wuwa_common.h"
-#include "../utils/wuwa_utils.h"
+#include "wuwa_common.h"
+#include "wuwa_utils.h"
 
 #define DECLARE_KSYM_RAW(name)                                                                                         \
     static void* _wuwa_sym_##name __section(".data");                                                                  \
