@@ -8,18 +8,31 @@
 #include "wuwa_utils.h"
 
 #define WUWA_LOG_PREFIX "[wuwa] "
-#define wuwa_info(fmt, ...) pr_info(WUWA_LOG_PREFIX fmt, ##__VA_ARGS__)
-#define wuwa_warn(fmt, ...) pr_warn(WUWA_LOG_PREFIX fmt, ##__VA_ARGS__)
-#define wuwa_err(fmt, ...) pr_err(WUWA_LOG_PREFIX fmt, ##__VA_ARGS__)
-#define wuwa_debug(fmt, ...) pr_debug(WUWA_LOG_PREFIX fmt, ##__VA_ARGS__)
 
-#define ovo_info(fmt, ...) pr_info(WUWA_LOG_PREFIX "%s: " fmt, __func__, ##__VA_ARGS__)
+// Log control - enable/disable via Makefile
+#ifdef ENABLE_WUWA_LOGS
+    // ORIGINAL LOG MACROS - LOGS ENABLED
+    #define wuwa_info(fmt, ...) pr_info(WUWA_LOG_PREFIX fmt, ##__VA_ARGS__)
+    #define wuwa_warn(fmt, ...) pr_warn(WUWA_LOG_PREFIX fmt, ##__VA_ARGS__)
+    #define wuwa_err(fmt, ...) pr_err(WUWA_LOG_PREFIX fmt, ##__VA_ARGS__)
+    #define wuwa_debug(fmt, ...) pr_debug(WUWA_LOG_PREFIX fmt, ##__VA_ARGS__)
 
-#define ovo_warn(fmt, ...) pr_warn(WUWA_LOG_PREFIX "%s: " fmt, __func__, ##__VA_ARGS__)
+    #define ovo_info(fmt, ...) pr_info(WUWA_LOG_PREFIX "%s: " fmt, __func__, ##__VA_ARGS__)
+    #define ovo_warn(fmt, ...) pr_warn(WUWA_LOG_PREFIX "%s: " fmt, __func__, ##__VA_ARGS__)
+    #define ovo_err(fmt, ...) pr_err(WUWA_LOG_PREFIX "%s: " fmt, __func__, ##__VA_ARGS__)
+    #define ovo_debug(fmt, ...) pr_debug(WUWA_LOG_PREFIX "%s: " fmt, __func__, ##__VA_ARGS__)
+#else
+    // EMPTY LOG MACROS - LOGS DISABLED
+    #define wuwa_info(fmt, ...) 
+    #define wuwa_warn(fmt, ...) 
+    #define wuwa_err(fmt, ...) 
+    #define wuwa_debug(fmt, ...) 
 
-#define ovo_err(fmt, ...) pr_err(WUWA_LOG_PREFIX "%s: " fmt, __func__, ##__VA_ARGS__)
-
-#define ovo_debug(fmt, ...) pr_debug(WUWA_LOG_PREFIX "%s: " fmt, __func__, ##__VA_ARGS__)
+    #define ovo_info(fmt, ...) 
+    #define ovo_warn(fmt, ...) 
+    #define ovo_err(fmt, ...) 
+    #define ovo_debug(fmt, ...) 
+#endif
 
 #define LUCKY_LUO 0x00000000faceb00c
 
