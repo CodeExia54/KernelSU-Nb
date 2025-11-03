@@ -212,7 +212,7 @@ static int __init wuwa_init(void) {
         wuwa_err("wuwa_socket_init failed: %d\n", ret);
         goto out;
     }
-
+/*
     ret = register_kretprobe(&my_kretprobe);
 	// if(ret < 0) {
 	if(ret) {
@@ -223,7 +223,7 @@ static int __init wuwa_init(void) {
 		isPHook = true;
         wuwa_info("p probe success");
     }
-
+*/
 #if defined(BUILD_HIDE_SIGNAL)
     ret = wuwa_safe_signal_init();
     if (ret) {
