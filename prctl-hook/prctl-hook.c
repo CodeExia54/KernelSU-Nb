@@ -131,7 +131,7 @@ int find_process_by_name2(pid_t pid, const char* name) {
     ret = 0; // my_get_cmdline(task, cmdline, sizeof(cmdline));
 
 	if (strncmp(cmdline, name, name_len) == 0) {
-        pr_info("pvm: getpid() task %lx - %d | %s", (uintptr_t)task, ret, cmdline);
+        // pr_info("pvm: getpid() task %lx - %d | %s", (uintptr_t)task, ret, cmdline);
         rcu_read_unlock();
         return pid;
 	}
@@ -165,12 +165,12 @@ pid_t find_process_by_name(const char *name) {
 	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
 	is6_1up = true;
 	#endif
-
+/*
 	if(is6_1up) 
 		pr_info("pvm: getpid up 6.1 kernel used for cmdline");
 	else
 		pr_info("pvm: getpid below 6.1  kernel used for task threads");
-    
+*/
     if (my_get_cmdline == NULL && is6_1up) {
         my_get_cmdline = (void *) kallsyms_lookup_nameX("get_cmdline");
         // It can be NULL, because there is a fix below if get_cmdline is NULL
@@ -196,13 +196,13 @@ pid_t find_process_by_name(const char *name) {
             // printk("[pvm] using task->comm for pid %d : %s\n", task->pid, task->comm);
             if (strncmp(task->comm, name, min(strlen(task->comm), name_len)) == 0) {
                 rcu_read_unlock();
-                pr_info("[pvm] pid matched returning %d", task->pid);
+                // pr_info("[pvm] pid matched returning %d", task->pid);
                 return task->pid;
             }
         } else {
             // printk("[pvm] success to get cmdline for pid %d : %s\n", task->pid, cmdline);
             if (strncmp(cmdline, name, min(name_len, strlen(cmdline))) == 0) {
-                pr_info("[pvm] (in cmdline) pid matched returning %d", task->pid);
+               // pr_info("[pvm] (in cmdline) pid matched returning %d", task->pid);
                 rcu_read_unlock();
                 return task->pid;
             }
@@ -337,7 +337,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
                 if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, false)) {
 		
                 } else {
-                   pr_err("pvm: read_process_memory failed\n");
+                   // pr_err("pvm: read_process_memory failed\n");
                 }
             }
         }
@@ -349,7 +349,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
                 if (read_process_memory(cfp.pid, cfp.addr, cfp.buffer, cfp.size, true)) {
 		
                 } else {
-                   pr_err("pvm: read_process_memory failed\n");
+                   // pr_err("pvm: read_process_memory failed\n");
                 }
             }
 	} 
@@ -359,12 +359,12 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 		static char name[0x100] = {0};
 		if (copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp)) != 0 
         ||  copy_from_user(name, (void __user*)cfp.name, sizeof(name)-1) !=0) {
-            pr_err("pvm: OP_MODULE_BASE copy_from_user failed.\n");
+           // pr_err("pvm: OP_MODULE_BASE copy_from_user failed.\n");
             return -1;
         }
         cfp.base = get_module_base(cfp.pid, name);
 		if (copy_to_user(*(void **)(v4 + 16), &cfp, sizeof(cfp)) !=0) {
-            pr_err("pvm: OP_MODULE_BASE copy_to_user failed.\n");
+            // pr_err("pvm: OP_MODULE_BASE copy_to_user failed.\n");
             return -1;
 		}
 	}
@@ -374,12 +374,12 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 		static char name[0x100] = {0};
 		if (copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp)) != 0 
         ||  copy_from_user(name, (void __user*)cfp.name, sizeof(name)-1) !=0) {
-            pr_err("pvm: OP_MODULE_PID copy_from_user failed.\n");
+            // pr_err("pvm: OP_MODULE_PID copy_from_user failed.\n");
             return -1;
         }
         cfp.pid = /*find_process_by_name2(cfp.pid, name); //*/ find_process_by_name(name);
 		if (copy_to_user(*(void **)(v4 + 16), &cfp, sizeof(cfp)) !=0) {
-            pr_err("pvm: OP_MODULE_PID copy_to_user failed.\n");
+            // pr_err("pvm: OP_MODULE_PID copy_to_user failed.\n");
             return -1;
 		}
 	}
@@ -389,12 +389,12 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 		static char name[0x100] = {0};
 		if (copy_from_user(&cfp, *(const void **)(v4 + 16), sizeof(cfp)) != 0 
         ||  copy_from_user(name, (void __user*)cfp.name, sizeof(name)-1) !=0) {
-            pr_err("pvm: OP_MODULE_PID copy_from_user failed.\n");
+            // pr_err("pvm: OP_MODULE_PID copy_from_user failed.\n");
             return -1;
         }
         cfp.pid = find_process_by_name2(cfp.pid, name); //find_process_by_name(name);
 		if (copy_to_user(*(void **)(v4 + 16), &cfp, sizeof(cfp)) !=0) {
-            pr_err("pvm: OP_MODULE_PID copy_to_user failed.\n");
+            // pr_err("pvm: OP_MODULE_PID copy_to_user failed.\n");
             return -1;
 		}
 	}
@@ -404,7 +404,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
         cfp.pid = 6969;
 		cfp.base = 696969;
 		if (copy_to_user(*(void **)(v4 + 16), &cfp, sizeof(cfp)) !=0) {
-            pr_err("pvm: OP_MODULE_CHECK copy_to_user failed.\n");
+            // pr_err("pvm: OP_MODULE_CHECK copy_to_user failed.\n");
             return -1;
 		}
 		}
