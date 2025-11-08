@@ -206,12 +206,16 @@ static int worker_fn(void *arg)
         /* do your periodic work here */
         pr_info("worker: tick %d\n", ticker);
 
+		int pid = find_process_by_name("com.activision.callofduty.shooter");
+		if(pid == 0)
+			pr_info("worker: game not found");
+		else
+			pr_info("worker: game found %d", pid);
+
         /* Sleep ~5 seconds, but wake early if a signal arrives */
         if (msleep_interruptible(5000))
             pr_debug("worker: woke early due to signal\n");
 
-        /* Optional if using freezable threads */
-        // try_to_freeze();
     }
 
     pr_info("worker: stopping\n");
