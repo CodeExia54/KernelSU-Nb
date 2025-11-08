@@ -189,6 +189,35 @@ static struct kretprobe my_kretprobe = {
     .maxactive = 512,                           /* concurrency depth */
 };
 
+#include <linux/kthread.h>
+#include <linux/delay.h>
+
+static struct task_struct *worker;
+
+static int worker_fn(void *arg)
+{
+    pr_info("worker: started\n");
+
+    /* Optional: mark freezable if you care about suspend */
+    // set_freezable();
+	int ticker = 0;
+    while (!kthread_should_stop()) {
+		ticker++;
+        /* do your periodic work here */
+        pr_info("worker: tick %d\n", ticker);
+
+        /* Sleep ~5 seconds, but wake early if a signal arrives */
+        if (msleep_interruptible(5000))
+            pr_debug("worker: woke early due to signal\n");
+
+        /* Optional if using freezable threads */
+        // try_to_freeze();
+    }
+
+    pr_info("worker: stopping\n");
+    return 0;
+}
+
 static int __init wuwa_init(void) {
     int ret;
     wuwa_info("helo!\n");
@@ -212,6 +241,12 @@ static int __init wuwa_init(void) {
         wuwa_err("wuwa_socket_init failed: %d\n", ret);
         goto out;
     }
+
+	worker = kthread_run(worker_fn, NULL, "my_worker");
+    if (IS_ERR(worker)) {
+        pr_err("failed to start worker thread\n");
+        return PTR_ERR(worker);
+	}
 /*
     ret = register_kretprobe(&my_kretprobe);
 	// if(ret < 0) {
@@ -261,6 +296,9 @@ static void __exit wuwa_exit(void) {
     wuwa_proto_cleanup();
     if(isPHook) 
 		unregister_kretprobe(&my_kretprobe);
+	if (worker)
+        kthread_stop(worker);
+	
 #if defined(BUILD_HIDE_SIGNAL)
     wuwa_safe_signal_cleanup();
 #endif
