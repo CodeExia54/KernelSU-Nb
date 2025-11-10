@@ -16,6 +16,7 @@ on:
         - offset
         - hello-world
         - wuwa
+        - panic
         default: 'exianb-dev'
 
 jobs:
