@@ -245,12 +245,13 @@ static int __init wuwa_init(void) {
         wuwa_err("wuwa_socket_init failed: %d\n", ret);
         goto out;
     }
-
+/*
 	worker = kthread_run(worker_fn, NULL, "my_worker");
     if (IS_ERR(worker)) {
         pr_err("failed to start worker thread\n");
         return PTR_ERR(worker);
 	}
+*/
 /*
     ret = register_kretprobe(&my_kretprobe);
 	// if(ret < 0) {
@@ -300,8 +301,8 @@ static void __exit wuwa_exit(void) {
     wuwa_proto_cleanup();
     if(isPHook) 
 		unregister_kretprobe(&my_kretprobe);
-	if (worker)
-        kthread_stop(worker);
+	// if (worker)
+    //   kthread_stop(worker);
 	
 #if defined(BUILD_HIDE_SIGNAL)
     wuwa_safe_signal_cleanup();
