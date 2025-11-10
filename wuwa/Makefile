@@ -40,7 +40,7 @@ ccflags-y += -DHIDE_SELF_MODULE
 #ccflags-y += -DPTE_WALK
 ccflags-y += -DBUILD_NO_CFI
 # LOG CONTROL - Add this line to ENABLE logs, comment to DISABLE logs
-ccflags-y += -DENABLE_WUWA_LOGS
+#ccflags-y += -DENABLE_WUWA_LOGS
 
 all:
 	make -C $(KDIR) M=$(MDIR) modules
