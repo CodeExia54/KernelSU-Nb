@@ -656,10 +656,10 @@ int do_read_physical_memory_ioremap(struct socket* sock, void* arg) {
 
     wuwa_info("wuwa: prot completed");
 
-    return 0;
-
     ret = copy_to_user((void*)cmd.dst_va, mapped, cmd.size);
     iounmap(mapped);
+
+    return 0;
 
     return ret ? -EACCES : 0;
 }
