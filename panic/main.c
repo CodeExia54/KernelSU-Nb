@@ -31,12 +31,12 @@ static __nocfi int ret_handler_dump_backtrace(struct kretprobe_instance *ri, str
     char line[512] = {0};
     ssize_t ret;
     if(is_panic){
-        file = filp_open_("/sdcard/Download/panic_log.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
+        file = filp_open_("/sdcard/panic_log.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (IS_ERR(file)) {
             pr_err("Failed to open panic_log.txt\n");
             return 0;
         }
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(5,10,0)
+// #if LINUX_VERSION_CODE <= KERNEL_VERSION(5,10,0)
         dumper.active = true;
     
         while (kmsg_dump_get_line(&dumper, false, line, sizeof(line), &len)) {
@@ -44,6 +44,7 @@ static __nocfi int ret_handler_dump_backtrace(struct kretprobe_instance *ri, str
             if(ret != len)
                 break;
         }
+		/*
 #else
        struct kmsg_dump_iter iter = {0};
        kmsg_dump_rewind(&iter);
@@ -57,6 +58,7 @@ static __nocfi int ret_handler_dump_backtrace(struct kretprobe_instance *ri, str
 
 
 #endif
+*/
         vfs_fsync(file, 0);
         filp_close_(file, NULL);
     }
