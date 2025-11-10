@@ -45,7 +45,11 @@ static __nocfi int ret_handler_dump_backtrace(struct kretprobe_instance *ri, str
                 break;
         }
 #else
-       struct kmsg_dump_iter iter = {0};
+/* Only use kmsg_dump_iter if CONFIG_PRINTK provides a complete definition. */
+#if IS_ENABLED(CONFIG_PRINTK)
+       /* Declarations must be before statements in kernel (gnu89). */
+       struct kmsg_dump_iter iter;
+       memset(&iter, 0, sizeof(iter));
        kmsg_dump_rewind(&iter);
        while (kmsg_dump_get_line(&iter, false, line, sizeof(line), &len)) {
             ret = kernel_write_(file, line, len, &file->f_pos);
@@ -54,7 +58,9 @@ static __nocfi int ret_handler_dump_backtrace(struct kretprobe_instance *ri, str
                 break;
             }
         }
-
+#else
+       /* PRINTK is disabled; skip iterator path to avoid incomplete type error. */
+#endif
 
 #endif
         vfs_fsync(file, 0);
