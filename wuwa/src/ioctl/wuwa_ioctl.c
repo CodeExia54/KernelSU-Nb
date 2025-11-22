@@ -644,13 +644,13 @@ int do_read_physical_memory_ioremap(struct socket* sock, void* arg) {
         return -EFAULT;
     }
 
-    return 0;
-
     // Map and read physical memory
     pa = cmd.phy_addr;
     if (!pa || !pfn_valid(__phys_to_pfn(pa))) {
         return -EFAULT;
     }
+
+    return 0;
 
     mapped = wuwa_ioremap_prot(pa, cmd.size, prot);
     if (!mapped) {
