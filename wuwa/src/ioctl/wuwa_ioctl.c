@@ -631,6 +631,8 @@ int do_read_physical_memory_ioremap(struct socket* sock, void* arg) {
         return ret;
     }
 
+    return 0;
+
     // Translate virtual address to physical
     ret = translate_process_vaddr(cmd.pid, cmd.src_va, &cmd.phy_addr);
     if (ret < 0) {
@@ -641,8 +643,6 @@ int do_read_physical_memory_ioremap(struct socket* sock, void* arg) {
     if (copy_to_user(arg, &cmd, sizeof(cmd))) {
         return -EFAULT;
     }
-
-    return 0;
 
     // Map and read physical memory
     pa = cmd.phy_addr;
