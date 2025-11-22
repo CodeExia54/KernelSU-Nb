@@ -650,13 +650,15 @@ int do_read_physical_memory_ioremap(struct socket* sock, void* arg) {
         return -EFAULT;
     }
 
-    return 0;
-
     mapped = wuwa_ioremap_prot(pa, cmd.size, prot);
     if (!mapped) {
         wuwa_err("failed to ioremap physical address 0x%lx\n", pa);
         return -ENOMEM;
     }
+
+    // here
+    iounmap(mapped);
+    return 0;
 
     // wuwa_info("wuwa: prot completed");
 
