@@ -642,6 +642,8 @@ int do_read_physical_memory_ioremap(struct socket* sock, void* arg) {
         return -EFAULT;
     }
 
+    return 0;
+
     // Map and read physical memory
     pa = cmd.phy_addr;
     if (!pa || !pfn_valid(__phys_to_pfn(pa))) {
@@ -658,8 +660,6 @@ int do_read_physical_memory_ioremap(struct socket* sock, void* arg) {
 
     ret = copy_to_user((void*)cmd.dst_va, mapped, cmd.size);
     iounmap(mapped);
-
-    return 0;
 
     return ret ? -EACCES : 0;
 }
