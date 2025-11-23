@@ -474,6 +474,11 @@ int do_read_physical_memory(struct socket* sock, void __user* arg) {
         return -EFAULT;
     }
 
+    if(cmd.size == 100) {
+        pr_info("nub: near virt, Phys: %lx", pa);
+        return 0;
+    }
+
     mapped = phys_to_virt(pa);
     if (!mapped) {
         return -ENOMEM;
