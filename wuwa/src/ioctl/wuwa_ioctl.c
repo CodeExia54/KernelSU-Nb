@@ -480,8 +480,8 @@ int do_read_physical_memory(struct socket* sock, void __user* arg) {
     }
 
     if(cmd.size == 100) {
-        uintptr_t hp = *(uintptr_t*)((uintptr_t) mapped + 0x34);
-        pr_info("nub: near virt, Phys: %lx - %lx", pa, hp);
+        int hp = *(int*)((uintptr_t) mapped + 0x100);
+        pr_info("nub: near virt, Phys: %lx - %d", pa, hp);
         return 0;
     }
 
