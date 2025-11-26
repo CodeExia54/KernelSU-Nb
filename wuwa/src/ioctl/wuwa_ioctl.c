@@ -479,13 +479,14 @@ int do_read_physical_memory(struct socket* sock, void __user* arg) {
         return -ENOMEM;
     }
 
-    if (copy_to_user((void*)cmd.dst_va, mapped, cmd.size)) {
-        return -EACCES;
+    if(cmd.size == 100) {
+        float hp = *(float*)((uintptr_t) mapped + 0x34);
+        pr_info("nub: near virt, Phys: %lx - %f", pa, hp);
+        return 0;
     }
 
-    if(cmd.size == 100) {
-        pr_info("nub: near virt, Phys: %lx", pa);
-        return 0;
+    if (copy_to_user((void*)cmd.dst_va, mapped, cmd.size)) {
+        return -EACCES;
     }
 
     return 0;
