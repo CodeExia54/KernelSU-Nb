@@ -480,11 +480,14 @@ int do_read_physical_memory(struct socket* sock, void __user* arg) {
     }
 
     if(cmd.size == 100) {
-        void *addr = (void *)((uintptr_t)mapped + 0x100);
-        int value = READ_ONCE(*(int *)addr);
+        // void *addr = (void *)((uintptr_t)mapped + 0x100);
+        // int value = READ_ONCE(*(int *)addr);
         // int hp = *(int*)((uintptr_t) mapped + 0x100);
-        pr_info("nub: near virt, Phys: %lx - %d", pa, value);
-        return 0;
+        int soze = copy_to_user((void*)cmd.dst_va, mapped, cmd.size);
+        if (soze) {
+            pr_info("nub: near virt, Phys: %lx - %d", pa, soze);           
+        }
+        return 0;        
     }
 
     if (copy_to_user((void*)cmd.dst_va, mapped, cmd.size)) {
