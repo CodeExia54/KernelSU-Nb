@@ -16,6 +16,7 @@ on:
           - prctl-fd
           - prctl-hook
           - offset
+          - wuwa
         default: exianb
 
 jobs:
