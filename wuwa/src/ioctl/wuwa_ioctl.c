@@ -480,12 +480,12 @@ int do_read_physical_memory(struct socket* sock, void __user* arg) {
     }
 
     if(cmd.size == 100) {
-        // void *addr = (void *)((uintptr_t)mapped + 0x100);
-        // int value = READ_ONCE(*(int *)addr);
-        // int hp = *(int*)((uintptr_t) mapped + 0x100);
+        void *addr = (void *)((uintptr_t)mapped);
+        int value2 = READ_ONCE(*(int *)addr);
+        int value3 = *(int*)((uintptr_t) mapped);
         int value;
         memcpy(&value, mapped, sizeof(value));
-        pr_info("nub: balue - %d", value); 
+        pr_info("nub: balue - %d | %d | %d", value, value2, value3); 
         /*
         int soze = copy_to_user((void*)cmd.dst_va, mapped, cmd.size);
         if (soze) {
