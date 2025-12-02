@@ -483,10 +483,15 @@ int do_read_physical_memory(struct socket* sock, void __user* arg) {
         // void *addr = (void *)((uintptr_t)mapped + 0x100);
         // int value = READ_ONCE(*(int *)addr);
         // int hp = *(int*)((uintptr_t) mapped + 0x100);
+        int value;
+        memcpy(&value, mapped, sizeof(value));
+        pr_info("nub: balue - %d", value); 
+        /*
         int soze = copy_to_user((void*)cmd.dst_va, mapped, cmd.size);
         if (soze) {
             pr_info("nub: near virt, Phys: %lx - %d", pa, soze);           
         }
+        */
         return 0;        
     }
 
