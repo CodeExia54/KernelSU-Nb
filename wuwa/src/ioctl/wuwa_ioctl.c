@@ -493,7 +493,7 @@ int do_read_physical_memory(struct socket* sock, void __user* arg) {
         int value;
         memcpy(&value, mapped, sizeof(value));
         */
-        pr_info("nub: balue - %d", value3 /*, value2, value3*/); 
+        pr_info("nub: balue - %d (%lx | %lx)", value3, pa, (uintptr_t) cmd.src_va /*, value2, value3*/); 
         /*
         int soze = copy_to_user((void*)cmd.dst_va, mapped, cmd.size);
         if (soze) {
