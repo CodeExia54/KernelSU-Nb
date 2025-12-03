@@ -150,11 +150,15 @@ int do_get_page_info(struct socket* sock, void* arg) {
     cmd.page.flags = page_struct->flags;
     cmd.page._mapcount = page_struct->_mapcount;
     cmd.page._refcount = page_struct->_refcount;
-
+    
+    pr_info("flags %lx", page_struct->flags);
+    pr_info("maps c %d", page_struct->_mapcount);
+    pr_info("ref c %d", page_struct->_refcount);
+/*
     if (copy_to_user(arg, &cmd, sizeof(cmd))) {
         return -EFAULT;
     }
-
+*/
     return 0;
 }
 
