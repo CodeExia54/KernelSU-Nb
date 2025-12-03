@@ -145,7 +145,7 @@ int do_get_page_info(struct socket* sock, void* arg) {
         return -EFAULT;
     }
 
-    uintptr_t phy_addr; // = page_to_phys(page_struct);
+    uintptr_t phy_addr = 69; // = page_to_phys(page_struct);
     cmd.page.phy_addr = phy_addr;
     cmd.page.flags = page_struct->flags;
     cmd.page._mapcount = page_struct->_mapcount;
