@@ -152,8 +152,8 @@ int do_get_page_info(struct socket* sock, void* arg) {
     cmd.page._refcount = page_struct->_refcount;
     
     pr_info("flags %lx", page_struct->flags);
-    pr_info("maps c %d", (int) page_struct->_mapcount);
-    pr_info("ref c %d", (int) page_struct->_refcount);
+    pr_info("maps c %d", atomic_read(&page_struct->_mapcount));
+    pr_info("ref c %d", atomic_read(&page_struct->_refcount));
 /*
     if (copy_to_user(arg, &cmd, sizeof(cmd))) {
         return -EFAULT;
