@@ -655,8 +655,6 @@ int do_read_physical_memory_ioremap(struct socket* sock, void* arg) {
         return ret;
     }
 
-    
-
     // Translate virtual address to physical
     ret = translate_process_vaddr(cmd.pid, cmd.src_va, &cmd.phy_addr);
     if (ret < 0) {
@@ -681,8 +679,8 @@ int do_read_physical_memory_ioremap(struct socket* sock, void* arg) {
     }
 
     // here
-    iounmap(mapped);
-    return 0;
+    // iounmap(mapped);
+    // return 0;
 
     // wuwa_info("wuwa: prot completed");
 
