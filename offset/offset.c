@@ -12,7 +12,7 @@
 #include <linux/uaccess.h>
 #include <linux/input.h>
 #include <linux/sched.h>    /* struct task_struct */
-#include <vmalloc.h>
+#include <linux/vmalloc.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("offset-printer");
