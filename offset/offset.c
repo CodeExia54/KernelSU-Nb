@@ -50,6 +50,11 @@ static int __init offsets_init(void)
     pr_info("offsets: offsetof(vm_area_struct, vm_flags) = %zu\n",
             offsetof(struct vm_area_struct, vm_flags));
 
+    pr_info("offsets: offsetof(vm_struct, addr)  = %zu\n",
+            offsetof(struct vm_struct, addr));
+    pr_info("offsets: offsetof(vm_struct, phys_addr) = %zu\n",
+            offsetof(struct vm_struct, phys_addr));
+
     /* struct file -> f_path */
     pr_info("offsets: offsetof(file, f_path) = %zu\n",
             offsetof(struct file, f_path));
