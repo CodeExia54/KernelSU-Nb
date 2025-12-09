@@ -61,6 +61,7 @@ static int __init offsets_init(void)
     pr_info("offsets: PAGE_MASK     = 0x%lx\n", (unsigned long)PAGE_MASK);
     pr_info("offsets: PAGE_OFFSET   = 0x%lx\n", (unsigned long)PAGE_OFFSET);
     pr_info("offsets: PHYS_MASK     = 0x%llx\n", (unsigned long long)PHYS_MASK);
+    pr_info("offsets: VM_IOREMAP.   = 0x%llx\n", (unsigned long long)VM_IOREMAP);
 
     /* struct file -> f_path */
     pr_info("offsets: offsetof(file, f_path) = %zu\n",
