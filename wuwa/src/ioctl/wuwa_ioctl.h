@@ -57,12 +57,12 @@ struct wuwa_page_info_cmd {
     struct kernel_page page; /* Output: Page information */
 };
 
-struct wuwa_dma_buf_create_cmd {
+/*struct wuwa_dma_buf_create_cmd {
     pid_t pid;
     uintptr_t va;
     size_t size;
     int fd;
-};
+};*/
 
 struct wuwa_pte_mapping_cmd {
     pid_t pid;
@@ -179,7 +179,7 @@ struct wuwa_get_proc_info_cmd {
 /* IOCTL command for getting page information at a specific virtual address */
 #define WUWA_IOCTL_PAGE_INFO _IOWR('W', 4, struct wuwa_page_info_cmd)
 /* IOCTL command for creating a DMA buffer at a specific virtual address */
-#define WUWA_IOCTL_DMA_BUF_CREATE _IOWR('W', 5, struct wuwa_dma_buf_create_cmd)
+//#define WUWA_IOCTL_DMA_BUF_CREATE _IOWR('W', 5, struct wuwa_dma_buf_create_cmd)
 /* IOCTL command for getting PTE mapping information */
 #define WUWA_IOCTL_PTE_MAPPING _IOWR('W', 6, struct wuwa_pte_mapping_cmd)
 /* IOCTL command for page table walk */
@@ -215,7 +215,7 @@ int do_vaddr_translate(struct socket* sock, void __user* arg);
 int do_debug_info(struct socket* sock, void __user* arg);
 int do_at_s1e0r(struct socket* sock, void __user* arg);
 int do_get_page_info(struct socket* sock, void __user* arg);
-int do_create_proc_dma_buf(struct socket* sock, void __user* arg);
+//int do_create_proc_dma_buf(struct socket* sock, void __user* arg);
 int do_pte_mapping(struct socket* sock, void __user* arg);
 int do_page_table_walk(struct socket* sock, void __user* arg);
 int do_copy_process(struct socket* sock, void __user* arg);
@@ -241,7 +241,7 @@ static const struct ioctl_cmd_map {
     {.cmd = WUWA_IOCTL_DEBUG_INFO, .handler = do_debug_info},
     {.cmd = WUWA_IOCTL_AT_S1E0R, .handler = do_at_s1e0r}, /* Reusing the same handler for AT VA */
     {.cmd = WUWA_IOCTL_PAGE_INFO, .handler = do_get_page_info},
-    {.cmd = WUWA_IOCTL_DMA_BUF_CREATE, .handler = do_create_proc_dma_buf},
+    //{.cmd = WUWA_IOCTL_DMA_BUF_CREATE, .handler = do_create_proc_dma_buf},
     {.cmd = WUWA_IOCTL_PTE_MAPPING, .handler = do_pte_mapping},
     {.cmd = WUWA_IOCTL_PAGE_TABLE_WALK, .handler = do_page_table_walk},
     {.cmd = WUWA_IOCTL_COPY_PROCESS, .handler = do_copy_process},
