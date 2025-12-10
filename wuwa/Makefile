@@ -31,11 +31,11 @@ ccflags-y += -Wno-declaration-after-statement -Wno-unused-function -Wno-unused-v
 ccflags-y += -Wno-unused-label  # ADDED THIS LINE TO FIX THE ERROR
 
 # 编译时启用 隐藏模块功能
-#ccflags-y += -DHIDE_SELF_MODULE
+ccflags-y += -DHIDE_SELF_MODULE
 # 编译时启用 PTE_MAPPING 功能
 #ccflags-y += -DBUILD_PTE_MAPPING
 # 编译时启用 HIDE_SIGNAL 功能
-#ccflags-y += -DBUILD_HIDE_SIGNAL
+ccflags-y += -DBUILD_HIDE_SIGNAL
 #ccflags-y += -DPTE_WALK
 ccflags-y += -DBUILD_NO_CFI
 # LOG CONTROL - Add this line to ENABLE logs, comment to DISABLE logs
