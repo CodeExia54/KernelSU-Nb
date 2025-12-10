@@ -168,25 +168,18 @@ jobs:
           [ -d "$OUTDIR" ] || OUTDIR="android-kernel/dist"
           mkdir -p output
 
-          echo "[+] Looking for LKM artifact in: $OUTDIR/"
-          
-          # Try to find any .ko file
-          KO_FILE=$(find "$OUTDIR" -name "*.ko" -type f | head -1)
-          
-          if [ -n "$KO_FILE" ]; then
-            BASE_NAME=$(basename "$KO_FILE")
-            echo "[+] Found: $BASE_NAME"
-            llvm-strip-15 -d "$KO_FILE"
-            cp "$KO_FILE" "./output/"
+          echo "[+] Preparing LKM artifact: $MODULE_NAME.ko"
+          if [ -f "$OUTDIR/$MODULE_NAME.ko" ]; then
+            llvm-strip-15 -d "$OUTDIR/$MODULE_NAME.ko"
+            mv "$OUTDIR/$MODULE_NAME.ko" "./output/${{ inputs.version }}_$MODULE_NAME.ko"
           else
-            echo "[-] ERROR: No .ko file found in $OUTDIR/"
+            echo "[-] ERROR: $MODULE_NAME.ko not found in $OUTDIR/"
             ls -la "$OUTDIR/" || echo "OUTDIR does not exist"
             exit 1
           fi
 
-      - name: Upload LKM Artifacts
+      - name: Upload LKM Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.version }}-${{ inputs.module_name }}-modules
-          path: output/*.ko
-          retention-days: 7
+          name: ${{ inputs.version }}-${{ inputs.module_name }}.ko
+          path: output/${{ inputs.version }}_${{ inputs.module_name }}.ko
