@@ -5,7 +5,7 @@
 #include "wuwa_page_walk.h"
 #include "wuwa_sock.h"
 #include "wuwa_utils.h"
-#include "wuwa_proc_dmabuf.h"
+//#include "wuwa_proc_dmabuf.h"
 
 #include <asm/pgtable-prot.h>
 #include <asm/pgtable-types.h>
