@@ -859,9 +859,9 @@ int convert_wmt_to_pgprot(int wmt_type, pgprot_t* prot_out) {
         case WMT_NORMAL_NC:
 #if defined(PROT_NORMAL_NC)
             *prot_out = __pgprot(PROT_NORMAL);
-            wuwa_info("prot_out: pgprot_val normal = 0x%lx\n",pgprot_val(*prot_out));
+            wuwa_info("prot_out: pgprot_val normal = 0x%lx\n", (unsigned long) pgprot_val(*prot_out));
             *prot_out = __pgprot(PROT_NORMAL_NC);
-            wuwa_info("prot_out: pgprot_val = 0x%lx\n",pgprot_val(*prot_out));
+            wuwa_info("prot_out: pgprot_val = 0x%lx\n", (unsigned long) pgprot_val(*prot_out));
             return 0;
 #else
             wuwa_warn("PROT_NORMAL_NC not defined on this kernel\n");
