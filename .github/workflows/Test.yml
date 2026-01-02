@@ -41,43 +41,80 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Setup DeClang from repo scripts
+    - name: Setup DeClang
       run: |
-        # Make scripts executable
-        chmod +x scripts/*.sh
-        
-        # Run setup script
-        ./scripts/setup-declang.sh
+        apt-get update && apt-get install -y wget unzip
+        wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        chmod +x Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/*
 
-    - name: Build with DeClang using wrapper
+    - name: Build with DeClang
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
         
-        # Set DECLANG_HOME
-        export DECLANG_HOME=~/.DeClang
+        DECLANG_CLANG="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
+        DECLANG_CLANGPP="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang++"
         
-        # Paths to DeClang binaries
-        DECLANG_CLANG="$DECLANG_HOME/declang/compiler/bin/clang"
-        DECLANG_CLANGPP="$DECLANG_HOME/declang/compiler/bin/clang++"
+        # Create simple wrapper that fixes all issues
+        mkdir -p /tmp/declang-fixed
         
-        # Build using our wrapper scripts
+        # Create clang wrapper
+        echo '#!/bin/bash' > /tmp/declang-fixed/clang
+        echo 'args=()' >> /tmp/declang-fixed/clang
+        echo 'for a in "$@"; do' >> /tmp/declang-fixed/clang
+        echo '    case "$a" in' >> /tmp/declang-fixed/clang
+        echo '        *enable-trivial-auto-var-init*) continue ;;' >> /tmp/declang-fixed/clang
+        echo '        *debug-compression*) continue ;;' >> /tmp/declang-fixed/clang
+        echo '        -gz*) continue ;;' >> /tmp/declang-fixed/clang
+        echo '        *) args+=("$a") ;;' >> /tmp/declang-fixed/clang
+        echo '    esac' >> /tmp/declang-fixed/clang
+        echo 'done' >> /tmp/declang-fixed/clang
+        echo 'args+=("-O2")' >> /tmp/declang-fixed/clang
+        echo "exec \"$DECLANG_CLANG\" \"\${args[@]}\"" >> /tmp/declang-fixed/clang
+        chmod +x /tmp/declang-fixed/clang
+        
+        # Create clang++ wrapper
+        echo '#!/bin/bash' > /tmp/declang-fixed/clang++
+        echo 'args=()' >> /tmp/declang-fixed/clang++
+        echo 'for a in "$@"; do' >> /tmp/declang-fixed/clang++
+        echo '    case "$a" in' >> /tmp/declang-fixed/clang++
+        echo '        *enable-trivial-auto-var-init*) continue ;;' >> /tmp/declang-fixed/clang++
+        echo '        *debug-compression*) continue ;;' >> /tmp/declang-fixed/clang++
+        echo '        -gz*) continue ;;' >> /tmp/declang-fixed/clang++
+        echo '        *) args+=("$a") ;;' >> /tmp/declang-fixed/clang++
+        echo '    esac' >> /tmp/declang-fixed/clang++
+        echo 'done' >> /tmp/declang-fixed/clang++
+        echo 'args+=("-O2")' >> /tmp/declang-fixed/clang++
+        echo "exec \"$DECLANG_CLANGPP\" \"\${args[@]}\"" >> /tmp/declang-fixed/clang++
+        chmod +x /tmp/declang-fixed/clang++
+        
+        # Build
         make -C $KERNEL_SRC \
             M=$PWD/${{ inputs.module_dir }} \
-            CC="scripts/declang-wrapper.sh $DECLANG_CLANG" \
-            CXX="scripts/declang-wrapper-cpp.sh $DECLANG_CLANGPP" \
-            LD="scripts/declang-wrapper.sh $DECLANG_CLANG" \
+            CC="/tmp/declang-fixed/clang" \
+            CXX="/tmp/declang-fixed/clang++" \
+            LD="/tmp/declang-fixed/clang" \
             modules
         
         echo "=== Build completed ==="
 
-        # Output
+        # Output handling
         mkdir -p /github/workspace/out
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         
-        if [ -n "$KO_FILE" ]; then
+        if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
             TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-            cp "$KO_FILE" "/github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
-            echo "✅ Build successful"
+            OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
+            cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
+            echo "✅ Build successful: $OUTPUT_NAME"
+            
+            # Strip if possible
+            if command -v llvm-strip >/dev/null 2>&1; then
+                llvm-strip -d "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null || true
+            fi
+        else
+            echo "❌ ERROR: No .ko file found!"
+            exit 1
         fi
 
     - name: Upload artifact
