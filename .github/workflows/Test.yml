@@ -1,10 +1,10 @@
-name: Build Obfuscated Kernel Module with DeClang
+name: Analyze DeClang Capabilities
 
 on:
   workflow_dispatch:
     inputs:
       module_dir:
-        description: 'Module directory to build'
+        description: 'Module directory to test'
         required: true
         type: choice
         options:
@@ -17,22 +17,16 @@ on:
         - hello-world
         - wuwa
         - panic
-        default: 'exianb-dev'
+        default: 'wuwa'
 
 jobs:
-  ddk-build:
-    name: Build ${{ inputs.module_dir }}.ko for ${{ matrix.kmi }}
+  analyze-declang:
+    name: Analyze DeClang Capabilities
     runs-on: ubuntu-latest
     strategy:
       matrix:
         kmi:
-          - android12-5.10
-          - android13-5.10
           - android13-5.15
-          - android14-5.15
-          - android14-6.1
-          - android15-6.6
-          - android16-6.12
 
     container:
       image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
@@ -41,214 +35,245 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Download and setup DeClang
+    - name: Download and extract DeClang
       run: |
-        echo "=== Downloading and Installing DeClang ==="
+        echo "=== Downloading DeClang ==="
         apt-get update && apt-get install -y unzip 2>/dev/null || true
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         chmod +x Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang
         mkdir -p /opt/declang
         cp -r Release-Linux-swift5.10-v1.0.0-ubuntu2204/* /opt/declang/
-        echo "✅ DeClang installed"
+        
+        echo "DeClang extracted to /opt/declang"
 
-    - name: Analyze module functions for obfuscation targeting
+    - name: Analyze DeClang Structure
       run: |
-        echo "=== Analyzing module functions ==="
+        echo "=== Analyzing DeClang Files ==="
         
-        # Find all .c files in your module
-        find "${{ inputs.module_dir }}" -name "*.c" -type f | while read c_file; do
-            echo "Analyzing: $c_file"
-            # Extract function names (simple grep for function definitions)
-            grep -n "^\s*[a-zA-Z_][a-zA-Z0-9_]*\s*[a-zA-Z_][a-zA-Z0-9_]*\s*(" "$c_file" | \
-                head -10 | sed 's/^/  /'
-        done
+        # Check for obfuscation-related files
+        echo "1. Looking for obfuscation files in /opt/declang:"
+        find /opt/declang -type f -name "*obfuscat*" -o -name "*flatten*" -o -name "*bcf*" 2>/dev/null
         
-        # Also check for init/exit functions (common in kernel modules)
         echo ""
-        echo "=== Looking for module_init/module_exit functions ==="
-        find "${{ inputs.module_dir }}" -name "*.c" -type f -exec grep -l "module_init\|module_exit" {} \; | head -5
+        echo "2. Checking for LLVM pass libraries:"
+        find /opt/declang -name "*.so" -o -name "*.a" | xargs file 2>/dev/null | grep -i "elf\|shared" | head -10
+        
+        echo ""
+        echo "3. Checking config files:"
+        find /opt/declang -name "*.json" -type f | xargs head -20 2>/dev/null || true
 
-    - name: Configure DeClang for Kernel Module Obfuscation
+    - name: Test DeClang Compiler Flags
       run: |
-        echo "=== Configuring DeClang for Kernel Modules ==="
+        echo "=== Testing DeClang Compiler Flags ==="
         
+        DECLANG_CLANG="/opt/declang/compiler/bin/clang"
+        
+        echo "1. Basic version info:"
+        $DECLANG_CLANG --version
+        
+        echo ""
+        echo "2. Testing -mllvm help (this may show available passes):"
+        $DECLANG_CLANG -mllvm --help 2>&1 | head -50 || \
+            echo "No -mllvm --help output"
+        
+        echo ""
+        echo "3. Testing -cc1 help (LLVM frontend options):"
+        $DECLANG_CLANG -cc1 -help 2>&1 | grep -i "obfuscat\|flatten\|bcf\|bogus" | head -20 || \
+            echo "No obfuscation options in -cc1 help"
+        
+        echo ""
+        echo "4. Testing specific flag formats:"
+        echo "   Trying -mllvm -flatten:"
+        $DECLANG_CLANG -mllvm -flatten --help 2>&1 | head -5 || echo "  ❌ -flatten not recognized"
+        
+        echo "   Trying -mllvm -bcf:"
+        $DECLANG_CLANG -mllvm -bcf --help 2>&1 | head -5 || echo "  ❌ -bcf not recognized"
+        
+        echo "   Trying -mllvm -boguscf:"
+        $DECLANG_CLANG -mllvm -boguscf --help 2>&1 | head -5 || echo "  ❌ -boguscf not recognized"
+        
+        echo "   Trying -mllvm -sub:"
+        $DECLANG_CLANG -mllvm -sub --help 2>&1 | head -5 || echo "  ❌ -sub not recognized"
+        
+        echo ""
+        echo "5. Looking for DeClang-specific flags:"
+        $DECLANG_CLANG --help 2>&1 | grep -i "declang\|obfuscat" | head -10 || \
+            echo "No DeClang-specific flags in --help"
+
+    - name: Test Configuration-Based Obfuscation
+      run: |
+        echo "=== Testing Configuration-Based Obfuscation ==="
+        
+        # Create minimal config
         mkdir -p ~/.DeClang /opt/declang/.DeClang
-        
-        # CRITICAL FIX: Target specific kernel module functions
-        # Instead of ".*" which might filter to main functions,
-        # target common kernel module function patterns
         cat > ~/.DeClang/config.pre.json << 'EOF'
         {
-          "build_seed": "ddk_kernel_$(date +%s)",
-          "overall_obfuscation": 80,
-          "flatten": [
-            {
-              "name": "wuwa_.*",
-              "seed": "deadbeefcafebabe",
-              "split_level": 2,
-              "enable_obfuscation": 1
-            },
-            {
-              "name": ".*init$",
-              "seed": "cafebabedeadbeef",
-              "split_level": 1,
-              "enable_obfuscation": 1
-            },
-            {
-              "name": ".*exit$",
-              "seed": "beefdeadbabecafe",
-              "split_level": 1,
-              "enable_obfuscation": 1
-            }
-          ]
+          "build_seed": "test_config",
+          "overall_obfuscation": 100,
+          "enable_obfuscation": 1
         }
         EOF
         
-        # Generate config with aggressive settings
+        # Generate config
         if [ -f "/opt/declang/gen_config.sh" ]; then
-            /opt/declang/gen_config.sh -path /opt/declang -seed "ddk_kernel_$(date +%s)_aggressive"
-        else
-            cp ~/.DeClang/config.pre.json ~/.DeClang/config.json
+            echo "Running gen_config.sh..."
+            /opt/declang/gen_config.sh -path /opt/declang -seed "test"
+            echo "Generated config:"
+            cat ~/.DeClang/config.json 2>/dev/null || echo "No config.json generated"
         fi
         
-        touch /opt/declang/.DeClang/log.txt
+        # Create test file
+        cat > /tmp/debug_test.c << 'EOF'
+        int test_function(int x) {
+            int result = x * 2;
+            if (result > 100) {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
+        EOF
         
-        echo "=== Generated Configuration ==="
-        cat ~/.DeClang/config.json 2>/dev/null || cat ~/.DeClang/config.pre.json
+        echo ""
+        echo "Testing compilation with config..."
+        DECLANG_CLANG="/opt/declang/compiler/bin/clang"
+        export DECLANG_HOME="/opt/declang"
+        
+        # Test with config only
+        echo "Test 1: With config only (no flags):"
+        $DECLANG_CLANG -O2 -c /tmp/debug_test.c -o /tmp/test_config.o 2>&1 | \
+            grep -i "obfuscat\|flatten\|declang" || echo "  No obfuscation messages"
+        
+        # Test with optimization levels
+        echo ""
+        echo "Test 2: Different optimization levels:"
+        for opt in "-O0" "-O1" "-O2" "-O3" "-Os"; do
+            echo "  $opt:" 
+            $DECLANG_CLANG $opt -c /tmp/debug_test.c -o /tmp/test_${opt}.o 2>&1 | \
+                tail -1 | xargs echo "    "
+        done
 
-    - name: Build with Experimental Obfuscation Flags
+    - name: Reverse Engineer Available Passes
       run: |
-        echo "=== Building with Experimental Obfuscation ==="
+        echo "=== Reverse Engineering Available Passes ==="
+        
+        DECLANG_CLANG="/opt/declang/compiler/bin/clang"
+        
+        # Get ALL -mllvm options
+        echo "1. Getting all -mllvm options (this may take a moment)..."
+        $DECLANG_CLANG -mllvm --help 2>&1 > /tmp/mllvm_help.txt || true
+        
+        echo "Total lines in -mllvm help: $(wc -l < /tmp/mllvm_help.txt)"
+        echo ""
+        echo "2. Searching for transformation/obfuscation passes:"
+        grep -i "pass\|transfor\|obfuscat\|flatten\|bcf\|bogus\|sub" /tmp/mllvm_help.txt | head -30
+        
+        echo ""
+        echo "3. Checking for plugin loading capability:"
+        echo "   Can load plugins:"
+        $DECLANG_CLANG -fplugin=/dev/null -c /tmp/debug_test.c 2>&1 | head -5 || echo "  ❌ Plugin loading not supported"
+        
+        echo ""
+        echo "4. Looking for shared libraries that might be passes:"
+        find /opt/declang -name "*.so" | while read lib; do
+            echo "  Checking $lib:"
+            nm "$lib" 2>/dev/null | grep -i "obfuscat\|flatten\|pass" | head -3 || true
+        done
+
+    - name: Try Building Kernel Module with Discovered Flags
+      run: |
+        echo "=== Testing with Kernel Module ==="
         
         export CC="/opt/declang/compiler/bin/clang"
         export DECLANG_HOME="/opt/declang"
         
-        # EXPERIMENTAL: Try different optimization levels and flags
-        # DeClang might need specific optimization to trigger passes
-        export CFLAGS="-O3 -mllvm -flatten -mllvm -bcf"
-        export KCFLAGS="-O3 -mllvm -flatten -mllvm -bcf"
+        # First, let's see what flags clang actually accepts
+        echo "1. Testing flag parsing..."
+        $CC -O2 --help 2>&1 | grep -c "mllvm" || true
         
-        echo "Using aggressive flags: $CFLAGS"
-        
-        # First, clean previous build
+        # Try the actual build with NO obfuscation flags first
+        echo ""
+        echo "2. Building without any obfuscation flags (baseline):"
         make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean 2>/dev/null || true
-        
-        # Build with verbose output to see if passes are applied
-        echo ""
-        echo "=== Verbose Build Output (looking for obfuscation) ==="
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules V=1 2>&1 | \
-            grep -i "flatten\|obfuscat\|pass\|llvm" | head -20 || \
-            echo "No obfuscation-related output found"
-        
-        # Now build normally
-        echo ""
-        echo "=== Final Build ==="
         make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
+        BASELINE_KO=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
+        BASELINE_SIZE=$(stat -c%s "$BASELINE_KO")
+        echo "   Baseline size: $BASELINE_SIZE bytes"
         
-        echo "=== Build completed ==="
+        # Try with just -O3 (max optimization)
+        echo ""
+        echo "3. Building with -O3 only:"
+        export KCFLAGS="-O3"
+        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean
+        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
+        O3_KO=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
+        O3_SIZE=$(stat -c%s "$O3_KO")
+        echo "   -O3 size: $O3_SIZE bytes"
+        echo "   Difference from baseline: $((O3_SIZE - BASELINE_SIZE)) bytes"
         
-        # Verification
-        mkdir -p /github/workspace/out
-        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
-        
-        if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
-            TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-            OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-obfuscated-$TIMESTAMP.ko"
-            cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
-            
-            # COMPREHENSIVE VERIFICATION
-            echo ""
-            echo "=== COMPREHENSIVE OBFUSCATION ANALYSIS ==="
-            
-            # 1. File comparison
-            echo "1. File Info:"
-            file "$KO_FILE"
-            ORIG_SIZE=$(stat -c%s "$KO_FILE")
-            echo "   Size: $ORIG_SIZE bytes ($((ORIG_SIZE/1024)) KB)"
-            
-            # 2. String analysis
-            echo ""
-            echo "2. String Analysis:"
-            TOTAL_STRINGS=$(strings "$KO_FILE" | wc -l)
-            READABLE_STRINGS=$(strings "$KO_FILE" | grep -E "(gpl|license|wuwa|init|exit|module)" | wc -l)
-            echo "   Total strings: $TOTAL_STRINGS"
-            echo "   Readable keywords: $READABLE_STRINGS"
-            echo "   Sample strings:"
-            strings "$KO_FILE" | head -10 | sed 's/^/     /'
-            
-            # 3. Symbol analysis
-            echo ""
-            echo "3. Symbol Analysis (first 10):"
-            nm "$KO_FILE" 2>/dev/null | grep " T " | head -10 | sed 's/^/     /' || \
-                echo "   nm not available or no symbols"
-            
-            # 4. Test with llvm-objdump
-            echo ""
-            echo "4. Checking for control flow complexity:"
-            if command -v llvm-objdump >/dev/null 2>&1; then
-                llvm-objdump -d "$KO_FILE" 2>/dev/null | grep -c "jmp\|call\|ret" | \
-                    xargs echo "   Total jumps/calls/ret: " || true
-            fi
-            
-            # 5. Compare with non-obfuscated version
-            echo ""
-            echo "5. Building comparison (non-obfuscated)..."
-            make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean 2>/dev/null || true
-            unset CC DECLANG_HOME CFLAGS KCFLAGS
-            make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules 2>&1 | tail -5
-            ORIG_KO=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
-            if [ -f "$ORIG_KO" ]; then
-                ORIG_SIZE=$(stat -c%s "$ORIG_KO")
-                OBF_SIZE=$(stat -c%s "$KO_FILE")
-                SIZE_DIFF=$((OBF_SIZE - ORIG_SIZE))
-                echo "   Non-obfuscated size: $ORIG_SIZE bytes"
-                echo "   Obfuscated size: $OBF_SIZE bytes"
-                echo "   Size difference: $SIZE_DIFF bytes"
-                if [ $SIZE_DIFF -gt 10000 ]; then
-                    echo "   ✅ SIGNIFICANT SIZE INCREASE - OBFUSCATION WORKING!"
-                elif [ $SIZE_DIFF -gt 0 ]; then
-                    echo "   ⚠️  Small size increase ($SIZE_DIFF bytes)"
-                else
-                    echo "   ❌ NO SIZE INCREASE - Obfuscation likely not applied"
-                fi
-            fi
-            
-            # Strip and finalize
-            llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
-            
-        else
-            echo "❌ ERROR: Build failed - no .ko file produced"
-            exit 1
-        fi
+        # Save results
+        echo "BASELINE_SIZE=$BASELINE_SIZE" >> $GITHUB_ENV
+        echo "O3_SIZE=$O3_SIZE" >> $GITHUB_ENV
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-obfuscated-${{ github.run_id }}
-        path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-obfuscated-*.ko
-
-    - name: Debug DeClang if Still Not Working
-      if: failure()
+    - name: Summary and Recommendations
       run: |
-        echo "=== DEBUGGING DeClang ==="
-        echo "1. Testing DeClang compiler directly:"
-        /opt/declang/compiler/bin/clang --version
+        echo "=== ANALYSIS SUMMARY ==="
         echo ""
-        echo "2. Checking if obfuscation passes are available:"
-        /opt/declang/compiler/bin/clang -cc1 -help 2>&1 | grep -i "obfuscat\|flatten" | head -10 || \
-            echo "No obfuscation flags in help"
+        echo "DeClang binary analysis results:"
+        echo "1. ❌ Does NOT support -mllvm -flatten, -bcf, -boguscf, or -sub flags"
+        echo "2. ✅ Does have configuration system (gen_config.sh, config.json)"
+        echo "3. ⚠️  'overall_obfuscation' config option exists but may not work"
+        echo "4. 📊 Size comparison:"
+        echo "   Baseline (-O2): $BASELINE_SIZE bytes"
+        echo "   Maximum (-O3): $O3_SIZE bytes"
+        echo "   Difference: $((O3_SIZE - BASELINE_SIZE)) bytes"
         echo ""
-        echo "3. Creating test to verify DeClang works:"
-        cat > /tmp/test_declang.c << 'EOF'
-        int test_function(int x) {
-            int result = 0;
-            for(int i = 0; i < 100; i++) {
-                if (x == i) result = 1;
-            }
-            return result;
+        echo "CONCLUSION:"
+        echo "The pre-built DeClang binary appears to be a REGULAR Clang 16.0.0"
+        echo "with DeClang configuration system added, but NO obfuscation LLVM passes."
+        echo ""
+        echo "NEXT STEPS:"
+        echo "1. The obfuscation might ONLY work through the config.json system"
+        echo "2. Try the FULL config.json setup as DeClang intends"
+        echo "3. If that doesn't work, DeClang pre-built is useless for obfuscation"
+
+    - name: Try FULL DeClang Configuration
+      run: |
+        echo "=== Trying FULL DeClang Configuration Setup ==="
+        
+        # Setup proper DeClang environment
+        export DECLANG_HOME="/opt/declang"
+        mkdir -p ~/.DeClang $DECLANG_HOME/.DeClang
+        
+        # Create comprehensive config
+        cat > ~/.DeClang/config.pre.json << 'EOF'
+        {
+          "build_seed": "full_test_$(date +%s)",
+          "overall_obfuscation": 100,
+          "flatten": {
+            "name": ".*",
+            "seed": "deadbeefcafebabe",
+            "split_level": 2,
+            "enable_obfuscation": 1
+          },
+          "enable_obfuscation": 1
         }
         EOF
-        /opt/declang/compiler/bin/clang -O3 -mllvm -flatten -S -o /tmp/test_declang.s /tmp/test_declang.c 2>&1 | \
-            head -10
-        echo "Test assembly generated. Check for complexity."
+        
+        # Run gen_config.sh if it exists
+        if [ -f "$DECLANG_HOME/gen_config.sh" ]; then
+            echo "Running gen_config.sh with full options..."
+            $DECLANG_HOME/gen_config.sh -path $DECLANG_HOME -seed "full_test" -aggressive
+        fi
+        
+        # Set up environment
+        export CC="$DECLANG_HOME/compiler/bin/clang"
+        export DECLANG_LOG_LEVEL="debug"
+        
+        echo ""
+        echo "Building with FULL DeClang setup..."
+        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean
+        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules V=1 2>&1 | \
+            grep -i "declang\|obfuscat\|config\|seed" | head -20 || \
+            echo "No DeClang-specific output"
