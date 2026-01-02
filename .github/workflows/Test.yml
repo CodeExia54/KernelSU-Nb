@@ -106,13 +106,12 @@ jobs:
         echo "=== Generated config.json ==="
         cat $DECLANG_HOME/config.json
 
-    - name: Build kernel module with DeClang
+    - name: Build kernel module with DeClang (CLEAN VERSION)
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
         
         # Set DECLANG_HOME for obfuscation
         export DECLANG_HOME=~/.DeClang
-        echo "DECLANG_HOME: $DECLANG_HOME"
         
         # Path to DeClang compilers
         DECLANG_CLANG="$DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
@@ -121,12 +120,12 @@ jobs:
         echo "DeClang clang: $DECLANG_CLANG"
         echo "DeClang clang++: $DECLANG_CLANGPP"
         
-        # Create wrapper to handle problematic kernel flag
-        mkdir -p /tmp/declang-wrapper
+        # Create wrapper directory
+        mkdir -p /tmp/declang-clean
         
-        # Create clang wrapper - using HEREDOC without quotes to allow variable expansion
-        # Or better, use echo/cat to avoid YAML parsing issues
-        cat > /tmp/declang-wrapper/clang << "WRAPPER_EOF"
+        # Create clang wrapper WITHOUT HEREDOC - using cat with variable substitution
+        # First create the wrapper script content with a placeholder
+        cat > /tmp/declang-clean/clang.template << 'EOF'
 #!/bin/bash
 # Filter out problematic kernel flags
 CLEAN_ARGS=()
@@ -136,18 +135,15 @@ for arg in "$@"; do
     fi
     CLEAN_ARGS+=("$arg")
 done
-exec "$DECLANG_CLANG" "${CLEAN_ARGS[@]}"
-WRAPPER_EOF
+exec "__DECLANG_CLANG__" "${CLEAN_ARGS[@]}"
+EOF
         
-        # Now replace the placeholder with actual DeClang path
-        # We need to escape slashes for sed
-        DECLANG_CLANG_ESCAPED=$(echo "$DECLANG_CLANG" | sed 's/[\/&]/\\&/g')
-        sed -i "s/\$DECLANG_CLANG/$DECLANG_CLANG_ESCAPED/g" /tmp/declang-wrapper/clang
-        
-        chmod +x /tmp/declang-wrapper/clang
+        # Replace placeholder with actual path (using @ as delimiter to avoid path issues)
+        sed "s@__DECLANG_CLANG__@$DECLANG_CLANG@g" /tmp/declang-clean/clang.template > /tmp/declang-clean/clang
+        chmod +x /tmp/declang-clean/clang
         
         # Create clang++ wrapper
-        cat > /tmp/declang-wrapper/clang++ << "WRAPPER2_EOF"
+        cat > /tmp/declang-clean/clang++.template << 'EOF'
 #!/bin/bash
 # Filter out problematic kernel flags
 CLEAN_ARGS=()
@@ -157,19 +153,18 @@ for arg in "$@"; do
     fi
     CLEAN_ARGS+=("$arg")
 done
-exec "$DECLANG_CLANGPP" "${CLEAN_ARGS[@]}"
-WRAPPER2_EOF
+exec "__DECLANG_CLANGPP__" "${CLEAN_ARGS[@]}"
+EOF
         
-        DECLANG_CLANGPP_ESCAPED=$(echo "$DECLANG_CLANGPP" | sed 's/[\/&]/\\&/g')
-        sed -i "s/\$DECLANG_CLANGPP/$DECLANG_CLANGPP_ESCAPED/g" /tmp/declang-wrapper/clang++
-        chmod +x /tmp/declang-wrapper/clang++
+        sed "s@__DECLANG_CLANGPP__@$DECLANG_CLANGPP@g" /tmp/declang-clean/clang++.template > /tmp/declang-clean/clang++
+        chmod +x /tmp/declang-clean/clang++
         
         # Build with DeClang
         make -C $KERNEL_SRC \
             M=$PWD/${{ inputs.module_dir }} \
-            CC="/tmp/declang-wrapper/clang" \
-            CXX="/tmp/declang-wrapper/clang++" \
-            LD="/tmp/declang-wrapper/clang" \
+            CC="/tmp/declang-clean/clang" \
+            CXX="/tmp/declang-clean/clang++" \
+            LD="/tmp/declang-clean/clang" \
             modules
         
         echo "=== Build completed ==="
@@ -177,7 +172,7 @@ WRAPPER2_EOF
         # Create output directory
         mkdir -p /github/workspace/out
         
-        # Find the .ko file - use the actual module_dir from inputs
+        # Find the .ko file
         MODULE_DIR="${{ inputs.module_dir }}"
         KO_FILE=$(find "$MODULE_DIR" -name "*.ko" -type f | head -1)
         
