@@ -41,78 +41,78 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Download DeClang
+    - name: Download DeClang compilers
       run: |
         apt-get update && apt-get install -y wget unzip
+        
+        # Download DeClang
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        
+        # Extract
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        
+        # Verify what we have
+        echo "=== DeClang contents ==="
+        ls -la Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/
+        
+        # Make binaries executable
         chmod +x Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/*
 
-    - name: Build with filtered DeClang
+    - name: Build with DeClang compilers
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
         
+        # Set paths to DeClang compilers
         DECLANG_CLANG="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
         DECLANG_CLANGPP="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang++"
         
-        # Create wrapper that removes problematic kernel flag
-        mkdir -p /tmp/declang-filtered
+        echo "Using DeClang clang from: $DECLANG_CLANG"
+        echo "Using DeClang clang++ from: $DECLANG_CLANGPP"
         
-        # For clang
-        cat > /tmp/declang-filtered/clang << 'EOF'
-#!/bin/bash
-args=()
-for arg in "$@"; do
-    # Remove the problematic auto-var-init flag
-    [[ "$arg" == *"enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"* ]] && continue
-    args+=("$arg")
-done
-exec "CLANG_BIN" "${args[@]}"
-EOF
+        # FIX: Add KBUILD_CFLAGS_MODULE to suppress the unused command line argument error
+        # This only affects module compilation, not DDK internal code
+        export KBUILD_CFLAGS_MODULE="-Wno-error=unused-command-line-argument"
+        export CFLAGS_MODULE="-Wno-error=unused-command-line-argument"
         
-        sed -i "s|CLANG_BIN|$DECLANG_CLANG|g" /tmp/declang-filtered/clang
-        chmod +x /tmp/declang-filtered/clang
+        # Also add to regular CFLAGS as backup
+        export KBUILD_CFLAGS="-Wno-error=unused-command-line-argument"
         
-        # For clang++
-        cat > /tmp/declang-filtered/clang++ << 'EOF'
-#!/bin/bash
-args=()
-for arg in "$@"; do
-    [[ "$arg" == *"enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"* ]] && continue
-    args+=("$arg")
-done
-exec "CLANGPP_BIN" "${args[@]}"
-EOF
-        
-        sed -i "s|CLANGPP_BIN|$DECLANG_CLANGPP|g" /tmp/declang-filtered/clang++
-        chmod +x /tmp/declang-filtered/clang++
-        
-        # Build
+        # Build with only the compilers replaced
+        # All other tools (ar, nm, ld, strip, etc.) come from original toolchain
         make -C $KERNEL_SRC \
             M=$PWD/${{ inputs.module_dir }} \
-            CC="/tmp/declang-filtered/clang" \
-            CXX="/tmp/declang-filtered/clang++" \
-            LD="/tmp/declang-filtered/clang" \
+            CC="$DECLANG_CLANG" \
+            CXX="$DECLANG_CLANGPP" \
+            LD="$DECLANG_CLANG" \
+            HOSTCC="$DECLANG_CLANG" \
+            HOSTCXX="$DECLANG_CLANGPP" \
+            HOSTLD="$DECLANG_CLANG" \
             modules
         
         echo "=== Build completed ==="
-        
-        # Output handling (same as before)
+
+        # Create output directory
         mkdir -p /github/workspace/out
+        
+        # Find the first .ko file in the module directory
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         
+        TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+        OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
         if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
-            TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-            OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
             cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
-            echo "✅ Build successful: $OUTPUT_NAME"
-            llvm-strip -d "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null || true
+            echo "Copied: $KO_FILE -> /github/workspace/out/$OUTPUT_NAME"
+            echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+            llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
+            echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
         else
-            echo "❌ ERROR: No .ko file found!"
+            echo "ERROR: No .ko file found in ${{ inputs.module_dir }}/!"
+            echo "Available files in ${{ inputs.module_dir }}/:"
+            ls -la "${{ inputs.module_dir }}/" || echo "Directory doesn't exist"
             exit 1
         fi
 
-    - name: Upload artifact
+    - name: Upload ${{ inputs.module_dir }}.ko artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ github.run_id }}
