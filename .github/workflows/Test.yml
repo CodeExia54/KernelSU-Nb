@@ -1,4 +1,3 @@
-# Save as: .github/workflows/build-with-declang.yml
 name: Build with DeClang Obfuscation
 
 on:
