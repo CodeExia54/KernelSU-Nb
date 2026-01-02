@@ -1,4 +1,5 @@
-name: Build Obfuscated Kernel Module with DeClang
+# Save as: .github/workflows/build-with-declang.yml
+name: Build with DeClang Obfuscation
 
 on:
   workflow_dispatch:
@@ -20,13 +21,13 @@ on:
         default: 'hello-world'
 
 jobs:
-  build-obfuscated:
-    name: Build ${{ inputs.module_dir }}.ko
+  ddk-build:
+    name: Build ${{ inputs.module_dir }}.ko for ${{ matrix.kmi }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
         kmi:
-          - android14-6.1  # Test with one first
+          - android14-6.1  # Start with one
 
     container:
       image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
@@ -35,139 +36,72 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Install tools
+    - name: Setup DeClang
+      id: setup
       run: |
-        apt-get update
-        apt-get install -y wget unzip
+        echo "=== Setting up DeClang ==="
         
-    - name: Download and prepare DeClang
-      id: declang
-      run: |
-        echo "=== DOWNLOAD DECLANG ==="
+        # Download
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         
-        echo "=== EXTRACT ==="
+        # Extract
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         
-        echo "=== FIND CLANG ==="
-        # Search recursively
-        find . -type f -name "clang" | while read f; do
-            echo "Candidate: $f"
-            file "$f" 2>/dev/null || true
-        done
+        # Find clang
+        CLANG_PATH=$(find . -type f -name "clang" | head -1)
+        echo "Clang path: $CLANG_PATH"
         
-        # Get the most likely clang
-        CLANG_PATH=$(find . -type f -path "*/bin/clang" | head -1)
-        [ -z "$CLANG_PATH" ] && CLANG_PATH=$(find . -type f -name "clang" | head -1)
-        
-        if [ ! -f "$CLANG_PATH" ]; then
-            echo "ERROR: No clang found"
-            find . -type f | head -30
-            exit 1
-        fi
-        
-        echo "Using clang: $CLANG_PATH"
+        # Make executable
         chmod +x "$CLANG_PATH"
         
-        # Get absolute path
-        CLANG_PATH=$(realpath "$CLANG_PATH")
-        echo "CLANG_PATH=$CLANG_PATH" >> $GITHUB_OUTPUT
-        
-        # Test
-        echo "DeClang version:"
-        "$CLANG_PATH" --version || echo "May need QEMU"
-        
-    - name: Create PATH hijack wrapper
-      run: |
-        echo "=== HIJACKING COMPILER VIA PATH ==="
-        
-        DECLANG_CLANG="${{ steps.declang.outputs.CLANG_PATH }}"
-        
-        # Create a fake bin directory that will be FIRST in PATH
-        mkdir -p /github/workspace/fake_bin
-        
-        # Create wrapper scripts for ALL compiler tools
-        cat > /github/workspace/fake_bin/clang << 'EOF'
-#!/bin/bash
-# This intercepts calls to 'clang'
-DECLANG_CLANG="${{ steps.declang.outputs.CLANG_PATH }}"
+        # Save path
+        echo "DECLANG_PATH=$(realpath "$CLANG_PATH")" >> $GITHUB_OUTPUT
 
-# Obfuscation flags
-OBF_FLAGS="-mllvm -fla -mllvm -sub"
-
-# Check if we should skip obfuscation for certain cases
-for arg in "$@"; do
-    case "$arg" in
-        *--version*|*-v*|*--help*)
-            # No obfuscation for version/help queries
-            exec "$DECLANG_CLANG" "$@"
-            ;;
-    esac
-done
-
-# Regular compilation with obfuscation
-exec "$DECLANG_CLANG" "$@" $OBF_FLAGS
-EOF
-        
-        # Create wrapper for Android cross-compiler
-        cat > /github/workspace/fake_bin/aarch64-linux-android-clang << 'EOF'
-#!/bin/bash
-# This intercepts cross-compiler calls
-DECLANG_CLANG="${{ steps.declang.outputs.CLANG_PATH }}"
-OBF_FLAGS="-mllvm -fla -mllvm -sub"
-exec "$DECLANG_CLANG" "$@" $OBF_FLAGS --target=aarch64-linux-android
-EOF
-        
-        # Create symlinks for other compiler tools
-        for tool in clang++ clang-cl clang-cpp; do
-            ln -sf clang /github/workspace/fake_bin/$tool
-        done
-        
-        # Make all wrappers executable
-        chmod +x /github/workspace/fake_bin/*
-        
-        echo "Created wrappers in /github/workspace/fake_bin/"
-        ls -la /github/workspace/fake_bin/
-        
-    - name: Build with hijacked PATH
+    - name: Build ${{ inputs.module_dir }}.ko
       env:
-        # Put our fake_bin FIRST in PATH
-        PATH: /github/workspace/fake_bin:$PATH
+        # Override compiler via make command
+        DECLANG_PATH: ${{ steps.setup.outputs.DECLANG_PATH }}
       run: |
-        echo "=== BUILDING WITH HIJACKED COMPILER ==="
-        echo "PATH: $PATH"
-        echo "Which clang: $(which clang)"
+        echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
+
+        # Create wrapper script on the fly
+        cat > /tmp/declang_wrapper << EOF
+#!/bin/bash
+$DECLANG_PATH "\$@" -mllvm -fla -mllvm -sub
+EOF
+        chmod +x /tmp/declang_wrapper
+
+        # Build with custom compiler
+        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
+            CC="/tmp/declang_wrapper" \
+            HOSTCC="/tmp/declang_wrapper" \
+            V=1 2>&1 | tail -50
         
-        # Test that our wrapper is being used
-        echo "--- Compiler test ---"
-        clang --version
+        echo "=== Build completed ==="
+
+        # Create output directory
+        mkdir -p /github/workspace/out
         
-        # Build module
-        cd "${{ inputs.module_dir }}"
+        # Find the first .ko file in the module directory
+        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         
-        echo "--- Building module ---"
-        make -C $KERNEL_SRC M=$(pwd) modules V=1 2>&1 | grep -i "clang\|error\|warning" | head -30
-        
-        # Check result
-        KO_FILE=$(find . -name "*.ko" -type f | head -1)
-        if [ -f "$KO_FILE" ]; then
-            echo "✓ SUCCESS: $KO_FILE"
-            
-            # Copy to output
-            mkdir -p /github/workspace/out
-            cp "$KO_FILE" "/github/workspace/out/obfuscated-${{ inputs.module_dir }}.ko"
-            
-            # Verify it's ARM64
-            file "$KO_FILE"
+        TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+        OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
+        if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
+            cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
+            echo "Copied: $KO_FILE -> /github/workspace/out/$OUTPUT_NAME"
+            echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+            llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
+            echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
         else
-            echo "✗ FAILED: No .ko file"
-            echo "Trying without V=1 for more info..."
-            make -C $KERNEL_SRC M=$(pwd) modules 2>&1 | tail -50
+            echo "ERROR: No .ko file found in ${{ inputs.module_dir }}/!"
+            echo "Available files in ${{ inputs.module_dir }}/:"
+            ls -la "${{ inputs.module_dir }}/" || echo "Directory doesn't exist"
             exit 1
         fi
-        
-    - name: Upload artifact
+
+    - name: Upload ${{ inputs.module_dir }}.ko artifact
       uses: actions/upload-artifact@v4
       with:
-        name: obfuscated-${{ inputs.module_dir }}-${{ matrix.kmi }}
-        path: /github/workspace/out/*.ko
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ github.run_id }}
+        path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-*.ko
