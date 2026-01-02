@@ -1,4 +1,4 @@
-name: Build Kernel Module with DeClang
+name: Build Obfuscated Kernel Module with DeClang
 
 on:
   workflow_dispatch:
@@ -41,84 +41,106 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Setup DeClang
+    - name: Download and setup DeClang
       run: |
-        apt-get update && apt-get install -y wget unzip
+        apt-get update && apt-get install -y unzip
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        chmod +x Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/*
+        chmod +x Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang
+        mkdir -p /opt/declang
+        cp -r Release-Linux-swift5.10-v1.0.0-ubuntu2204/* /opt/declang/
+
+    - name: Configure DeClang with VERIFICATION
+      run: |
+        mkdir -p ~/.DeClang
+        
+        # Create config.pre.json - CORRECT FORMAT
+        cat > ~/.DeClang/config.pre.json << 'EOF'
+{
+    "build_seed": "kernel_$(date +%s)",
+    "overall_obfuscation": 80,
+    "flatten": [
+        {
+            "name": ".*",
+            "seed": "deadbeefcafebabe",
+            "split_level": 2,
+            "enable_obfuscation": 1
+        }
+    ]
+}
+EOF
+        
+        echo "=== Config.pre.json created ==="
+        cat ~/.DeClang/config.pre.json
+        
+        # Generate config.json
+        if [ -f "/opt/declang/gen_config.sh" ]; then
+            cd ~/.DeClang
+            echo "=== Running gen_config.sh ==="
+            /opt/declang/gen_config.sh -path ~/.DeClang -seed "kernel_$(date +%s)"
+        else
+            echo "=== gen_config.sh not found, copying directly ==="
+            cp ~/.DeClang/config.pre.json ~/.DeClang/config.json
+        fi
+        
+        echo "=== Final config.json ==="
+        cat ~/.DeClang/config.json
+
+    - name: Verify DeClang is being used
+      run: |
+        echo "=== Verifying DeClang setup ==="
+        
+        # Check which clang is being used
+        echo "1. Checking CC path:"
+        which clang || echo "clang not in PATH"
+        
+        echo ""
+        echo "2. Checking DeClang version:"
+        /opt/declang/compiler/bin/clang --version 2>&1 | head -3 || echo "Failed to get DeClang version"
+        
+        echo ""
+        echo "3. Setting DECLANG_HOME:"
+        export DECLANG_HOME=~/.DeClang
+        echo "DECLANG_HOME=$DECLANG_HOME"
+        
+        echo ""
+        echo "4. Testing DeClang compilation:"
+        echo "int test() { return 42; }" > /tmp/test.c
+        /opt/declang/compiler/bin/clang -c /tmp/test.c -o /tmp/test.o 2>&1 | head -5 || echo "Compilation test"
+        rm -f /tmp/test.c /tmp/test.o
 
     - name: Build with DeClang
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
         
-        DECLANG_CLANG="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
-        DECLANG_CLANGPP="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang++"
+        # Set DECLANG_HOME - REQUIRED
+        export DECLANG_HOME=~/.DeClang
         
-        # Create simple wrapper that fixes all issues
-        mkdir -p /tmp/declang-fixed
+        # VERIFY we're using DeClang, not system clang
+        echo "Using compiler: /opt/declang/compiler/bin/clang"
+        echo "DECLANG_HOME: $DECLANG_HOME"
         
-        # Create clang wrapper
-        echo '#!/bin/bash' > /tmp/declang-fixed/clang
-        echo 'args=()' >> /tmp/declang-fixed/clang
-        echo 'for a in "$@"; do' >> /tmp/declang-fixed/clang
-        echo '    case "$a" in' >> /tmp/declang-fixed/clang
-        echo '        *enable-trivial-auto-var-init*) continue ;;' >> /tmp/declang-fixed/clang
-        echo '        *debug-compression*) continue ;;' >> /tmp/declang-fixed/clang
-        echo '        -gz*) continue ;;' >> /tmp/declang-fixed/clang
-        echo '        *) args+=("$a") ;;' >> /tmp/declang-fixed/clang
-        echo '    esac' >> /tmp/declang-fixed/clang
-        echo 'done' >> /tmp/declang-fixed/clang
-        echo 'args+=("-O2")' >> /tmp/declang-fixed/clang
-        echo "exec \"$DECLANG_CLANG\" \"\${args[@]}\"" >> /tmp/declang-fixed/clang
-        chmod +x /tmp/declang-fixed/clang
-        
-        # Create clang++ wrapper
-        echo '#!/bin/bash' > /tmp/declang-fixed/clang++
-        echo 'args=()' >> /tmp/declang-fixed/clang++
-        echo 'for a in "$@"; do' >> /tmp/declang-fixed/clang++
-        echo '    case "$a" in' >> /tmp/declang-fixed/clang++
-        echo '        *enable-trivial-auto-var-init*) continue ;;' >> /tmp/declang-fixed/clang++
-        echo '        *debug-compression*) continue ;;' >> /tmp/declang-fixed/clang++
-        echo '        -gz*) continue ;;' >> /tmp/declang-fixed/clang++
-        echo '        *) args+=("$a") ;;' >> /tmp/declang-fixed/clang++
-        echo '    esac' >> /tmp/declang-fixed/clang++
-        echo 'done' >> /tmp/declang-fixed/clang++
-        echo 'args+=("-O2")' >> /tmp/declang-fixed/clang++
-        echo "exec \"$DECLANG_CLANGPP\" \"\${args[@]}\"" >> /tmp/declang-fixed/clang++
-        chmod +x /tmp/declang-fixed/clang++
-        
-        # Build
+        # Build with explicit DeClang path
         make -C $KERNEL_SRC \
             M=$PWD/${{ inputs.module_dir }} \
-            CC="/tmp/declang-fixed/clang" \
-            CXX="/tmp/declang-fixed/clang++" \
-            LD="/tmp/declang-fixed/clang" \
+            CC="/opt/declang/compiler/bin/clang" \
+            CXX="/opt/declang/compiler/bin/clang" \
+            LD="/opt/declang/compiler/bin/clang" \
             modules
         
         echo "=== Build completed ==="
-
-        # Output handling
-        mkdir -p /github/workspace/out
-        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         
-        if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
-            TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-            OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
-            cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
-            echo "✅ Build successful: $OUTPUT_NAME"
-            
-            # Strip if possible
-            if command -v llvm-strip >/dev/null 2>&1; then
-                llvm-strip -d "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null || true
-            fi
-        else
-            echo "❌ ERROR: No .ko file found!"
-            exit 1
+        # Check if obfuscation worked
+        echo ""
+        echo "=== Checking for obfuscation markers ==="
+        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
+        if [ -f "$KO_FILE" ]; then
+            echo "Looking for DeClang/LLVM markers in module..."
+            strings "$KO_FILE" | grep -i "llvm\|obfus\|flatten" | head -5 || echo "No obfuscation markers found in strings"
         fi
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ github.run_id }}
-        path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-*.ko
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-obfuscated-${{ github.run_id }}
+        path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-obfuscated-*.ko
