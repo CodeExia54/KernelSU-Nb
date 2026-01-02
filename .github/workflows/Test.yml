@@ -1,279 +1,109 @@
-name: Analyze DeClang Capabilities
+name: Check DeClang Actual Capabilities
 
 on:
-  workflow_dispatch:
-    inputs:
-      module_dir:
-        description: 'Module directory to test'
-        required: true
-        type: choice
-        options:
-        - exianb-dev
-        - exianb
-        - ovo
-        - prctl-fd
-        - prctl-hook
-        - offset
-        - hello-world
-        - wuwa
-        - panic
-        default: 'wuwa'
+  workflow_dispatch
 
 jobs:
-  analyze-declang:
-    name: Analyze DeClang Capabilities
+  check-declang:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        kmi:
-          - android13-5.15
-
     container:
-      image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
+      image: ghcr.io/ylarod/ddk:android13-5.15
 
     steps:
-    - name: Checkout source code
-      uses: actions/checkout@v4
-
     - name: Download and extract DeClang
       run: |
-        echo "=== Downloading DeClang ==="
-        apt-get update && apt-get install -y unzip 2>/dev/null || true
+        apt-get update && apt-get install -y unzip wget 2>/dev/null || true
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         chmod +x Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang
-        mkdir -p /opt/declang
-        cp -r Release-Linux-swift5.10-v1.0.0-ubuntu2204/* /opt/declang/
-        
-        echo "DeClang extracted to /opt/declang"
 
-    - name: Analyze DeClang Structure
+    - name: Check ALL Help Outputs
       run: |
-        echo "=== Analyzing DeClang Files ==="
+        echo "=== COMPREHENSIVE HELP CHECK ==="
+        CLANG="./Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
         
-        # Check for obfuscation-related files
-        echo "1. Looking for obfuscation files in /opt/declang:"
-        find /opt/declang -type f -name "*obfuscat*" -o -name "*flatten*" -o -name "*bcf*" 2>/dev/null
-        
-        echo ""
-        echo "2. Checking for LLVM pass libraries:"
-        find /opt/declang -name "*.so" -o -name "*.a" | xargs file 2>/dev/null | grep -i "elf\|shared" | head -10
+        echo "1. Basic --help:"
+        $CLANG --help 2>&1 | grep -i "obfuscat\|flatten\|declang\|mllvm" | head -20
         
         echo ""
-        echo "3. Checking config files:"
-        find /opt/declang -name "*.json" -type f | xargs head -20 2>/dev/null || true
+        echo "2. -cc1 --help (LLVM frontend):"
+        $CLANG -cc1 --help 2>&1 | grep -i "obfuscat\|flatten\|pass" | head -20
+        
+        echo ""
+        echo "3. -mllvm --help (ALL options):"
+        $CLANG -mllvm --help 2>&1 > /tmp/mllvm_full.txt
+        echo "Total -mllvm options: $(grep -c '^  -' /tmp/mllvm_full.txt)"
+        echo "First 50 options:"
+        head -100 /tmp/mllvm_full.txt
+        
+        echo ""
+        echo "4. Searching for obfuscation in ALL help:"
+        $CLANG --help 2>&1 | grep -B2 -A2 "mllvm" || echo "No mllvm in main help"
+        
+        echo ""
+        echo "5. Check environment variables:"
+        echo "Trying with DECLANG_HOME set:"
+        export DECLANG_HOME=$(pwd)/Release-Linux-swift5.10-v1.0.0-ubuntu2204
+        $CLANG --help 2>&1 | grep -i "declang" | head -5 || echo "No DeClang-specific output"
 
-    - name: Test DeClang Compiler Flags
+    - name: Check What Flags Are Actually Accepted
       run: |
-        echo "=== Testing DeClang Compiler Flags ==="
-        
-        DECLANG_CLANG="/opt/declang/compiler/bin/clang"
-        
-        echo "1. Basic version info:"
-        $DECLANG_CLANG --version
-        
-        echo ""
-        echo "2. Testing -mllvm help (this may show available passes):"
-        $DECLANG_CLANG -mllvm --help 2>&1 | head -50 || \
-            echo "No -mllvm --help output"
-        
-        echo ""
-        echo "3. Testing -cc1 help (LLVM frontend options):"
-        $DECLANG_CLANG -cc1 -help 2>&1 | grep -i "obfuscat\|flatten\|bcf\|bogus" | head -20 || \
-            echo "No obfuscation options in -cc1 help"
-        
-        echo ""
-        echo "4. Testing specific flag formats:"
-        echo "   Trying -mllvm -flatten:"
-        $DECLANG_CLANG -mllvm -flatten --help 2>&1 | head -5 || echo "  ❌ -flatten not recognized"
-        
-        echo "   Trying -mllvm -bcf:"
-        $DECLANG_CLANG -mllvm -bcf --help 2>&1 | head -5 || echo "  ❌ -bcf not recognized"
-        
-        echo "   Trying -mllvm -boguscf:"
-        $DECLANG_CLANG -mllvm -boguscf --help 2>&1 | head -5 || echo "  ❌ -boguscf not recognized"
-        
-        echo "   Trying -mllvm -sub:"
-        $DECLANG_CLANG -mllvm -sub --help 2>&1 | head -5 || echo "  ❌ -sub not recognized"
-        
-        echo ""
-        echo "5. Looking for DeClang-specific flags:"
-        $DECLANG_CLANG --help 2>&1 | grep -i "declang\|obfuscat" | head -10 || \
-            echo "No DeClang-specific flags in --help"
-
-    - name: Test Configuration-Based Obfuscation
-      run: |
-        echo "=== Testing Configuration-Based Obfuscation ==="
-        
-        # Create minimal config
-        mkdir -p ~/.DeClang /opt/declang/.DeClang
-        cat > ~/.DeClang/config.pre.json << 'EOF'
-        {
-          "build_seed": "test_config",
-          "overall_obfuscation": 100,
-          "enable_obfuscation": 1
-        }
-        EOF
-        
-        # Generate config
-        if [ -f "/opt/declang/gen_config.sh" ]; then
-            echo "Running gen_config.sh..."
-            /opt/declang/gen_config.sh -path /opt/declang -seed "test"
-            echo "Generated config:"
-            cat ~/.DeClang/config.json 2>/dev/null || echo "No config.json generated"
-        fi
+        echo "=== TESTING ACTUAL FLAG ACCEPTANCE ==="
+        CLANG="./Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
         
         # Create test file
-        cat > /tmp/debug_test.c << 'EOF'
-        int test_function(int x) {
-            int result = x * 2;
-            if (result > 100) {
-                return 1;
-            } else {
-                return 0;
-            }
-        }
+        cat > /tmp/test.c << 'EOF'
+        int main() { return 0; }
         EOF
         
-        echo ""
-        echo "Testing compilation with config..."
-        DECLANG_CLANG="/opt/declang/compiler/bin/clang"
-        export DECLANG_HOME="/opt/declang"
+        echo "Testing which flags don't cause errors:"
         
-        # Test with config only
-        echo "Test 1: With config only (no flags):"
-        $DECLANG_CLANG -O2 -c /tmp/debug_test.c -o /tmp/test_config.o 2>&1 | \
-            grep -i "obfuscat\|flatten\|declang" || echo "  No obfuscation messages"
+        # Test common obfuscation flag patterns
+        FLAGS=(
+            "-mllvm -flatten"
+            "-mllvm -bcf" 
+            "-mllvm -boguscf"
+            "-mllvm -sub"
+            "-mllvm -obfuscate"
+            "-mllvm -irobf"
+            "-mllvm --irobf-cff"
+            "-mllvm --irobf-bcf"
+            "-mllvm --irobf-cse"
+            "-fobfuscate"
+            "-fllvm-obfuscate"
+            "-Xclang -load -Xclang *Obfuscation*"
+        )
         
-        # Test with optimization levels
-        echo ""
-        echo "Test 2: Different optimization levels:"
-        for opt in "-O0" "-O1" "-O2" "-O3" "-Os"; do
-            echo "  $opt:" 
-            $DECLANG_CLANG $opt -c /tmp/debug_test.c -o /tmp/test_${opt}.o 2>&1 | \
-                tail -1 | xargs echo "    "
+        for flag in "${FLAGS[@]}"; do
+            echo -n "Testing $flag: "
+            $CLANG $flag -c /tmp/test.c -o /tmp/test.o 2>&1 | grep -q "error\|unknown\|unrecognized" && \
+                echo "❌ REJECTED" || echo "✅ ACCEPTED (or different error)"
         done
 
-    - name: Reverse Engineer Available Passes
+    - name: Check gen_config.sh Output
       run: |
-        echo "=== Reverse Engineering Available Passes ==="
+        echo "=== ANALYZING gen_config.sh ==="
         
-        DECLANG_CLANG="/opt/declang/compiler/bin/clang"
-        
-        # Get ALL -mllvm options
-        echo "1. Getting all -mllvm options (this may take a moment)..."
-        $DECLANG_CLANG -mllvm --help 2>&1 > /tmp/mllvm_help.txt || true
-        
-        echo "Total lines in -mllvm help: $(wc -l < /tmp/mllvm_help.txt)"
-        echo ""
-        echo "2. Searching for transformation/obfuscation passes:"
-        grep -i "pass\|transfor\|obfuscat\|flatten\|bcf\|bogus\|sub" /tmp/mllvm_help.txt | head -30
-        
-        echo ""
-        echo "3. Checking for plugin loading capability:"
-        echo "   Can load plugins:"
-        $DECLANG_CLANG -fplugin=/dev/null -c /tmp/debug_test.c 2>&1 | head -5 || echo "  ❌ Plugin loading not supported"
-        
-        echo ""
-        echo "4. Looking for shared libraries that might be passes:"
-        find /opt/declang -name "*.so" | while read lib; do
-            echo "  Checking $lib:"
-            nm "$lib" 2>/dev/null | grep -i "obfuscat\|flatten\|pass" | head -3 || true
-        done
-
-    - name: Try Building Kernel Module with Discovered Flags
-      run: |
-        echo "=== Testing with Kernel Module ==="
-        
-        export CC="/opt/declang/compiler/bin/clang"
-        export DECLANG_HOME="/opt/declang"
-        
-        # First, let's see what flags clang actually accepts
-        echo "1. Testing flag parsing..."
-        $CC -O2 --help 2>&1 | grep -c "mllvm" || true
-        
-        # Try the actual build with NO obfuscation flags first
-        echo ""
-        echo "2. Building without any obfuscation flags (baseline):"
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean 2>/dev/null || true
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
-        BASELINE_KO=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
-        BASELINE_SIZE=$(stat -c%s "$BASELINE_KO")
-        echo "   Baseline size: $BASELINE_SIZE bytes"
-        
-        # Try with just -O3 (max optimization)
-        echo ""
-        echo "3. Building with -O3 only:"
-        export KCFLAGS="-O3"
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
-        O3_KO=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
-        O3_SIZE=$(stat -c%s "$O3_KO")
-        echo "   -O3 size: $O3_SIZE bytes"
-        echo "   Difference from baseline: $((O3_SIZE - BASELINE_SIZE)) bytes"
-        
-        # Save results
-        echo "BASELINE_SIZE=$BASELINE_SIZE" >> $GITHUB_ENV
-        echo "O3_SIZE=$O3_SIZE" >> $GITHUB_ENV
-
-    - name: Summary and Recommendations
-      run: |
-        echo "=== ANALYSIS SUMMARY ==="
-        echo ""
-        echo "DeClang binary analysis results:"
-        echo "1. ❌ Does NOT support -mllvm -flatten, -bcf, -boguscf, or -sub flags"
-        echo "2. ✅ Does have configuration system (gen_config.sh, config.json)"
-        echo "3. ⚠️  'overall_obfuscation' config option exists but may not work"
-        echo "4. 📊 Size comparison:"
-        echo "   Baseline (-O2): $BASELINE_SIZE bytes"
-        echo "   Maximum (-O3): $O3_SIZE bytes"
-        echo "   Difference: $((O3_SIZE - BASELINE_SIZE)) bytes"
-        echo ""
-        echo "CONCLUSION:"
-        echo "The pre-built DeClang binary appears to be a REGULAR Clang 16.0.0"
-        echo "with DeClang configuration system added, but NO obfuscation LLVM passes."
-        echo ""
-        echo "NEXT STEPS:"
-        echo "1. The obfuscation might ONLY work through the config.json system"
-        echo "2. Try the FULL config.json setup as DeClang intends"
-        echo "3. If that doesn't work, DeClang pre-built is useless for obfuscation"
-
-    - name: Try FULL DeClang Configuration
-      run: |
-        echo "=== Trying FULL DeClang Configuration Setup ==="
-        
-        # Setup proper DeClang environment
-        export DECLANG_HOME="/opt/declang"
-        mkdir -p ~/.DeClang $DECLANG_HOME/.DeClang
-        
-        # Create comprehensive config
-        cat > ~/.DeClang/config.pre.json << 'EOF'
-        {
-          "build_seed": "full_test_$(date +%s)",
-          "overall_obfuscation": 100,
-          "flatten": {
-            "name": ".*",
-            "seed": "deadbeefcafebabe",
-            "split_level": 2,
-            "enable_obfuscation": 1
-          },
-          "enable_obfuscation": 1
-        }
-        EOF
-        
-        # Run gen_config.sh if it exists
-        if [ -f "$DECLANG_HOME/gen_config.sh" ]; then
-            echo "Running gen_config.sh with full options..."
-            $DECLANG_HOME/gen_config.sh -path $DECLANG_HOME -seed "full_test" -aggressive
+        if [ -f "./Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config.sh" ]; then
+            echo "gen_config.sh found. Checking what it generates:"
+            
+            mkdir -p ~/.DeClang
+            ./Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config.sh -path ./Release-Linux-swift5.10-v1.0.0-ubuntu2204 -seed "test123"
+            
+            echo "Generated config:"
+            cat ~/.DeClang/config.json 2>/dev/null || \
+                find ~/.DeClang -name "*.json" -type f | xargs cat 2>/dev/null || \
+                echo "No config generated"
         fi
+
+    - name: Look for Hidden Options
+      run: |
+        echo "=== SEARCHING FOR HIDDEN OPTIONS ==="
         
-        # Set up environment
-        export CC="$DECLANG_HOME/compiler/bin/clang"
-        export DECLANG_LOG_LEVEL="debug"
+        # Search in all files
+        find ./Release-Linux-swift5.10-v1.0.0-ubuntu2204 -type f \( -name "*.txt" -o -name "*.md" -o -name "*.rst" -o -name "*.help" \) | \
+            xargs grep -l "obfuscat\|flatten\|bcf" 2>/dev/null || echo "No documentation files found"
         
         echo ""
-        echo "Building with FULL DeClang setup..."
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules V=1 2>&1 | \
-            grep -i "declang\|obfuscat\|config\|seed" | head -20 || \
-            echo "No DeClang-specific output"
+        echo "Checking for plugin .so files:"
+        find ./Release-Linux-swift5.10-v1.0.0-ubuntu2204 -name "*.so" -type f | head -10
