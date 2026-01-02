@@ -57,10 +57,10 @@ jobs:
         # Move the extracted folder to ~/.DeClang as per docs
         mv Release-Linux-swift5.10-v1.0.0-ubuntu2204 ~/.DeClang/
         
-        # Create config.pre.json as per documentation
+        # Create config.pre.json - FIXED: Use literal block scalar to avoid $ issues
         cat > ~/.DeClang/config.pre.json << 'EOF'
 {
-  "build_seed": "kernel_module_seed_$(date +%s)",
+  "build_seed": "kernel_module_seed",
   "overall_obfuscation": 60,
   "flatten": [
     {
@@ -73,17 +73,20 @@ jobs:
 }
 EOF
         
+        # Generate a timestamp for the seed
+        TIMESTAMP=$(date +%s)
+        
         # Check if gen_config.sh exists and run it
         if [ -f ~/.DeClang/Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config.sh ]; then
             echo "Running DeClang's gen_config.sh..."
             cd ~/.DeClang/Release-Linux-swift5.10-v1.0.0-ubuntu2204
-            ./gen_config.sh -path ~/.DeClang -seed "kernel_seed_$(date +%s)"
+            ./gen_config.sh -path ~/.DeClang -seed "kernel_seed_$TIMESTAMP"
         else
-            # Create config.json manually if gen_config.sh doesn't exist
+            # Create config.json manually with timestamp
             echo "Creating config.json manually..."
-            cat > ~/.DeClang/config.json << 'EOF'
+            cat > ~/.DeClang/config.json << EOF
 {
-  "build_seed": "kernel_module_seed_$(date +%s)",
+  "build_seed": "kernel_seed_$TIMESTAMP",
   "overall_obfuscation": 60,
   "flatten": [
     {
@@ -105,9 +108,6 @@ EOF
         echo "=== DeClang setup complete ==="
         echo "Contents of ~/.DeClang/:"
         ls -la ~/.DeClang/
-        echo ""
-        echo "Configuration:"
-        cat ~/.DeClang/config.json 2>/dev/null || cat ~/.DeClang/config.pre.json
 
     - name: Build with DeClang obfuscation
       run: |
@@ -122,25 +122,25 @@ EOF
         
         echo "DeClang clang: $DECLANG_CLANG"
         echo "DeClang clang++: $DECLANG_CLANGPP"
-        echo "DECLANG_HOME: $DECLANG_HOME"
-        
-        # Verify DeClang can run
-        echo "=== Testing DeClang ==="
-        "$DECLANG_CLANG" --version 2>&1 | head -3 || echo "Failed to get version"
         
         # Create simple wrapper to handle the error flag
         mkdir -p /tmp/declang-wrapper
         
-        cat > /tmp/declang-wrapper/clang << EOF
+        cat > /tmp/declang-wrapper/clang << 'EOF'
 #!/bin/bash
 # Simple wrapper that adds -Wno-error=unused-command-line-argument
-exec "$DECLANG_CLANG" -Wno-error=unused-command-line-argument "\$@"
+exec "$DECLANG_CLANG" -Wno-error=unused-command-line-argument "$@"
 EOF
         
-        cat > /tmp/declang-wrapper/clang++ << EOF
+        # Replace the DECLANG_CLANG variable in the script
+        sed -i "s|\$DECLANG_CLANG|$DECLANG_CLANG|g" /tmp/declang-wrapper/clang
+        
+        cat > /tmp/declang-wrapper/clang++ << 'EOF'
 #!/bin/bash
-exec "$DECLANG_CLANGPP" -Wno-error=unused-command-line-argument "\$@"
+exec "$DECLANG_CLANGPP" -Wno-error=unused-command-line-argument "$@"
 EOF
+        
+        sed -i "s|\$DECLANG_CLANGPP|$DECLANG_CLANGPP|g" /tmp/declang-wrapper/clang++
         
         chmod +x /tmp/declang-wrapper/*
         
@@ -156,9 +156,6 @@ EOF
             CC="/tmp/declang-wrapper/clang" \
             CXX="/tmp/declang-wrapper/clang++" \
             LD="/tmp/declang-wrapper/clang" \
-            HOSTCC="/tmp/declang-wrapper/clang" \
-            HOSTCXX="/tmp/declang-wrapper/clang++" \
-            HOSTLD="/tmp/declang-wrapper/clang" \
             modules
         
         echo "=== Build completed ==="
@@ -180,13 +177,6 @@ EOF
             if command -v llvm-strip >/dev/null 2>&1; then
                 llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
                 echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
-            fi
-            
-            # Quick check if obfuscation might have worked
-            echo "=== Quick obfuscation check ==="
-            if command -v strings >/dev/null 2>&1; then
-                echo "First few strings (look for weird patterns):"
-                strings "/github/workspace/out/$OUTPUT_NAME" | head -20
             fi
         else
             echo "❌ ERROR: No .ko file found in ${{ inputs.module_dir }}/!"
