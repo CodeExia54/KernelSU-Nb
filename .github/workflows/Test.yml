@@ -1,4 +1,4 @@
-name: Build Kernel Module ddk Test
+name: Build Kernel Module ddk
 
 on:
   workflow_dispatch:
@@ -41,37 +41,44 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Download and extract DeClang
+    - name: Download DeClang compilers
       run: |
         apt-get update && apt-get install -y wget unzip
+        
+        # Download DeClang
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        
+        # Extract
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        
+        # Verify what we have
+        echo "=== DeClang contents ==="
+        ls -la Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/
+        
+        # Make binaries executable
         chmod +x Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/*
 
-    - name: Build ${{ inputs.module_dir }}.ko with DeClang
+    - name: Build with DeClang compilers
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
         
-        # Set the path to DeClang's clang binary
+        # Set paths to DeClang compilers
         DECLANG_CLANG="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
         DECLANG_CLANGPP="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang++"
         
         echo "Using DeClang clang from: $DECLANG_CLANG"
         echo "Using DeClang clang++ from: $DECLANG_CLANGPP"
         
-        # Verify the binaries exist
-        if [ ! -f "$DECLANG_CLANG" ]; then
-            echo "ERROR: clang not found at $DECLANG_CLANG"
-            echo "Available files in compiler/bin/:"
-            ls -la Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/
-            exit 1
-        fi
-        
-        # Build with DeClang
+        # Build with only the compilers replaced
+        # All other tools (ar, nm, ld, strip, etc.) come from original toolchain
         make -C $KERNEL_SRC \
             M=$PWD/${{ inputs.module_dir }} \
             CC="$DECLANG_CLANG" \
             CXX="$DECLANG_CLANGPP" \
+            LD="$DECLANG_CLANG" \
+            HOSTCC="$DECLANG_CLANG" \
+            HOSTCXX="$DECLANG_CLANGPP" \
+            HOSTLD="$DECLANG_CLANG" \
             modules
         
         echo "=== Build completed ==="
