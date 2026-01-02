@@ -41,7 +41,7 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Download DeClang compilers
+    - name: Setup DeClang properly
       run: |
         apt-get update && apt-get install -y wget unzip
         
@@ -51,42 +51,114 @@ jobs:
         # Extract
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         
-        # Verify what we have
-        echo "=== DeClang contents ==="
-        ls -la Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/
+        # Setup DeClang home directory as per documentation
+        mkdir -p ~/.DeClang
         
-        # Make binaries executable
-        chmod +x Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/*
+        # Move the extracted folder to ~/.DeClang as per docs
+        mv Release-Linux-swift5.10-v1.0.0-ubuntu2204 ~/.DeClang/
+        
+        # Create config.pre.json as per documentation
+        cat > ~/.DeClang/config.pre.json << 'EOF'
+{
+  "build_seed": "kernel_module_seed_$(date +%s)",
+  "overall_obfuscation": 60,
+  "flatten": [
+    {
+      "name": ".*",
+      "seed": "deadbeefcafebabe",
+      "split_level": 2,
+      "enable_obfuscation": 1
+    }
+  ]
+}
+EOF
+        
+        # Check if gen_config.sh exists and run it
+        if [ -f ~/.DeClang/Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config.sh ]; then
+            echo "Running DeClang's gen_config.sh..."
+            cd ~/.DeClang/Release-Linux-swift5.10-v1.0.0-ubuntu2204
+            ./gen_config.sh -path ~/.DeClang -seed "kernel_seed_$(date +%s)"
+        else
+            # Create config.json manually if gen_config.sh doesn't exist
+            echo "Creating config.json manually..."
+            cat > ~/.DeClang/config.json << 'EOF'
+{
+  "build_seed": "kernel_module_seed_$(date +%s)",
+  "overall_obfuscation": 60,
+  "flatten": [
+    {
+      "name": ".*",
+      "seed": "deadbeefcafebabe",
+      "split_level": 2,
+      "enable_obfuscation": 1
+    }
+  ]
+}
+EOF
+        fi
+        
+        # Set DECLANG_HOME environment variable (REQUIRED by DeClang)
+        export DECLANG_HOME=~/.DeClang
+        echo "DECLANG_HOME set to: $DECLANG_HOME"
+        
+        # Verify setup
+        echo "=== DeClang setup complete ==="
+        echo "Contents of ~/.DeClang/:"
+        ls -la ~/.DeClang/
+        echo ""
+        echo "Configuration:"
+        cat ~/.DeClang/config.json 2>/dev/null || cat ~/.DeClang/config.pre.json
 
-    - name: Build with DeClang compilers
+    - name: Build with DeClang obfuscation
       run: |
-        echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
+        echo "=== Building ${{ inputs.module_dir }}.ko with DeClang OBFUSCATION ==="
         
-        # Set paths to DeClang compilers
-        DECLANG_CLANG="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
-        DECLANG_CLANGPP="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang++"
+        # Set DECLANG_HOME for this step too
+        export DECLANG_HOME=~/.DeClang
         
-        echo "Using DeClang clang from: $DECLANG_CLANG"
-        echo "Using DeClang clang++ from: $DECLANG_CLANGPP"
+        # Path to DeClang compilers
+        DECLANG_CLANG="$DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
+        DECLANG_CLANGPP="$DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang++"
         
-        # FIX: Add KBUILD_CFLAGS_MODULE to suppress the unused command line argument error
-        # This only affects module compilation, not DDK internal code
-        export KBUILD_CFLAGS_MODULE="-Wno-error=unused-command-line-argument"
-        export CFLAGS_MODULE="-Wno-error=unused-command-line-argument"
+        echo "DeClang clang: $DECLANG_CLANG"
+        echo "DeClang clang++: $DECLANG_CLANGPP"
+        echo "DECLANG_HOME: $DECLANG_HOME"
         
-        # Also add to regular CFLAGS as backup
-        export KBUILD_CFLAGS="-Wno-error=unused-command-line-argument"
+        # Verify DeClang can run
+        echo "=== Testing DeClang ==="
+        "$DECLANG_CLANG" --version 2>&1 | head -3 || echo "Failed to get version"
         
-        # Build with only the compilers replaced
-        # All other tools (ar, nm, ld, strip, etc.) come from original toolchain
+        # Create simple wrapper to handle the error flag
+        mkdir -p /tmp/declang-wrapper
+        
+        cat > /tmp/declang-wrapper/clang << EOF
+#!/bin/bash
+# Simple wrapper that adds -Wno-error=unused-command-line-argument
+exec "$DECLANG_CLANG" -Wno-error=unused-command-line-argument "\$@"
+EOF
+        
+        cat > /tmp/declang-wrapper/clang++ << EOF
+#!/bin/bash
+exec "$DECLANG_CLANGPP" -Wno-error=unused-command-line-argument "\$@"
+EOF
+        
+        chmod +x /tmp/declang-wrapper/*
+        
+        # IMPORTANT: DeClang documentation says optimization must be enabled
+        # Otherwise obfuscation passes won't run
+        export KBUILD_CFLAGS="-O2 -Wno-error=unused-command-line-argument"
+        
+        echo "=== Building with DeClang (obfuscation via config.json) ==="
+        
+        # Build with DeClang
         make -C $KERNEL_SRC \
             M=$PWD/${{ inputs.module_dir }} \
-            CC="$DECLANG_CLANG" \
-            CXX="$DECLANG_CLANGPP" \
-            LD="$DECLANG_CLANG" \
-            HOSTCC="$DECLANG_CLANG" \
-            HOSTCXX="$DECLANG_CLANGPP" \
-            HOSTLD="$DECLANG_CLANG" \
+            CC="/tmp/declang-wrapper/clang" \
+            CXX="/tmp/declang-wrapper/clang++" \
+            LD="/tmp/declang-wrapper/clang" \
+            HOSTCC="/tmp/declang-wrapper/clang" \
+            HOSTCXX="/tmp/declang-wrapper/clang++" \
+            HOSTLD="/tmp/declang-wrapper/clang" \
             modules
         
         echo "=== Build completed ==="
@@ -98,22 +170,33 @@ jobs:
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         
         TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-        OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
+        OUTPUT_NAME="${{ inputs.module_dir }}-declang-obfuscated-${{ matrix.kmi }}-$TIMESTAMP.ko"
         if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
             cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
-            echo "Copied: $KO_FILE -> /github/workspace/out/$OUTPUT_NAME"
+            echo "✅ Obfuscated module created: $OUTPUT_NAME"
             echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
-            llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
-            echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+            
+            # Strip debug symbols
+            if command -v llvm-strip >/dev/null 2>&1; then
+                llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
+                echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+            fi
+            
+            # Quick check if obfuscation might have worked
+            echo "=== Quick obfuscation check ==="
+            if command -v strings >/dev/null 2>&1; then
+                echo "First few strings (look for weird patterns):"
+                strings "/github/workspace/out/$OUTPUT_NAME" | head -20
+            fi
         else
-            echo "ERROR: No .ko file found in ${{ inputs.module_dir }}/!"
-            echo "Available files in ${{ inputs.module_dir }}/:"
-            ls -la "${{ inputs.module_dir }}/" || echo "Directory doesn't exist"
+            echo "❌ ERROR: No .ko file found in ${{ inputs.module_dir }}/!"
+            echo "Available files:"
+            ls -la "${{ inputs.module_dir }}/" 2>/dev/null || echo "Directory doesn't exist"
             exit 1
         fi
 
-    - name: Upload ${{ inputs.module_dir }}.ko artifact
+    - name: Upload obfuscated artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ github.run_id }}
-        path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-*.ko
+        name: ${{ inputs.module_dir }}-declang-obfuscated-${{ matrix.kmi }}-${{ github.run_id }}
+        path: /github/workspace/out/${{ inputs.module_dir }}-declang-obfuscated-${{ matrix.kmi }}-*.ko
