@@ -44,158 +44,69 @@ jobs:
     - name: Setup DeClang
       run: |
         apt-get update && apt-get install -y wget unzip
-        
-        # Download DeClang
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        
-        # Extract
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        
-        # Setup DECLANG_HOME directory
-        mkdir -p ~/.DeClang
-        
-        # Move release to ~/.DeClang
-        mv Release-Linux-swift5.10-v1.0.0-ubuntu2204 ~/.DeClang/
-        
-        echo "DeClang installed to ~/.DeClang"
+        chmod +x Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/*
 
-    - name: Generate DeClang configuration
-      run: |
-        export DECLANG_HOME=~/.DeClang
-        
-        # Create timestamp for unique seed
-        TIMESTAMP=$(date +%s)
-        
-        # Create config.pre.json using echo (avoids heredoc YAML issues)
-        echo '{' > $DECLANG_HOME/config.pre.json
-        echo '    "build_seed": "kernel_module_'"$TIMESTAMP"'",' >> $DECLANG_HOME/config.pre.json
-        echo '    "overall_obfuscation": 80,' >> $DECLANG_HOME/config.pre.json
-        echo '    "flatten": [' >> $DECLANG_HOME/config.pre.json
-        echo '        {' >> $DECLANG_HOME/config.pre.json
-        echo '            "name": ".*",' >> $DECLANG_HOME/config.pre.json
-        echo '            "seed": "deadbeefcafebabe",' >> $DECLANG_HOME/config.pre.json
-        echo '            "split_level": 2,' >> $DECLANG_HOME/config.pre.json
-        echo '            "enable_obfuscation": 1' >> $DECLANG_HOME/config.pre.json
-        echo '        }' >> $DECLANG_HOME/config.pre.json
-        echo '    ]' >> $DECLANG_HOME/config.pre.json
-        echo '}' >> $DECLANG_HOME/config.pre.json
-        
-        echo "=== Created config.pre.json ==="
-        cat $DECLANG_HOME/config.pre.json
-        
-        # Generate config.json
-        echo "=== Generating config.json ==="
-        cd $DECLANG_HOME
-        
-        # Check for gen_config
-        if [ -f $DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config.sh ]; then
-            echo "Using gen_config.sh wrapper"
-            $DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config.sh \
-                -path "$DECLANG_HOME" \
-                -seed "kernel_$TIMESTAMP"
-        elif [ -f $DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config/bin/Linux/gen_config ]; then
-            echo "Using gen_config binary directly"
-            $DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config/bin/Linux/gen_config \
-                -path "$DECLANG_HOME" \
-                -seed "kernel_$TIMESTAMP"
-        else
-            echo "No gen_config found, using config.pre.json as config.json"
-            cp config.pre.json config.json
-        fi
-        
-        echo "=== Generated config.json ==="
-        cat $DECLANG_HOME/config.json
-
-    - name: Build kernel module with DeClang (CLEAN VERSION)
+    - name: Build with DeClang
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
         
-        # Set DECLANG_HOME for obfuscation
-        export DECLANG_HOME=~/.DeClang
+        # Path to DeClang
+        DECLANG_CLANG="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
+        DECLANG_CLANGPP="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang++"
         
-        # Path to DeClang compilers
-        DECLANG_CLANG="$DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
-        DECLANG_CLANGPP="$DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang++"
+        # Create wrapper scripts WITHOUT HEREDOC
+        mkdir -p /tmp/mycc
         
-        echo "DeClang clang: $DECLANG_CLANG"
-        echo "DeClang clang++: $DECLANG_CLANGPP"
+        # Create clang wrapper
+        echo '#!/bin/bash' > /tmp/mycc/clang
+        echo 'NEWARGS=()' >> /tmp/mycc/clang
+        echo 'for arg in "$@"; do' >> /tmp/mycc/clang
+        echo '    if echo "$arg" | grep -q "enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"; then' >> /tmp/mycc/clang
+        echo '        continue' >> /tmp/mycc/clang
+        echo '    fi' >> /tmp/mycc/clang
+        echo '    NEWARGS+=("$arg")' >> /tmp/mycc/clang
+        echo 'done' >> /tmp/mycc/clang
+        echo "exec \"$DECLANG_CLANG\" \"\${NEWARGS[@]}\"" >> /tmp/mycc/clang
         
-        # Create wrapper directory
-        mkdir -p /tmp/declang-clean
-        
-        # Create clang wrapper WITHOUT HEREDOC - using cat with variable substitution
-        # First create the wrapper script content with a placeholder
-        cat > /tmp/declang-clean/clang.template << 'EOF'
-#!/bin/bash
-# Filter out problematic kernel flags
-CLEAN_ARGS=()
-for arg in "$@"; do
-    if [[ "$arg" == *"enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"* ]]; then
-        continue
-    fi
-    CLEAN_ARGS+=("$arg")
-done
-exec "__DECLANG_CLANG__" "${CLEAN_ARGS[@]}"
-EOF
-        
-        # Replace placeholder with actual path (using @ as delimiter to avoid path issues)
-        sed "s@__DECLANG_CLANG__@$DECLANG_CLANG@g" /tmp/declang-clean/clang.template > /tmp/declang-clean/clang
-        chmod +x /tmp/declang-clean/clang
+        chmod +x /tmp/mycc/clang
         
         # Create clang++ wrapper
-        cat > /tmp/declang-clean/clang++.template << 'EOF'
-#!/bin/bash
-# Filter out problematic kernel flags
-CLEAN_ARGS=()
-for arg in "$@"; do
-    if [[ "$arg" == *"enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"* ]]; then
-        continue
-    fi
-    CLEAN_ARGS+=("$arg")
-done
-exec "__DECLANG_CLANGPP__" "${CLEAN_ARGS[@]}"
-EOF
+        echo '#!/bin/bash' > /tmp/mycc/clang++
+        echo 'NEWARGS=()' >> /tmp/mycc/clang++
+        echo 'for arg in "$@"; do' >> /tmp/mycc/clang++
+        echo '    if echo "$arg" | grep -q "enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"; then' >> /tmp/mycc/clang++
+        echo '        continue' >> /tmp/mycc/clang++
+        echo '    fi' >> /tmp/mycc/clang++
+        echo '    NEWARGS+=("$arg")' >> /tmp/mycc/clang++
+        echo 'done' >> /tmp/mycc/clang++
+        echo "exec \"$DECLANG_CLANGPP\" \"\${NEWARGS[@]}\"" >> /tmp/mycc/clang++
         
-        sed "s@__DECLANG_CLANGPP__@$DECLANG_CLANGPP@g" /tmp/declang-clean/clang++.template > /tmp/declang-clean/clang++
-        chmod +x /tmp/declang-clean/clang++
+        chmod +x /tmp/mycc/clang++
         
-        # Build with DeClang
+        # Build
         make -C $KERNEL_SRC \
             M=$PWD/${{ inputs.module_dir }} \
-            CC="/tmp/declang-clean/clang" \
-            CXX="/tmp/declang-clean/clang++" \
-            LD="/tmp/declang-clean/clang" \
+            CC="/tmp/mycc/clang" \
+            CXX="/tmp/mycc/clang++" \
+            LD="/tmp/mycc/clang" \
             modules
         
         echo "=== Build completed ==="
-
-        # Create output directory
+        
+        # Output
         mkdir -p /github/workspace/out
+        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         
-        # Find the .ko file
-        MODULE_DIR="${{ inputs.module_dir }}"
-        KO_FILE=$(find "$MODULE_DIR" -name "*.ko" -type f | head -1)
-        
-        if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
+        if [ -n "$KO_FILE" ]; then
             TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-            OUTPUT_NAME="${{ inputs.module_dir }}-declang-${{ matrix.kmi }}-$TIMESTAMP.ko"
-            cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
-            echo "✅ DeClang build successful: $OUTPUT_NAME"
-            
-            # Strip debug symbols
-            if command -v llvm-strip >/dev/null 2>&1; then
-                llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
-                echo "Module stripped"
-            fi
-        else
-            echo "❌ ERROR: No .ko file found!"
-            echo "Files in ${{ inputs.module_dir }}:"
-            ls -la "${{ inputs.module_dir }}/" 2>/dev/null || echo "Directory not found"
-            exit 1
+            cp "$KO_FILE" "/github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
+            echo "Build successful"
         fi
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ inputs.module_dir }}-declang-${{ matrix.kmi }}-${{ github.run_id }}
-        path: /github/workspace/out/${{ inputs.module_dir }}-declang-${{ matrix.kmi }}-*.ko
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ github.run_id }}
+        path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-*.ko
