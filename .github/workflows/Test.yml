@@ -41,7 +41,7 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Setup DeClang with proper configuration
+    - name: Setup DeClang
       run: |
         apt-get update && apt-get install -y wget unzip
         
@@ -51,152 +51,132 @@ jobs:
         # Extract
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         
-        # Setup DECLANG_HOME
+        # Setup DECLANG_HOME directory
         mkdir -p ~/.DeClang
+        
+        # Move release to ~/.DeClang
         mv Release-Linux-swift5.10-v1.0.0-ubuntu2204 ~/.DeClang/
         
-        # Check the actual structure
-        echo "=== DeClang structure ==="
-        find ~/.DeClang -type f -name "*.json" -o -name "gen_config*" | head -20
-        
-        # Check if gen_config binary exists
-        if [ -f ~/.DeClang/Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config/bin/Linux/gen_config ]; then
-            echo "Found gen_config binary for Linux"
-        fi
+        echo "DeClang installed to ~/.DeClang"
 
     - name: Generate DeClang configuration
       run: |
         export DECLANG_HOME=~/.DeClang
         
-        # Create config.pre.json based on the template but customized for kernel modules
-        cat > $DECLANG_HOME/config.pre.json << 'EOF'
-{
-    "build_seed": "kernel_module_seed_${{ github.run_id }}_$(date +%s)",
-    "overall_obfuscation": 80,
-    "flatten": [
-        {
-            "name": ".*",
-            "seed": "deadbeefcafebabe",
-            "split_level": 2,
-            "enable_obfuscation": 1
-        }
-    ]
-}
-EOF
+        # Create timestamp for unique seed
+        TIMESTAMP=$(date +%s)
+        
+        # Create config.pre.json using echo (avoids heredoc YAML issues)
+        echo '{' > $DECLANG_HOME/config.pre.json
+        echo '    "build_seed": "kernel_module_'$TIMESTAMP'",' >> $DECLANG_HOME/config.pre.json
+        echo '    "overall_obfuscation": 80,' >> $DECLANG_HOME/config.pre.json
+        echo '    "flatten": [' >> $DECLANG_HOME/config.pre.json
+        echo '        {' >> $DECLANG_HOME/config.pre.json
+        echo '            "name": ".*",' >> $DECLANG_HOME/config.pre.json
+        echo '            "seed": "deadbeefcafebabe",' >> $DECLANG_HOME/config.pre.json
+        echo '            "split_level": 2,' >> $DECLANG_HOME/config.pre.json
+        echo '            "enable_obfuscation": 1' >> $DECLANG_HOME/config.pre.json
+        echo '        }' >> $DECLANG_HOME/config.pre.json
+        echo '    ]' >> $DECLANG_HOME/config.pre.json
+        echo '}' >> $DECLANG_HOME/config.pre.json
         
         echo "=== Created config.pre.json ==="
         cat $DECLANG_HOME/config.pre.json
         
-        # Run gen_config.sh to generate config.json
+        # Generate config.json
         echo "=== Generating config.json ==="
         cd $DECLANG_HOME
         
+        # Check for gen_config
         if [ -f $DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config.sh ]; then
-            # Use the wrapper script
+            echo "Using gen_config.sh wrapper"
             $DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config.sh \
                 -path "$DECLANG_HOME" \
-                -seed "kernel_seed_$(date +%s)"
+                -seed "kernel_$TIMESTAMP"
         elif [ -f $DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config/bin/Linux/gen_config ]; then
-            # Call the binary directly
+            echo "Using gen_config binary directly"
             $DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config/bin/Linux/gen_config \
                 -path "$DECLANG_HOME" \
-                -seed "kernel_seed_$(date +%s)"
+                -seed "kernel_$TIMESTAMP"
         else
-            echo "ERROR: Could not find gen_config!"
-            # Create a simple config.json as fallback
+            echo "No gen_config found, using config.pre.json as config.json"
             cp config.pre.json config.json
         fi
         
         echo "=== Generated config.json ==="
         cat $DECLANG_HOME/config.json
 
-    - name: Build with DeClang
+    - name: Build kernel module with DeClang
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
         
-        # MUST SET DECLANG_HOME for obfuscation to work
+        # Set DECLANG_HOME for obfuscation
         export DECLANG_HOME=~/.DeClang
-        echo "DECLANG_HOME set to: $DECLANG_HOME"
+        echo "DECLANG_HOME: $DECLANG_HOME"
         
         # Path to DeClang compilers
         DECLANG_CLANG="$DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
         DECLANG_CLANGPP="$DECLANG_HOME/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang++"
         
-        echo "Using DeClang from: $DECLANG_CLANG"
+        echo "DeClang clang: $DECLANG_CLANG"
+        echo "DeClang clang++: $DECLANG_CLANGPP"
         
-        # Create a smart wrapper that:
-        # 1. Filters problematic kernel flags
-        # 2. Ensures optimization is enabled (-O2 for obfuscation)
-        mkdir -p /tmp/declang-kernel
+        # Create wrapper to handle problematic kernel flag
+        mkdir -p /tmp/declang-wrapper
         
-        cat > /tmp/declang-kernel/clang << 'EOF'
+        # Create clang wrapper
+        cat > /tmp/declang-wrapper/clang << 'EOF'
 #!/bin/bash
-# DeClang wrapper for kernel module compilation
+# Filter out problematic kernel flags
 CLEAN_ARGS=()
-HAS_O_FLAG=false
-
 for arg in "$@"; do
-    # Remove problematic kernel flag
     if [[ "$arg" == *"enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"* ]]; then
-        echo "[DeClang] Filtering out problematic flag"
         continue
     fi
-    
-    # Check if optimization flag is present
-    if [[ "$arg" == -O* ]]; then
-        HAS_O_FLAG=true
-    fi
-    
     CLEAN_ARGS+=("$arg")
 done
-
-# DeClang documentation says optimization must be enabled for obfuscation
-if [ "$HAS_O_FLAG" = false ]; then
-    echo "[DeClang] Adding -O2 flag for obfuscation"
-    CLEAN_ARGS+=("-O2")
-fi
-
-# Execute DeClang
-exec "DECLANG_PATH" "${CLEAN_ARGS[@]}"
+exec "CLANG_BIN" "${CLEAN_ARGS[@]}"
 EOF
         
         # Insert actual DeClang path
-        sed -i "s|DECLANG_PATH|$DECLANG_CLANG|g" /tmp/declang-kernel/clang
-        chmod +x /tmp/declang-kernel/clang
+        sed -i "s|CLANG_BIN|$DECLANG_CLANG|g" /tmp/declang-wrapper/clang
+        chmod +x /tmp/declang-wrapper/clang
         
         # Create clang++ wrapper
-        cp /tmp/declang-kernel/clang /tmp/declang-kernel/clang++
-        sed -i "s|$DECLANG_CLANG|$DECLANG_CLANGPP|g" /tmp/declang-kernel/clang++
+        cp /tmp/declang-wrapper/clang /tmp/declang-wrapper/clang++
+        sed -i "s|$DECLANG_CLANG|$DECLANG_CLANGPP|g" /tmp/declang-wrapper/clang++
         
         # Build with DeClang
-        # DeClang will automatically read ~/.DeClang/config.json for obfuscation settings
         make -C $KERNEL_SRC \
             M=$PWD/${{ inputs.module_dir }} \
-            CC="/tmp/declang-kernel/clang" \
-            CXX="/tmp/declang-kernel/clang++" \
-            LD="/tmp/declang-kernel/clang" \
+            CC="/tmp/declang-wrapper/clang" \
+            CXX="/tmp/declang-wrapper/clang++" \
+            LD="/tmp/declang-wrapper/clang" \
             modules
         
         echo "=== Build completed ==="
 
-        # Output handling
+        # Create output directory
         mkdir -p /github/workspace/out
+        
+        # Find the .ko file
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         
         if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
             TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
             OUTPUT_NAME="${{ inputs.module_dir }}-declang-${{ matrix.kmi }}-$TIMESTAMP.ko"
             cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
-            echo "✅ DeClang-obfuscated module: $OUTPUT_NAME"
+            echo "✅ DeClang build successful: $OUTPUT_NAME"
             
-            # Quick obfuscation check
-            echo "=== Obfuscation check ==="
-            if command -v strings >/dev/null 2>&1; then
-                echo "First 15 strings (look for obfuscated patterns):"
-                strings "/github/workspace/out/$OUTPUT_NAME" | head -15
+            # Strip debug symbols
+            if command -v llvm-strip >/dev/null 2>&1; then
+                llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
+                echo "Module stripped"
             fi
         else
-            echo "❌ ERROR: No .ko file produced!"
+            echo "❌ ERROR: No .ko file found!"
+            echo "Files in ${{ inputs.module_dir }}:"
+            ls -la "${{ inputs.module_dir }}/" 2>/dev/null || echo "Directory not found"
             exit 1
         fi
 
