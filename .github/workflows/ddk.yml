@@ -1,4 +1,4 @@
-name: Build Kernel Module ddk
+name: Build Kernel Module ddk Test
 
 on:
   workflow_dispatch:
