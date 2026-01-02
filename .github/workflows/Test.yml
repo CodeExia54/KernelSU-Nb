@@ -41,22 +41,127 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Download DeClang
+    - name: Download and analyze DeClang structure
       run: |
-        apt-get update && apt-get install -y unzip 2>/dev/null || true
+        echo "=== Downloading and analyzing DeClang ==="
+        
+        # Install tools
+        apt-get update && apt-get install -y unzip wget file 2>/dev/null || true
+        
+        # Download
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        chmod +x compiler/bin/clang
+        
+        # First, check zip contents WITHOUT extracting
+        echo "=== ZIP File Structure ==="
+        unzip -l Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip | head -30
+        
+        # Extract to temp directory
+        mkdir -p /tmp/declang-extract
+        cd /tmp/declang-extract
+        unzip -q /__w/_temp/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        
+        # Analyze structure
+        echo ""
+        echo "=== Extracted Structure ==="
+        echo "Top-level contents:"
+        ls -la
+        
+        echo ""
+        echo "Searching for clang binaries:"
+        find . -type f -name "*clang*" 2>/dev/null
+        
+        echo ""
+        echo "Full directory tree (first 50 lines):"
+        find . -type f | head -50
+        
+        # Check for common patterns
+        echo ""
+        echo "=== Checking common locations ==="
+        for path in "compiler/bin/clang" "bin/clang" "clang" "Release/compiler/bin/clang" "Release/bin/clang"; do
+            if [ -f "$path" ]; then
+                echo "✅ Found at: $path"
+                echo "  File type: $(file "$path")"
+                echo "  Permissions: $(ls -la "$path")"
+            fi
+        done
+
+    - name: Setup DeClang based on actual structure
+      run: |
+        echo "=== Setting up DeClang ==="
+        cd /tmp/declang-extract
+        
+        # Find the actual clang binary
+        CLANG_PATH=$(find . -type f -name "clang" ! -name "*.so" ! -name "*.a" 2>/dev/null | head -1)
+        
+        if [ -z "$CLANG_PATH" ]; then
+            echo "❌ ERROR: No clang binary found!"
+            echo "All files:"
+            find . -type f | sort
+            exit 1
+        fi
+        
+        echo "Found clang at: $CLANG_PATH"
+        echo "File info: $(file "$CLANG_PATH")"
+        
+        # Get its directory
+        CLANG_DIR=$(dirname "$CLANG_PATH")
+        echo "Clang directory: $CLANG_DIR"
+        
+        # Check parent structure
+        PARENT_DIR=$(dirname "$CLANG_DIR")
+        echo "Parent directory: $PARENT_DIR"
+        
+        # Make executable
+        chmod +x "$CLANG_PATH"
+        
+        # Copy everything to /opt/declang preserving structure
         mkdir -p /opt/declang
         cp -r . /opt/declang/
+        
+        # Find the new path
+        NEW_CLANG_PATH="/opt/declang/${CLANG_PATH#./}"
+        echo "New clang path: $NEW_CLANG_PATH"
+        
+        # Verify
+        if [ -x "$NEW_CLANG_PATH" ]; then
+            echo "✅ DeClang setup successful!"
+            echo "Version:"
+            "$NEW_CLANG_PATH" --version | head -3
+        else
+            echo "❌ ERROR: Clang not executable at new location"
+            exit 1
+        fi
+        
+        # Also check for companion files
+        echo ""
+        echo "=== Looking for DeClang configuration files ==="
+        find /opt/declang -name "*.json" -o -name "*.sh" -o -name "LICENSE*" | head -10
 
     - name: Build ${{ inputs.module_dir }}.ko
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
-
-        # Set DeClang as compiler
-        export CC="/opt/declang/compiler/bin/clang"
+        
+        # Find clang in /opt/declang
+        DECLANG_CLANG=$(find /opt/declang -type f -name "clang" ! -name "*.so" ! -name "*.a" 2>/dev/null | head -1)
+        
+        if [ -z "$DECLANG_CLANG" ]; then
+            echo "❌ ERROR: Cannot find clang in /opt/declang"
+            find /opt/declang -type f | head -20
+            exit 1
+        fi
+        
+        echo "Using DeClang: $DECLANG_CLANG"
+        export CC="$DECLANG_CLANG"
         export DECLANG_HOME=/opt/declang
+        
+        # Add to PATH
+        CLANG_BIN_DIR=$(dirname "$DECLANG_CLANG")
+        export PATH="$CLANG_BIN_DIR:$PATH"
+        
+        # Verify
+        echo "Compiler verification:"
+        which clang
+        clang --version | head -1
         
         # Build the module
         make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
