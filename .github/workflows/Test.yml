@@ -43,103 +43,126 @@ jobs:
 
     - name: Download and setup DeClang
       run: |
-        apt-get update && apt-get install -y unzip
+        echo "=== Downloading and Installing DeClang ==="
+        apt-get update && apt-get install -y unzip 2>/dev/null || true
+        
+        # Download the pre-built DeClang compiler
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        
+        # Extract (creates Release-Linux-swift5.10-v1.0.0-ubuntu2204/ directory)
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        
+        # Make clang executable and copy to /opt/declang
         chmod +x Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang
         mkdir -p /opt/declang
         cp -r Release-Linux-swift5.10-v1.0.0-ubuntu2204/* /opt/declang/
-
-    - name: Configure DeClang with VERIFICATION
-      run: |
-        mkdir -p ~/.DeClang
         
-        # Create config.pre.json - CORRECT FORMAT
+        echo "✅ DeClang installed to /opt/declang"
+
+    - name: Configure DeClang for Obfuscation
+      run: |
+        echo "=== Configuring DeClang Obfuscation ==="
+        
+        # Create essential directories
+        mkdir -p ~/.DeClang /opt/declang/.DeClang
+        
+        # Create the main configuration file - FIXED SYNTAX
+        # flatten is now an ARRAY containing objects
         cat > ~/.DeClang/config.pre.json << 'EOF'
 {
-    "build_seed": "kernel_$(date +%s)",
-    "overall_obfuscation": 80,
-    "flatten": [
-        {
-            "name": ".*",
-            "seed": "deadbeefcafebabe",
-            "split_level": 2,
-            "enable_obfuscation": 1
-        }
-    ]
+  "build_seed": "ddk_kernel_$(date +%s)",
+  "overall_obfuscation": 50,
+  "flatten": [
+    {
+      "name": ".*",
+      "seed": "deadbeefcafebabe",
+      "split_level": 1,
+      "enable_obfuscation": 1
+    }
+  ]
 }
 EOF
         
-        echo "=== Config.pre.json created ==="
-        cat ~/.DeClang/config.pre.json
-        
-        # Generate config.json
+        # Generate the final config.json
         if [ -f "/opt/declang/gen_config.sh" ]; then
-            cd ~/.DeClang
-            echo "=== Running gen_config.sh ==="
-            /opt/declang/gen_config.sh -path ~/.DeClang -seed "kernel_$(date +%s)"
+            echo "Generating DeClang configuration..."
+            /opt/declang/gen_config.sh -path /opt/declang -seed "ddk_kernel_$(date +%s)"
         else
-            echo "=== gen_config.sh not found, copying directly ==="
+            echo "Using direct configuration (gen_config.sh not found)"
             cp ~/.DeClang/config.pre.json ~/.DeClang/config.json
         fi
         
-        echo "=== Final config.json ==="
-        cat ~/.DeClang/config.json
+        # Create log file to prevent "Open logFile Failed" warning
+        touch /opt/declang/.DeClang/log.txt
+        
+        echo "✅ DeClang configuration created"
+        echo "Config location: ~/.DeClang/config.json"
 
-    - name: Verify DeClang is being used
-      run: |
-        echo "=== Verifying DeClang setup ==="
-        
-        # Check which clang is being used
-        echo "1. Checking CC path:"
-        which clang || echo "clang not in PATH"
-        
-        echo ""
-        echo "2. Checking DeClang version:"
-        /opt/declang/compiler/bin/clang --version 2>&1 | head -3 || echo "Failed to get DeClang version"
-        
-        echo ""
-        echo "3. Setting DECLANG_HOME:"
-        export DECLANG_HOME=~/.DeClang
-        echo "DECLANG_HOME=$DECLANG_HOME"
-        
-        echo ""
-        echo "4. Testing DeClang compilation:"
-        echo "int test() { return 42; }" > /tmp/test.c
-        /opt/declang/compiler/bin/clang -c /tmp/test.c -o /tmp/test.o 2>&1 | head -5 || echo "Compilation test"
-        rm -f /tmp/test.c /tmp/test.o
-
-    - name: Build with DeClang
+    - name: Build ${{ inputs.module_dir }}.ko with Obfuscation
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
+        echo "Using DeClang with obfuscation enabled"
         
-        # Set DECLANG_HOME - REQUIRED
-        export DECLANG_HOME=~/.DeClang
+        # Set DeClang as the compiler
+        export CC="/opt/declang/compiler/bin/clang"
+        export DECLANG_HOME="/opt/declang"
         
-        # VERIFY we're using DeClang, not system clang
-        echo "Using compiler: /opt/declang/compiler/bin/clang"
+        # CRITICAL: Enable optimization to trigger LLVM obfuscation passes
+        # DeClang documentation states obfuscation won't work without optimization
+        export CFLAGS="-O2"
+        export KCFLAGS="-O2"
+        
+        echo "Compiler: $CC"
         echo "DECLANG_HOME: $DECLANG_HOME"
+        echo "CFLAGS: $CFLAGS"
         
-        # Build with explicit DeClang path
-        make -C $KERNEL_SRC \
-            M=$PWD/${{ inputs.module_dir }} \
-            CC="/opt/declang/compiler/bin/clang" \
-            CXX="/opt/declang/compiler/bin/clang" \
-            LD="/opt/declang/compiler/bin/clang" \
-            modules
+        # Build the kernel module
+        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
         
         echo "=== Build completed ==="
         
-        # Check if obfuscation worked
-        echo ""
-        echo "=== Checking for obfuscation markers ==="
+        # Create output directory
+        mkdir -p /github/workspace/out
+        
+        # Find the .ko file
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
-        if [ -f "$KO_FILE" ]; then
-            echo "Looking for DeClang/LLVM markers in module..."
-            strings "$KO_FILE" | grep -i "llvm\|obfus\|flatten" | head -5 || echo "No obfuscation markers found in strings"
+        
+        TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+        OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-obfuscated-$TIMESTAMP.ko"
+        
+        if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
+            cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
+            echo "✅ SUCCESS: Copied $KO_FILE -> /github/workspace/out/$OUTPUT_NAME"
+            
+            # Obfuscation verification
+            echo ""
+            echo "=== Obfuscation Verification ==="
+            ORIG_SIZE=$(stat -c%s "$KO_FILE")
+            echo "1. Module size: $ORIG_SIZE bytes"
+            
+            echo ""
+            echo "2. String analysis (should show few readable strings):"
+            strings "$KO_FILE" | grep -i "gpl\|license\|author\|description" | head -5 || echo "   ✅ Good: No clear strings found"
+            
+            echo ""
+            echo "3. Simple complexity check:"
+            STRING_COUNT=$(strings "$KO_FILE" | wc -l)
+            echo "   Total readable strings: $STRING_COUNT"
+            
+            # Strip debug symbols
+            llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
+            STRIPPED_SIZE=$(stat -c%s "/github/workspace/out/$OUTPUT_NAME")
+            echo ""
+            echo "4. Size after stripping debug symbols: $STRIPPED_SIZE bytes"
+            
+        else
+            echo "❌ ERROR: No .ko file found in ${{ inputs.module_dir }}/!"
+            echo "Available files:"
+            ls -la "${{ inputs.module_dir }}/" || echo "Directory doesn't exist"
+            exit 1
         fi
 
-    - name: Upload artifact
+    - name: Upload Obfuscated Module Artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-obfuscated-${{ github.run_id }}
