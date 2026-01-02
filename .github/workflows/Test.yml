@@ -1,4 +1,4 @@
-name: Build with DeClang Obfuscation
+name: Build Kernel Module ddk with DeClang Obfuscation
 
 on:
   workflow_dispatch:
@@ -17,7 +17,11 @@ on:
         - hello-world
         - wuwa
         - panic
-        default: 'hello-world'
+        default: 'exianb-dev'
+      obfuscate:
+        description: 'Enable DeClang obfuscation'
+        type: boolean
+        default: true
 
 jobs:
   ddk-build:
@@ -26,7 +30,13 @@ jobs:
     strategy:
       matrix:
         kmi:
-          - android14-6.1  # Start with one
+          - android12-5.10
+          - android13-5.10
+          - android13-5.15
+          - android14-5.15
+          - android14-6.1
+          - android15-6.6
+          - android16-6.12
 
     container:
       image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
@@ -35,46 +45,88 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Setup DeClang
-      id: setup
+    - name: Setup DeClang (if obfuscation enabled)
+      if: ${{ inputs.obfuscate }}
+      id: setup-declang
       run: |
-        echo "=== Setting up DeClang ==="
+        echo "=== SETTING UP DECLANG FOR OBFUSCATION ==="
         
-        # Download
+        # Install tools
+        apt-get update
+        apt-get install -y wget unzip qemu-user-static
+        
+        # Download DeClang
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         
         # Extract
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         
-        # Find clang
-        CLANG_PATH=$(find . -type f -name "clang" | head -1)
-        echo "Clang path: $CLANG_PATH"
+        # Find clang - search in common locations
+        CLANG_PATH=""
+        for path in "./clang" "./bin/clang" "./*/bin/clang" "./*/*/bin/clang"; do
+            if [ -f "$path" ]; then
+                CLANG_PATH="$path"
+                break
+            fi
+        done
         
-        # Make executable
+        # If still not found, search recursively
+        if [ -z "$CLANG_PATH" ]; then
+            CLANG_PATH=$(find . -type f -name "clang" | head -1)
+        fi
+        
+        if [ ! -f "$CLANG_PATH" ]; then
+            echo "ERROR: Cannot find clang in DeClang package!"
+            find . -type f | head -30
+            exit 1
+        fi
+        
+        echo "Found DeClang at: $CLANG_PATH"
         chmod +x "$CLANG_PATH"
         
-        # Save path
-        echo "DECLANG_PATH=$(realpath "$CLANG_PATH")" >> $GITHUB_OUTPUT
-
+        # Test it
+        "$CLANG_PATH" --version || echo "Note: May need QEMU emulation"
+        
+        # Save the path
+        echo "CLANG_PATH=$(realpath "$CLANG_PATH")" >> $GITHUB_OUTPUT
+        
     - name: Build ${{ inputs.module_dir }}.ko
-      env:
-        # Override compiler via make command
-        DECLANG_PATH: ${{ steps.setup.outputs.DECLANG_PATH }}
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
-
-        # Create wrapper script on the fly
-        cat > /tmp/declang_wrapper << EOF
+        
+        # If obfuscation is enabled, use DeClang
+        if ${{ inputs.obfuscate }}; then
+            echo "Using DeClang with obfuscation"
+            
+            DECLANG_CLANG="${{ steps.setup-declang.outputs.CLANG_PATH }}"
+            
+            if [ -z "$DECLANG_CLANG" ] || [ ! -f "$DECLANG_CLANG" ]; then
+                echo "ERROR: DeClang not setup properly!"
+                exit 1
+            fi
+            
+            # Create a simple wrapper script
+            cat > /tmp/declang_wrapper << 'EOF'
 #!/bin/bash
-$DECLANG_PATH "\$@" -mllvm -fla -mllvm -sub
+OBF_FLAGS="-mllvm -fla -mllvm -sub"
+{{DECLANG_CLANG}} "$@" $OBF_FLAGS
 EOF
-        chmod +x /tmp/declang_wrapper
-
-        # Build with custom compiler
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
-            CC="/tmp/declang_wrapper" \
-            HOSTCC="/tmp/declang_wrapper" \
-            V=1 2>&1 | tail -50
+            
+            # Insert the actual path
+            sed -i "s|{{DECLANG_CLANG}}|$DECLANG_CLANG|g" /tmp/declang_wrapper
+            chmod +x /tmp/declang_wrapper
+            
+            # Build with DeClang
+            make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
+                CC="/tmp/declang_wrapper" \
+                HOSTCC="/tmp/declang_wrapper" \
+                V=1 2>&1 | tail -30 || echo "Build may have warnings"
+                
+        else
+            # Build normally without obfuscation
+            echo "Building without obfuscation (normal DDK compiler)"
+            make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
+        fi
         
         echo "=== Build completed ==="
 
@@ -85,13 +137,22 @@ EOF
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         
         TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-        OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
+        if ${{ inputs.obfuscate }}; then
+            OUTPUT_NAME="OBFUSCATED-${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
+        else
+            OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
+        fi
+        
         if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
             cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
             echo "Copied: $KO_FILE -> /github/workspace/out/$OUTPUT_NAME"
             echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
-            llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
-            echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+            
+            # Strip debug symbols
+            if command -v llvm-strip >/dev/null; then
+                llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
+                echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+            fi
         else
             echo "ERROR: No .ko file found in ${{ inputs.module_dir }}/!"
             echo "Available files in ${{ inputs.module_dir }}/:"
