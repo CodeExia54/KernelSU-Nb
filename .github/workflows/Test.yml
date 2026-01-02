@@ -41,6 +41,10 @@ jobs:
       run: |
         echo "=== Checking DeClang compatibility with DDK ${{ matrix.kmi }} ==="
         
+        # Install unzip first (DDK container might not have it)
+        echo "Installing unzip..."
+        apt-get update && apt-get install -y unzip 2>/dev/null || true
+        
         # Create a temporary directory for testing
         TEST_DIR=/tmp/declang_test
         mkdir -p $TEST_DIR
@@ -49,7 +53,24 @@ jobs:
         # Download DeClang
         echo "Downloading DeClang..."
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        
+        # Extract using different methods if unzip not available
+        if command -v unzip >/dev/null 2>&1; then
+            unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        else
+            echo "unzip not available, trying alternative extraction..."
+            # Try with Python if available
+            if command -v python3 >/dev/null 2>&1; then
+                python3 -c "import zipfile; zipfile.ZipFile('Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip').extractall()"
+            elif command -v python >/dev/null 2>&1; then
+                python -c "import zipfile; zipfile.ZipFile('Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip').extractall()"
+            else
+                echo "ERROR: Cannot extract zip file. Need unzip or python."
+                echo "is_compatible=false" >> $GITHUB_OUTPUT
+                echo "missing_deps=unzip_or_python" >> $GITHUB_OUTPUT
+                exit 0
+            fi
+        fi
         
         # Check 1: Binary is executable
         if [ ! -x Release/bin/clang ]; then
@@ -61,13 +82,18 @@ jobs:
         
         # Check 2: Library dependencies
         echo "Checking library dependencies..."
-        MISSING_LIBS=$(ldd Release/bin/clang 2>/dev/null | grep "not found" || true)
-        if [ -n "$MISSING_LIBS" ]; then
-            echo "WARNING: Missing libraries:"
-            echo "$MISSING_LIBS"
-            echo "missing_deps=$MISSING_LIBS" >> $GITHUB_OUTPUT
+        if command -v ldd >/dev/null 2>&1; then
+            MISSING_LIBS=$(ldd Release/bin/clang 2>/dev/null | grep "not found" || true)
+            if [ -n "$MISSING_LIBS" ]; then
+                echo "WARNING: Missing libraries:"
+                echo "$MISSING_LIBS"
+                echo "missing_deps=$MISSING_LIBS" >> $GITHUB_OUTPUT
+            else
+                echo "missing_deps=none" >> $GITHUB_OUTPUT
+            fi
         else
-            echo "missing_deps=none" >> $GITHUB_OUTPUT
+            echo "WARNING: ldd not available, skipping dependency check"
+            echo "missing_deps=ldd_not_available" >> $GITHUB_OUTPUT
         fi
         
         # Check 3: Basic compilation test
@@ -115,8 +141,9 @@ jobs:
         export CC=$TEST_DIR/Release/bin/clang
         export DECLANG_HOME=$TEST_DIR/Release
         
-        if make -C $KERNEL_SRC M=$(pwd) modules 2>&1 | grep -q "Error\|error"; then
+        if make -C $KERNEL_SRC M=$(pwd) modules 2>&1 | grep -q "Error\|error\|ERROR"; then
             echo "ERROR: Kernel module build failed"
+            make -C $KERNEL_SRC M=$(pwd) modules 2>&1 | tail -10
             echo "is_compatible=false" >> $GITHUB_OUTPUT
         else
             if [ -f "test_module.ko" ]; then
@@ -149,6 +176,11 @@ jobs:
       image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
 
     steps:
+    - name: Install required packages
+      run: |
+        echo "=== Installing required packages ==="
+        apt-get update && apt-get install -y unzip 2>/dev/null || echo "unzip already installed or not available"
+
     - name: Check compatibility result
       run: |
         echo "=== Compatibility Check Results ==="
@@ -166,7 +198,18 @@ jobs:
         
         # Download DeClang
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        
+        # Extract using available method
+        if command -v unzip >/dev/null 2>&1; then
+            unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        elif command -v python3 >/dev/null 2>&1; then
+            python3 -c "import zipfile; zipfile.ZipFile('Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip').extractall()"
+        elif command -v python >/dev/null 2>&1; then
+            python -c "import zipfile; zipfile.ZipFile('Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip').extractall()"
+        else
+            echo "ERROR: Cannot extract zip file. Need unzip or python."
+            exit 1
+        fi
         
         # Install to /opt/declang
         mv Release /opt/declang
