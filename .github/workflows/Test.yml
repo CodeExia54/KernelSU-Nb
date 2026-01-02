@@ -1,4 +1,4 @@
-name: Build Kernel Module ddk
+name: Build Kernel Module ddk Test
 
 on:
   workflow_dispatch:
@@ -41,88 +41,22 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Download and setup DeClang
+    - name: Download DeClang
       run: |
-        echo "=== Downloading DeClang ==="
-        
-        # Install unzip if needed
-        apt-get update && apt-get install -y unzip 2>/dev/null || echo "unzip already installed or not available"
-        
-        # Download DeClang
+        apt-get update && apt-get install -y unzip 2>/dev/null || true
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        
-        # Extract
-        if command -v unzip >/dev/null 2>&1; then
-            unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        elif command -v python3 >/dev/null 2>&1; then
-            python3 -c "import zipfile; zipfile.ZipFile('Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip').extractall()"
-        else
-            echo "ERROR: Cannot extract zip file"
-            exit 1
-        fi
-        
-        # Check the structure
-        echo "DeClang extracted structure:"
-        find . -name "clang" -type f | head -10
-        
-        # The clang binary is in compiler/bin/clang
-        # Set correct permissions
+        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         chmod +x compiler/bin/clang
-        chmod +x compiler/bin/clang++
-        
-        # Move to /opt/declang with correct structure
         mkdir -p /opt/declang
-        cp -r compiler /opt/declang/
-        cp -r script /opt/declang/ 2>/dev/null || true
-        cp -r LICENSE* /opt/declang/ 2>/dev/null || true
-        
-        echo "DeClang installed to /opt/declang"
-        echo "Clang path: /opt/declang/compiler/bin/clang"
-        
-        # Verify it works
-        if [ -x "/opt/declang/compiler/bin/clang" ]; then
-            echo "✅ DeClang binary is executable"
-            /opt/declang/compiler/bin/clang --version | head -1
-        else
-            echo "❌ DeClang binary not executable"
-            exit 1
-        fi
+        cp -r . /opt/declang/
 
     - name: Build ${{ inputs.module_dir }}.ko
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
-        
-        # Set DeClang as compiler (correct path)
+
+        # Set DeClang as compiler
         export CC="/opt/declang/compiler/bin/clang"
-        export CXX="/opt/declang/compiler/bin/clang++"
         export DECLANG_HOME=/opt/declang
-        
-        # Add to PATH for subprocesses
-        export PATH="/opt/declang/compiler/bin:$PATH"
-        
-        # Create minimal DeClang config
-        mkdir -p ~/.DeClang
-        cat > ~/.DeClang/config.pre.json << 'EOF'
-        {
-          "build_seed": "ddk_$(date +%s)",
-          "overall_obfuscation": 50,
-          "flatten": {
-            "name": ".*",
-            "seed": "a1b2c3d4e5f67890",
-            "split_level": 1,
-            "enable_obfuscation": 1
-          }
-        }
-        EOF
-        
-        # Generate config if script exists
-        if [ -f "/opt/declang/gen_config.sh" ]; then
-            /opt/declang/gen_config.sh -path /opt/declang -seed "ddk_$(date +%s)"
-        fi
-        
-        echo "Build environment:"
-        echo "CC: $CC"
-        echo "DECLANG_HOME: $DECLANG_HOME"
         
         # Build the module
         make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
@@ -141,11 +75,6 @@ jobs:
             cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
             echo "Copied: $KO_FILE -> /github/workspace/out/$OUTPUT_NAME"
             echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
-            
-            # Check if it's obfuscated
-            echo "Checking obfuscation..."
-            strings "$KO_FILE" | grep -i "license\|author\|description" | head -3 || echo "Strings might be encrypted (good!)"
-            
             llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
             echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
         else
