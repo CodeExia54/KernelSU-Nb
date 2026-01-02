@@ -1,4 +1,4 @@
-name: Build Obfuscated Module with DeClang
+name: Build Obfuscated Kernel Module with DeClang
 
 on:
   workflow_dispatch:
@@ -21,12 +21,12 @@ on:
 
 jobs:
   build-obfuscated:
-    name: Build ${{ inputs.module_dir }} with DeClang
+    name: Build ${{ inputs.module_dir }}.ko
     runs-on: ubuntu-latest
     strategy:
       matrix:
         kmi:
-          - android14-6.1
+          - android14-6.1  # Test with one first
 
     container:
       image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
@@ -38,141 +38,131 @@ jobs:
     - name: Install tools
       run: |
         apt-get update
-        apt-get install -y wget unzip qemu-user-static
+        apt-get install -y wget unzip
         
-    - name: Download and setup DeClang
+    - name: Download and prepare DeClang
+      id: declang
       run: |
-        echo "=== Downloading DeClang ==="
+        echo "=== DOWNLOAD DECLANG ==="
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         
-        echo "=== Extracting ==="
+        echo "=== EXTRACT ==="
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         
-        echo "=== Fixing permissions ==="
-        # Make ALL binaries in Release/bin executable
-        find Release/bin -type f -exec chmod +x {} \;
-        
-        echo "=== Checking structure ==="
-        echo "Release/bin contents:"
-        ls -la Release/bin/
-        
-        echo "=== Testing DeClang ==="
-        # Try running DeClang
-        if ./Release/bin/clang --version; then
-            echo "✓ DeClang runs natively"
-        else
-            echo "⚠ DeClang may need QEMU"
-            # Try with QEMU
-            qemu-x86_64 ./Release/bin/clang --version && echo "✓ Works with QEMU" || echo "✗ QEMU also fails"
-        fi
-        
-    - name: Backup and replace DDK compiler
-      run: |
-        echo "=== Replacing DDK compiler with DeClang ==="
-        
-        DDK_BIN_DIR="/opt/ddk/clang/clang-r487747c/bin"
-        
-        echo "DDK bin directory: $DDK_BIN_DIR"
-        echo "Contents before:"
-        ls -la "$DDK_BIN_DIR/" | grep -E "clang|ld|lld"
-        
-        # Backup originals
-        backup_dir="/tmp/ddk_backup_$(date +%s)"
-        mkdir -p "$backup_dir"
-        cp "$DDK_BIN_DIR/clang" "$backup_dir/clang.orig"
-        
-        # Create wrapper script
-        cat > "$DDK_BIN_DIR/clang" << 'EOF'
-        #!/bin/bash
-        # DeClang wrapper script
-        
-        # Path to DeClang (relative to workspace)
-        DECLANG_BIN="/github/workspace/Release/bin/clang"
-        
-        # Obfuscation flags - start conservative for kernel modules
-        OBF_FLAGS="-mllvm -fla -mllvm -sub"
-        
-        # Add more flags for specific functions if needed
-        for arg in "$@"; do
-            if [[ "$arg" == *"kernel"* ]] || [[ "$arg" == *"module"* ]]; then
-                # Kernel-specific flags
-                OBF_FLAGS="-mllvm -fla"
-                break
-            fi
+        echo "=== FIND CLANG ==="
+        # Search recursively
+        find . -type f -name "clang" | while read f; do
+            echo "Candidate: $f"
+            file "$f" 2>/dev/null || true
         done
         
-        # Execute with obfuscation
-        exec "$DECLANG_BIN" "$@" $OBF_FLAGS
-        EOF
+        # Get the most likely clang
+        CLANG_PATH=$(find . -type f -path "*/bin/clang" | head -1)
+        [ -z "$CLANG_PATH" ] && CLANG_PATH=$(find . -type f -name "clang" | head -1)
         
-        chmod +x "$DDK_BIN_DIR/clang"
-        
-        # Also replace the Android cross-compiler
-        if [ -f "$DDK_BIN_DIR/aarch64-linux-android-clang" ]; then
-            cp "$DDK_BIN_DIR/aarch64-linux-android-clang" "$backup_dir/aarch64-linux-android-clang.orig"
-            ln -sf "clang" "$DDK_BIN_DIR/aarch64-linux-android-clang"
+        if [ ! -f "$CLANG_PATH" ]; then
+            echo "ERROR: No clang found"
+            find . -type f | head -30
+            exit 1
         fi
         
-        # Replace linker if DeClang has one
-        if [ -f "/github/workspace/Release/bin/ld.lld" ]; then
-            cp "$DDK_BIN_DIR/ld.lld" "$backup_dir/ld.lld.orig" 2>/dev/null || true
-            cp "/github/workspace/Release/bin/ld.lld" "$DDK_BIN_DIR/ld.lld"
-            chmod +x "$DDK_BIN_DIR/ld.lld"
-        fi
+        echo "Using clang: $CLANG_PATH"
+        chmod +x "$CLANG_PATH"
         
-        echo "✓ Compiler replaced"
-        echo "Backups saved to: $backup_dir"
-        echo "Contents after:"
-        ls -la "$DDK_BIN_DIR/" | grep -E "clang|ld|lld"
+        # Get absolute path
+        CLANG_PATH=$(realpath "$CLANG_PATH")
+        echo "CLANG_PATH=$CLANG_PATH" >> $GITHUB_OUTPUT
         
-    - name: Build kernel module
-      env:
-        KERNEL_SRC: /opt/ddk/kdir/android14-6.1
+        # Test
+        echo "DeClang version:"
+        "$CLANG_PATH" --version || echo "May need QEMU"
+        
+    - name: Create PATH hijack wrapper
       run: |
-        echo "=== Building ${{ inputs.module_dir }} ==="
-        echo "Using KERNEL_SRC: $KERNEL_SRC"
+        echo "=== HIJACKING COMPILER VIA PATH ==="
         
-        # Test compiler
-        echo "--- Testing compiler ---"
-        which clang
-        clang --version || echo "Compiler test failed"
+        DECLANG_CLANG="${{ steps.declang.outputs.CLANG_PATH }}"
         
-        # Build the module
-        echo "--- Building module ---"
+        # Create a fake bin directory that will be FIRST in PATH
+        mkdir -p /github/workspace/fake_bin
+        
+        # Create wrapper scripts for ALL compiler tools
+        cat > /github/workspace/fake_bin/clang << 'EOF'
+#!/bin/bash
+# This intercepts calls to 'clang'
+DECLANG_CLANG="${{ steps.declang.outputs.CLANG_PATH }}"
+
+# Obfuscation flags
+OBF_FLAGS="-mllvm -fla -mllvm -sub"
+
+# Check if we should skip obfuscation for certain cases
+for arg in "$@"; do
+    case "$arg" in
+        *--version*|*-v*|*--help*)
+            # No obfuscation for version/help queries
+            exec "$DECLANG_CLANG" "$@"
+            ;;
+    esac
+done
+
+# Regular compilation with obfuscation
+exec "$DECLANG_CLANG" "$@" $OBF_FLAGS
+EOF
+        
+        # Create wrapper for Android cross-compiler
+        cat > /github/workspace/fake_bin/aarch64-linux-android-clang << 'EOF'
+#!/bin/bash
+# This intercepts cross-compiler calls
+DECLANG_CLANG="${{ steps.declang.outputs.CLANG_PATH }}"
+OBF_FLAGS="-mllvm -fla -mllvm -sub"
+exec "$DECLANG_CLANG" "$@" $OBF_FLAGS --target=aarch64-linux-android
+EOF
+        
+        # Create symlinks for other compiler tools
+        for tool in clang++ clang-cl clang-cpp; do
+            ln -sf clang /github/workspace/fake_bin/$tool
+        done
+        
+        # Make all wrappers executable
+        chmod +x /github/workspace/fake_bin/*
+        
+        echo "Created wrappers in /github/workspace/fake_bin/"
+        ls -la /github/workspace/fake_bin/
+        
+    - name: Build with hijacked PATH
+      env:
+        # Put our fake_bin FIRST in PATH
+        PATH: /github/workspace/fake_bin:$PATH
+      run: |
+        echo "=== BUILDING WITH HIJACKED COMPILER ==="
+        echo "PATH: $PATH"
+        echo "Which clang: $(which clang)"
+        
+        # Test that our wrapper is being used
+        echo "--- Compiler test ---"
+        clang --version
+        
+        # Build module
         cd "${{ inputs.module_dir }}"
         
-        # Clean first
-        make clean 2>/dev/null || true
+        echo "--- Building module ---"
+        make -C $KERNEL_SRC M=$(pwd) modules V=1 2>&1 | grep -i "clang\|error\|warning" | head -30
         
-        # Build with some debug info
-        set -x
-        make -C "$KERNEL_SRC" M="$(pwd)" modules \
-            CC="clang" \
-            LD="ld.lld" \
-            V=1 \
-            2>&1 | tee build.log | tail -50
-        set +x
-        
-        # Check for output
+        # Check result
         KO_FILE=$(find . -name "*.ko" -type f | head -1)
         if [ -f "$KO_FILE" ]; then
-            echo "✓ SUCCESS: Built $KO_FILE"
-            echo "File info:"
-            file "$KO_FILE"
+            echo "✓ SUCCESS: $KO_FILE"
             
-            # Copy to output directory
+            # Copy to output
             mkdir -p /github/workspace/out
             cp "$KO_FILE" "/github/workspace/out/obfuscated-${{ inputs.module_dir }}.ko"
             
-            # Optional: Strip debug symbols
-            if command -v llvm-strip >/dev/null; then
-                llvm-strip -d "/github/workspace/out/obfuscated-${{ inputs.module_dir }}.ko"
-            fi
+            # Verify it's ARM64
+            file "$KO_FILE"
         else
-            echo "✗ FAILED: No .ko file produced"
-            echo "Build log tail:"
-            tail -100 build.log
-            echo "Full build log saved as build.log"
+            echo "✗ FAILED: No .ko file"
+            echo "Trying without V=1 for more info..."
+            make -C $KERNEL_SRC M=$(pwd) modules 2>&1 | tail -50
             exit 1
         fi
         
@@ -180,23 +170,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: obfuscated-${{ inputs.module_dir }}-${{ matrix.kmi }}
-        path: /github/workspace/out/obfuscated-*.ko
-        retention-days: 7
-        
-    - name: Debug info (on failure)
-      if: failure()
-      run: |
-        echo "=== Debug Information ==="
-        echo "Current directory: $(pwd)"
-        echo "Module dir: ${{ inputs.module_dir }}"
-        ls -la "${{ inputs.module_dir }}" || echo "Module dir not found"
-        
-        echo "Compiler info:"
-        which clang
-        file $(which clang) || true
-        
-        echo "DDK structure:"
-        ls -la /opt/ddk/clang/clang-r487747c/bin/
-        
-        echo "DeClang structure:"
-        ls -la /github/workspace/Release/bin/
+        path: /github/workspace/out/*.ko
