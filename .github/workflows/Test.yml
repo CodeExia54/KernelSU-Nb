@@ -68,7 +68,7 @@ jobs:
         
         # Create config.pre.json using echo (avoids heredoc YAML issues)
         echo '{' > $DECLANG_HOME/config.pre.json
-        echo '    "build_seed": "kernel_module_'$TIMESTAMP'",' >> $DECLANG_HOME/config.pre.json
+        echo '    "build_seed": "kernel_module_'"$TIMESTAMP"'",' >> $DECLANG_HOME/config.pre.json
         echo '    "overall_obfuscation": 80,' >> $DECLANG_HOME/config.pre.json
         echo '    "flatten": [' >> $DECLANG_HOME/config.pre.json
         echo '        {' >> $DECLANG_HOME/config.pre.json
@@ -124,8 +124,9 @@ jobs:
         # Create wrapper to handle problematic kernel flag
         mkdir -p /tmp/declang-wrapper
         
-        # Create clang wrapper
-        cat > /tmp/declang-wrapper/clang << 'EOF'
+        # Create clang wrapper - using HEREDOC without quotes to allow variable expansion
+        # Or better, use echo/cat to avoid YAML parsing issues
+        cat > /tmp/declang-wrapper/clang << "WRAPPER_EOF"
 #!/bin/bash
 # Filter out problematic kernel flags
 CLEAN_ARGS=()
@@ -135,16 +136,33 @@ for arg in "$@"; do
     fi
     CLEAN_ARGS+=("$arg")
 done
-exec "CLANG_BIN" "${CLEAN_ARGS[@]}"
-EOF
+exec "$DECLANG_CLANG" "${CLEAN_ARGS[@]}"
+WRAPPER_EOF
         
-        # Insert actual DeClang path
-        sed -i "s|CLANG_BIN|$DECLANG_CLANG|g" /tmp/declang-wrapper/clang
+        # Now replace the placeholder with actual DeClang path
+        # We need to escape slashes for sed
+        DECLANG_CLANG_ESCAPED=$(echo "$DECLANG_CLANG" | sed 's/[\/&]/\\&/g')
+        sed -i "s/\$DECLANG_CLANG/$DECLANG_CLANG_ESCAPED/g" /tmp/declang-wrapper/clang
+        
         chmod +x /tmp/declang-wrapper/clang
         
         # Create clang++ wrapper
-        cp /tmp/declang-wrapper/clang /tmp/declang-wrapper/clang++
-        sed -i "s|$DECLANG_CLANG|$DECLANG_CLANGPP|g" /tmp/declang-wrapper/clang++
+        cat > /tmp/declang-wrapper/clang++ << "WRAPPER2_EOF"
+#!/bin/bash
+# Filter out problematic kernel flags
+CLEAN_ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == *"enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"* ]]; then
+        continue
+    fi
+    CLEAN_ARGS+=("$arg")
+done
+exec "$DECLANG_CLANGPP" "${CLEAN_ARGS[@]}"
+WRAPPER2_EOF
+        
+        DECLANG_CLANGPP_ESCAPED=$(echo "$DECLANG_CLANGPP" | sed 's/[\/&]/\\&/g')
+        sed -i "s/\$DECLANG_CLANGPP/$DECLANG_CLANGPP_ESCAPED/g" /tmp/declang-wrapper/clang++
+        chmod +x /tmp/declang-wrapper/clang++
         
         # Build with DeClang
         make -C $KERNEL_SRC \
@@ -159,8 +177,9 @@ EOF
         # Create output directory
         mkdir -p /github/workspace/out
         
-        # Find the .ko file
-        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
+        # Find the .ko file - use the actual module_dir from inputs
+        MODULE_DIR="${{ inputs.module_dir }}"
+        KO_FILE=$(find "$MODULE_DIR" -name "*.ko" -type f | head -1)
         
         if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
             TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
