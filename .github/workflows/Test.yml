@@ -30,13 +30,7 @@ jobs:
     strategy:
       matrix:
         kmi:
-          - android12-5.10
-          - android13-5.10
-          - android13-5.15
-          - android14-5.15
-          - android14-6.1
-          - android15-6.6
-          - android16-6.12
+          - android14-6.1  # Test with ONE first
 
     container:
       image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
@@ -46,14 +40,14 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Setup DeClang (if obfuscation enabled)
-      if: ${{ inputs.obfuscate }}
+      if: ${{ inputs.obfuscate == true }}
       id: setup-declang
       run: |
         echo "=== SETTING UP DECLANG FOR OBFUSCATION ==="
         
         # Install tools
         apt-get update
-        apt-get install -y wget unzip qemu-user-static
+        apt-get install -y wget unzip
         
         # Download DeClang
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
@@ -61,21 +55,10 @@ jobs:
         # Extract
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         
-        # Find clang - search in common locations
-        CLANG_PATH=""
-        for path in "./clang" "./bin/clang" "./*/bin/clang" "./*/*/bin/clang"; do
-            if [ -f "$path" ]; then
-                CLANG_PATH="$path"
-                break
-            fi
-        done
+        # Find clang - search recursively
+        CLANG_PATH=$(find . -type f -name "clang" | head -1)
         
-        # If still not found, search recursively
         if [ -z "$CLANG_PATH" ]; then
-            CLANG_PATH=$(find . -type f -name "clang" | head -1)
-        fi
-        
-        if [ ! -f "$CLANG_PATH" ]; then
             echo "ERROR: Cannot find clang in DeClang package!"
             find . -type f | head -30
             exit 1
@@ -85,6 +68,7 @@ jobs:
         chmod +x "$CLANG_PATH"
         
         # Test it
+        echo "DeClang version:"
         "$CLANG_PATH" --version || echo "Note: May need QEMU emulation"
         
         # Save the path
@@ -94,8 +78,8 @@ jobs:
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
         
-        # If obfuscation is enabled, use DeClang
-        if ${{ inputs.obfuscate }}; then
+        # Check if obfuscation is enabled
+        if [[ "${{ inputs.obfuscate }}" == "true" ]]; then
             echo "Using DeClang with obfuscation"
             
             DECLANG_CLANG="${{ steps.setup-declang.outputs.CLANG_PATH }}"
@@ -106,14 +90,12 @@ jobs:
             fi
             
             # Create a simple wrapper script
-            cat > /tmp/declang_wrapper << 'EOF'
+            cat > /tmp/declang_wrapper << EOF
 #!/bin/bash
 OBF_FLAGS="-mllvm -fla -mllvm -sub"
-{{DECLANG_CLANG}} "$@" $OBF_FLAGS
+$DECLANG_CLANG "\$@" \$OBF_FLAGS
 EOF
             
-            # Insert the actual path
-            sed -i "s|{{DECLANG_CLANG}}|$DECLANG_CLANG|g" /tmp/declang_wrapper
             chmod +x /tmp/declang_wrapper
             
             # Build with DeClang
@@ -137,7 +119,7 @@ EOF
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         
         TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-        if ${{ inputs.obfuscate }}; then
+        if [[ "${{ inputs.obfuscate }}" == "true" ]]; then
             OUTPUT_NAME="OBFUSCATED-${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
         else
             OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
