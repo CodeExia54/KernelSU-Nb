@@ -41,32 +41,45 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Download DeClang
+    - name: Download and extract DeClang
       run: |
         apt-get update && apt-get install -y wget unzip
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip -d declang
-        chmod +x declang/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/*
+        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        chmod +x Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/*
 
-    - name: Build ${{ inputs.module_dir }}.ko
+    - name: Build ${{ inputs.module_dir }}.ko with DeClang
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
         
-        # Use DeClang instead of default clang
-        DECLANG_PATH="$PWD/declang/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/declang"
+        # Set the path to DeClang's clang binary
+        DECLANG_CLANG="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
+        DECLANG_CLANGPP="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang++"
+        
+        echo "Using DeClang clang from: $DECLANG_CLANG"
+        echo "Using DeClang clang++ from: $DECLANG_CLANGPP"
+        
+        # Verify the binaries exist
+        if [ ! -f "$DECLANG_CLANG" ]; then
+            echo "ERROR: clang not found at $DECLANG_CLANG"
+            echo "Available files in compiler/bin/:"
+            ls -la Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/
+            exit 1
+        fi
         
         # Build with DeClang
         make -C $KERNEL_SRC \
             M=$PWD/${{ inputs.module_dir }} \
-            CC="$DECLANG_PATH" \
-            CXX="$DECLANG_PATH++" \
+            CC="$DECLANG_CLANG" \
+            CXX="$DECLANG_CLANGPP" \
             modules
         
         echo "=== Build completed ==="
 
-        # Rest of your original output handling...
+        # Create output directory
         mkdir -p /github/workspace/out
         
+        # Find the first .ko file in the module directory
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         
         TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
