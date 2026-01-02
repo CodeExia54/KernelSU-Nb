@@ -29,6 +29,7 @@ ccflags-y += -I$(src)/src/inlinehook -I$(src)/src/hook -I$(src)/src/proc -I$(src
 ccflags-y += -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat
 ccflags-y += -Wno-declaration-after-statement -Wno-unused-function -Wno-unused-variable
 ccflags-y += -Wno-unused-label  # ADDED THIS LINE TO FIX THE ERROR
+ccflags-y += -Wno-unused-command-line-argument
 
 # 编译时启用 隐藏模块功能
 ccflags-y += -DHIDE_SELF_MODULE
