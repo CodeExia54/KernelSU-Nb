@@ -1,109 +1,298 @@
-name: Check DeClang Actual Capabilities
+name: Build Obfuscated Kernel Module with DeClang
 
 on:
-  workflow_dispatch
+  workflow_dispatch:
+    inputs:
+      module_dir:
+        description: 'Module directory to build'
+        required: true
+        type: choice
+        options:
+        - exianb-dev
+        - exianb
+        - ovo
+        - prctl-fd
+        - prctl-hook
+        - offset
+        - hello-world
+        - wuwa
+        - panic
+        default: 'hello-world'
+      obfuscation_level:
+        description: 'Obfuscation level (0-100)'
+        required: false
+        default: '30'
+        type: string
 
 jobs:
-  check-declang:
+  build-obfuscated:
+    name: Build Obfuscated ${{ inputs.module_dir }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        kmi:
+          - android14-6.1
+          - android15-6.6
+          - android16-6.12
+
     container:
-      image: ghcr.io/ylarod/ddk:android13-5.15
+      image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
 
     steps:
-    - name: Download and extract DeClang
+    - name: Checkout source code
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
       run: |
-        apt-get update && apt-get install -y unzip wget 2>/dev/null || true
+        apt-get update
+        apt-get install -y qemu-user-static wget unzip file python3
+        
+    - name: Discover DDK toolchain structure
+      id: ddk-info
+      run: |
+        echo "=== DDK Toolchain Structure ==="
+        
+        # Find DDK clang directory
+        DDK_CLANG_DIR=$(find /opt/ddk/clang -maxdepth 1 -type d -name "clang-*" | head -1)
+        if [ -z "$DDK_CLANG_DIR" ]; then
+          # Try alternative location
+          DDK_CLANG_DIR=$(find /opt -name "clang" -type d | grep -i ddk | head -1)
+        fi
+        
+        echo "DDK_CLANG_DIR=$DDK_CLANG_DIR" >> $GITHUB_OUTPUT
+        
+        # Find the actual clang binary
+        CLANG_BIN=$(find "$DDK_CLANG_DIR" -name "clang" -type f -executable | head -1)
+        echo "CLANG_BIN=$CLANG_BIN" >> $GITHUB_OUTPUT
+        
+        # Get compiler prefix (aarch64-linux-android-)
+        PREFIX=$(find "$DDK_CLANG_DIR/bin" -name "*clang" -type f | xargs basename | sed 's/-clang//' | head -1)
+        if [ -z "$PREFIX" ]; then
+          PREFIX="aarch64-linux-android"
+        fi
+        echo "PREFIX=$PREFIX" >> $GITHUB_OUTPUT
+        
+        # Get kernel source path
+        KERNEL_SRC="${KERNEL_SRC:-$(find / -type d -name "kernel" -path "*/common/*" 2>/dev/null | head -1)}"
+        echo "KERNEL_SRC=$KERNEL_SRC" >> $GITHUB_OUTPUT
+        
+        echo "Found:"
+        echo "  DDK Clang dir: $DDK_CLANG_DIR"
+        echo "  Clang binary: $CLANG_BIN"
+        echo "  Prefix: $PREFIX"
+        echo "  Kernel src: $KERNEL_SRC"
+        
+    - name: Download and setup DeClang
+      run: |
+        echo "=== Setting up DeClang ==="
+        
+        # Download DeClang x86_64 binary
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        chmod +x Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang
-
-    - name: Check ALL Help Outputs
-      run: |
-        echo "=== COMPREHENSIVE HELP CHECK ==="
-        CLANG="./Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
+        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip -d /opt/declang
         
-        echo "1. Basic --help:"
-        $CLANG --help 2>&1 | grep -i "obfuscat\|flatten\|declang\|mllvm" | head -20
+        # Make all binaries executable
+        chmod +x /opt/declang/Release/bin/*
         
-        echo ""
-        echo "2. -cc1 --help (LLVM frontend):"
-        $CLANG -cc1 --help 2>&1 | grep -i "obfuscat\|flatten\|pass" | head -20
+        # Test DeClang
+        echo "DeClang version:"
+        /opt/declang/Release/bin/clang --version || echo "Running via QEMU"
         
-        echo ""
-        echo "3. -mllvm --help (ALL options):"
-        $CLANG -mllvm --help 2>&1 > /tmp/mllvm_full.txt
-        echo "Total -mllvm options: $(grep -c '^  -' /tmp/mllvm_full.txt)"
-        echo "First 50 options:"
-        head -100 /tmp/mllvm_full.txt
-        
-        echo ""
-        echo "4. Searching for obfuscation in ALL help:"
-        $CLANG --help 2>&1 | grep -B2 -A2 "mllvm" || echo "No mllvm in main help"
-        
-        echo ""
-        echo "5. Check environment variables:"
-        echo "Trying with DECLANG_HOME set:"
-        export DECLANG_HOME=$(pwd)/Release-Linux-swift5.10-v1.0.0-ubuntu2204
-        $CLANG --help 2>&1 | grep -i "declang" | head -5 || echo "No DeClang-specific output"
-
-    - name: Check What Flags Are Actually Accepted
-      run: |
-        echo "=== TESTING ACTUAL FLAG ACCEPTANCE ==="
-        CLANG="./Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
-        
-        # Create test file
-        cat > /tmp/test.c << 'EOF'
-        int main() { return 0; }
+        # Create obfuscation config
+        mkdir -p /opt/declang
+        cat > /opt/declang/config.pre.json << EOF
+        {
+          "build_seed": "github-${{ github.run_id }}-${{ github.run_attempt }}",
+          "overall_obfuscation": ${{ inputs.obfuscation_level }},
+          "flatten": {
+            "name": ".*",
+            "seed": "$(printf '%016x' $((RANDOM * 32768 + RANDOM)))",
+            "split_level": 2,
+            "enable_obfuscation": 1
+          }
+        }
         EOF
         
-        echo "Testing which flags don't cause errors:"
-        
-        # Test common obfuscation flag patterns
-        FLAGS=(
-            "-mllvm -flatten"
-            "-mllvm -bcf" 
-            "-mllvm -boguscf"
-            "-mllvm -sub"
-            "-mllvm -obfuscate"
-            "-mllvm -irobf"
-            "-mllvm --irobf-cff"
-            "-mllvm --irobf-bcf"
-            "-mllvm --irobf-cse"
-            "-fobfuscate"
-            "-fllvm-obfuscate"
-            "-Xclang -load -Xclang *Obfuscation*"
-        )
-        
-        for flag in "${FLAGS[@]}"; do
-            echo -n "Testing $flag: "
-            $CLANG $flag -c /tmp/test.c -o /tmp/test.o 2>&1 | grep -q "error\|unknown\|unrecognized" && \
-                echo "❌ REJECTED" || echo "✅ ACCEPTED (or different error)"
-        done
-
-    - name: Check gen_config.sh Output
-      run: |
-        echo "=== ANALYZING gen_config.sh ==="
-        
-        if [ -f "./Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config.sh" ]; then
-            echo "gen_config.sh found. Checking what it generates:"
-            
-            mkdir -p ~/.DeClang
-            ./Release-Linux-swift5.10-v1.0.0-ubuntu2204/gen_config.sh -path ./Release-Linux-swift5.10-v1.0.0-ubuntu2204 -seed "test123"
-            
-            echo "Generated config:"
-            cat ~/.DeClang/config.json 2>/dev/null || \
-                find ~/.DeClang -name "*.json" -type f | xargs cat 2>/dev/null || \
-                echo "No config generated"
+        # Generate config (if gen_config.sh exists, otherwise create minimal config)
+        cd /opt/declang
+        if [ -f "./gen_config.sh" ]; then
+          ./gen_config.sh -path /opt/declang/ -seed "build-${{ github.run_id }}"
+        else
+          echo "Creating minimal config.json"
+          cat > config.json << EOF
+        {
+          "build_seed": "build-${{ github.run_id }}",
+          "overall_obfuscation": ${{ inputs.obfuscation_level }}
+        }
+        EOF
         fi
-
-    - name: Look for Hidden Options
+        
+    - name: Create DeClang wrapper in DDK location
       run: |
-        echo "=== SEARCHING FOR HIDDEN OPTIONS ==="
+        echo "=== Replacing DDK toolchain with DeClang ==="
         
-        # Search in all files
-        find ./Release-Linux-swift5.10-v1.0.0-ubuntu2204 -type f \( -name "*.txt" -o -name "*.md" -o -name "*.rst" -o -name "*.help" \) | \
-            xargs grep -l "obfuscat\|flatten\|bcf" 2>/dev/null || echo "No documentation files found"
+        DDK_CLANG_DIR="${{ steps.ddk-info.outputs.DDK_CLANG_DIR }}"
+        PREFIX="${{ steps.ddk-info.outputs.PREFIX }}"
         
-        echo ""
-        echo "Checking for plugin .so files:"
-        find ./Release-Linux-swift5.10-v1.0.0-ubuntu2204 -name "*.so" -type f | head -10
+        echo "Target DDK directory: $DDK_CLANG_DIR"
+        echo "Compiler prefix: $PREFIX"
+        
+        if [ -z "$DDK_CLANG_DIR" ] || [ ! -d "$DDK_CLANG_DIR" ]; then
+          echo "ERROR: Cannot find DDK clang directory"
+          exit 1
+        fi
+        
+        # Backup original binaries (optional)
+        BACKUP_DIR="/opt/ddk/clang_backup_$(date +%s)"
+        mkdir -p "$BACKUP_DIR"
+        cp -r "$DDK_CLANG_DIR/bin" "$BACKUP_DIR/" 2>/dev/null || true
+        
+        # Create wrapper script that uses DeClang
+        cat > /usr/local/bin/declang-wrapper << 'EOF'
+        #!/bin/bash
+        # DeClang wrapper - replaces DDK clang with DeClang obfuscation
+        
+        # Base DeClang binary
+        DECLANG_BIN="/opt/declang/Release/bin/clang"
+        
+        # Obfuscation flags (adjust as needed)
+        OBF_FLAGS=""
+        
+        # Enable different obfuscation types
+        OBF_FLAGS="$OBF_FLAGS -mllvm -fla"          # Control flow flattening
+        OBF_FLAGS="$OBF_FLAGS -mllvm -sub"          # Instruction substitution
+        OBF_FLAGS="$OBF_FLAGS -mllvm -bcf"          # Bogus control flow
+        
+        # For kernel modules, we might want to be conservative
+        # Remove -bcf if it causes issues
+        if [ "$KERNEL_MODULE" = "1" ]; then
+            OBF_FLAGS="-mllvm -fla -mllvm -sub"
+        fi
+        
+        # Check if we're cross-compiling for Android
+        IS_ANDROID=0
+        for arg in "$@"; do
+            if [[ "$arg" == *"android"* ]] || [[ "$arg" == *"aarch64"* ]]; then
+                IS_ANDROID=1
+            fi
+        done
+        
+        # Execute DeClang with obfuscation
+        if [ $IS_ANDROID -eq 1 ]; then
+            # For Android targets, pass through all args plus obfuscation
+            exec "$DECLANG_BIN" "$@" $OBF_FLAGS
+        else
+            # For host compilation, just use DeClang without obfuscation
+            exec "$DECLANG_BIN" "$@"
+        fi
+        EOF
+        
+        chmod +x /usr/local/bin/declang-wrapper
+        
+        # Replace all clang binaries in DDK directory with symlinks to our wrapper
+        for bin in "$DDK_CLANG_DIR"/bin/*; do
+            name=$(basename "$bin")
+            if [[ "$name" == *"clang"* ]] || [[ "$name" == "$PREFIX-clang"* ]]; then
+                echo "Replacing: $name -> declang-wrapper"
+                mv "$bin" "${bin}.backup"
+                ln -sf /usr/local/bin/declang-wrapper "$bin"
+            fi
+        done
+        
+        # Also replace linker if needed
+        if [ -f "$DDK_CLANG_DIR/bin/ld.lld" ]; then
+            ln -sf /opt/declang/Release/bin/ld.lld "$DDK_CLANG_DIR/bin/ld.lld"
+        fi
+        
+        echo "=== Toolchain replacement complete ==="
+        echo "Original binaries backed up to: $BACKUP_DIR"
+        
+    - name: Build obfuscated kernel module
+      env:
+        KERNEL_MODULE: "1"
+        KERNEL_SRC: ${{ steps.ddk-info.outputs.KERNEL_SRC }}
+      run: |
+        echo "=== Building ${{ inputs.module_dir }} with DeClang obfuscation ==="
+        echo "Kernel source: $KERNEL_SRC"
+        echo "Module directory: ${{ inputs.module_dir }}"
+        
+        # Check environment
+        echo "--- Environment ---"
+        echo "PATH: $PATH"
+        echo "CC: $(which clang 2>/dev/null || echo 'Not found')"
+        echo "CROSS_COMPILE: ${CROSS_COMPILE:-Not set}"
+        
+        # Navigate to module directory
+        cd "${{ inputs.module_dir }}"
+        
+        # Clean first
+        make clean || true
+        
+        # Build with verbose output to see compiler being used
+        echo "--- Building module ---"
+        make -C "$KERNEL_SRC" M="$(pwd)" modules V=1 2>&1 | tail -100
+        
+        # Check for .ko file
+        KO_FILE=$(find . -name "*.ko" -type f | head -1)
+        if [ -f "$KO_FILE" ]; then
+            echo "✓ Successfully built: $KO_FILE"
+            echo "File info:"
+            file "$KO_FILE"
+            
+            # Copy to workspace
+            mkdir -p /github/workspace/out
+            cp "$KO_FILE" "/github/workspace/out/obfuscated-${{ inputs.module_dir }}-${{ matrix.kmi }}.ko"
+            
+            # Optional: Run modinfo
+            echo "Module info:"
+            modinfo "$KO_FILE" 2>/dev/null || echo "modinfo not available"
+        else
+            echo "✗ ERROR: No .ko file produced"
+            echo "Directory contents:"
+            ls -la
+            exit 1
+        fi
+        
+    - name: Restore original toolchain (optional)
+      if: always()
+      run: |
+        echo "=== Restoring original DDK toolchain ==="
+        # If you backed up, you could restore here
+        # But usually we don't need to since container is ephemeral
+        
+    - name: Upload obfuscated module artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: obfuscated-${{ inputs.module_dir }}-${{ matrix.kmi }}
+        path: /github/workspace/out/obfuscated-*.ko
+        retention-days: 7
+
+  test-obfuscation:
+    name: Verify Obfuscation
+    runs-on: ubuntu-latest
+    needs: build-obfuscated
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: obfuscated-*
+        path: artifacts
+        
+    - name: Analyze obfuscated binaries
+      run: |
+        echo "=== Analyzing obfuscated modules ==="
+        find artifacts -name "*.ko" -type f | while read ko; do
+          echo "File: $ko"
+          echo "Size: $(du -h "$ko" | cut -f1)"
+          
+          # Check for stripped debug symbols (common in obfuscation)
+          if file "$ko" | grep -q "stripped"; then
+            echo "  - Debug symbols stripped ✓"
+          fi
+          
+          # Check if it's an ARM64 kernel module
+          if file "$ko" | grep -q "ARM64"; then
+            echo "  - ARM64 kernel module ✓"
+          fi
+          
+          echo ""
+        done
