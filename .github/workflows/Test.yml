@@ -1,4 +1,4 @@
-name: Build Kernel Module ddk Test
+name: Build Kernel Module ddk with DeClang
 
 on:
   workflow_dispatch:
@@ -41,68 +41,209 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Setup DeClang
+    - name: Replace entire toolchain with DeClang
       run: |
-        echo "=== Setting up DeClang ==="
+        echo "=== REPLACING ENTIRE TOOLCHAIN WITH DeClang ==="
         
         # Install dependencies
         apt-get update && apt-get install -y wget unzip
         
-        # Download DeClang for Linux
+        # Download DeClang
+        echo "Downloading DeClang toolchain..."
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         
-        # Extract
-        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip -d declang-linux
+        # Extract to temporary location
+        mkdir -p /tmp/declang-full
+        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip -d /tmp/declang-full
         
-        # Make DeClang executables
-        chmod +x declang-linux/bin/*
+        # Find the root of the extracted toolchain
+        # Usually it's something like: Release-Linux-swift5.10-v1.0.0-ubuntu2204/
+        DECLANG_ROOT=$(find /tmp/declang-full -maxdepth 2 -type d -name "Release*" | head -1)
         
-        echo "DeClang setup completed at: $PWD/declang-linux"
+        if [ -z "$DECLANG_ROOT" ]; then
+            DECLANG_ROOT="/tmp/declang-full"
+        fi
+        
+        echo "DeClang root directory: $DECLANG_ROOT"
+        
+        # Back up original toolchain paths
+        ORIGINAL_CLANG_PATH=$(which clang 2>/dev/null || echo "")
+        ORIGINAL_GCC_PATH=$(which gcc 2>/dev/null || echo "")
+        
+        echo "Original clang: $ORIGINAL_CLANG_PATH"
+        echo "Original gcc: $ORIGINAL_GCC_PATH"
+        
+        # Create a completely isolated DeClang environment
+        mkdir -p /opt/declang-complete
+        
+        # Copy entire toolchain structure
+        cp -r "$DECLANG_ROOT"/* /opt/declang-complete/ 2>/dev/null || true
+        
+        # Find the bin directory
+        DECLANG_BIN_DIR=$(find /opt/declang-complete -type d -name "bin" | head -1)
+        
+        if [ -z "$DECLANG_BIN_DIR" ]; then
+            # Create bin directory if it doesn't exist
+            mkdir -p /opt/declang-complete/bin
+            # Find all executables and copy them to bin
+            find /opt/declang-complete -type f -executable -exec cp {} /opt/declang-complete/bin/ \; 2>/dev/null || true
+            DECLANG_BIN_DIR="/opt/declang-complete/bin"
+        fi
+        
+        # Make all binaries executable
+        chmod +x "$DECLANG_BIN_DIR"/* 2>/dev/null || true
+        
+        # Create a complete wrapper environment
+        mkdir -p /opt/declang-wrapper/bin
+        
+        # Create wrapper scripts for ALL compiler tools
+        for tool_path in "$DECLANG_BIN_DIR"/*; do
+            tool_name=$(basename "$tool_path")
+            if [ -x "$tool_path" ] && [ ! -d "$tool_path" ]; then
+                # Create wrapper
+                cat > "/opt/declang-wrapper/bin/$tool_name" << EOF
+#!/bin/bash
+exec "$tool_path" "\$@"
+EOF
+                chmod +x "/opt/declang-wrapper/bin/$tool_name"
+                
+                # Also create standard name aliases
+                case "$tool_name" in
+                    declang)
+                        ln -sf "$tool_path" "/opt/declang-wrapper/bin/clang" 2>/dev/null || true
+                        ;;
+                    declang++)
+                        ln -sf "$tool_path" "/opt/declang-wrapper/bin/clang++" 2>/dev/null || true
+                        ;;
+                    llvm-ar)
+                        ln -sf "$tool_path" "/opt/declang-wrapper/bin/ar" 2>/dev/null || true
+                        ;;
+                    llvm-nm)
+                        ln -sf "$tool_path" "/opt/declang-wrapper/bin/nm" 2>/dev/null || true
+                        ;;
+                    llvm-strip)
+                        ln -sf "$tool_path" "/opt/declang-wrapper/bin/strip" 2>/dev/null || true
+                        ;;
+                    llvm-objcopy)
+                        ln -sf "$tool_path" "/opt/declang-wrapper/bin/objcopy" 2>/dev/null || true
+                        ;;
+                esac
+            fi
+        done
+        
+        # Create standard compiler names if they don't exist
+        if [ ! -f "/opt/declang-wrapper/bin/clang" ] && [ -f "$DECLANG_BIN_DIR/declang" ]; then
+            ln -sf "$DECLANG_BIN_DIR/declang" "/opt/declang-wrapper/bin/clang"
+        fi
+        
+        if [ ! -f "/opt/declang-wrapper/bin/clang++" ] && [ -f "$DECLANG_BIN_DIR/declang++" ]; then
+            ln -sf "$DECLANG_BIN_DIR/declang++" "/opt/declang-wrapper/bin/clang++"
+        fi
+        
+        # Set up environment to COMPLETELY replace the toolchain
+        export PATH="/opt/declang-wrapper/bin:$DECLANG_BIN_DIR:$PATH"
+        
+        # Override ALL compiler environment variables
+        export CC="clang"
+        export CXX="clang++"
+        export LD="clang"
+        export AR="ar"
+        export NM="nm"
+        export STRIP="strip"
+        export OBJCOPY="objcopy"
+        export OBJDUMP="objdump"
+        export READELF="readelf"
+        export RANLIB="ranlib"
+        
+        # Set DeClang home as per their documentation
+        export DECLANG_HOME="/opt/declang-complete"
+        
+        # Verify the toolchain
+        echo "=== VERIFYING DECLANG TOOLCHAIN ==="
+        echo "PATH: $PATH"
+        echo ""
+        echo "Available compilers:"
+        which clang || echo "clang not found"
+        which clang++ || echo "clang++ not found"
+        which gcc || echo "gcc not found"
+        which g++ || echo "g++ not found"
+        echo ""
+        echo "Compiler versions:"
+        clang --version 2>&1 | head -3 || echo "Failed to get clang version"
+        echo ""
+        echo "Available tools in /opt/declang-wrapper/bin/:"
+        ls -la /opt/declang-wrapper/bin/ | head -20
+        
+        # Clean up
+        rm -rf /tmp/declang-full Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        
+        echo "=== DeClang toolchain replacement complete ==="
 
-    - name: Build ${{ inputs.module_dir }}.ko with DeClang
+    - name: Build kernel module with DeClang toolchain
       run: |
-        echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
-        echo "Using DeClang for compilation"
+        echo "=== BUILDING WITH DECLANG TOOLCHAIN ==="
+        echo "Module: ${{ inputs.module_dir }}"
+        echo "KMI: ${{ matrix.kmi }}"
         
-        # Method 1: Direct override via make variables (cleanest approach)
+        # Ensure our environment is still set
+        export PATH="/opt/declang-wrapper/bin:$PATH"
+        export CC="clang"
+        export CXX="clang++"
+        
+        echo "Using compiler: $(which clang)"
+        echo "Compiler version:"
+        clang --version 2>&1 | head -3 || true
+        
+        # Build with explicit toolchain specification
+        # We'll override everything to ensure DeClang is used
         make -C $KERNEL_SRC \
             M=$PWD/${{ inputs.module_dir }} \
-            CC="$PWD/declang-linux/bin/declang" \
-            CXX="$PWD/declang-linux/bin/declang++" \
-            LD="$PWD/declang-linux/bin/declang" \
-            AR="$PWD/declang-linux/bin/llvm-ar" \
-            NM="$PWD/declang-linux/bin/llvm-nm" \
-            STRIP="$PWD/declang-linux/bin/llvm-strip" \
-            OBJCOPY="$PWD/declang-linux/bin/llvm-objcopy" \
-            OBJDUMP="$PWD/declang-linux/bin/llvm-objdump" \
-            READELF="$PWD/declang-linux/bin/llvm-readelf" \
+            CC="clang" \
+            CXX="clang++" \
+            LD="clang" \
+            AR="ar" \
+            NM="nm" \
+            STRIP="strip" \
+            OBJCOPY="objcopy" \
+            OBJDUMP="objdump" \
+            READELF="readelf" \
+            HOSTCC="clang" \
+            HOSTCXX="clang++" \
+            HOSTLD="clang" \
             modules
         
         echo "=== Build completed ==="
-
-        # Create output directory
+        
+        # Handle output
         mkdir -p /github/workspace/out
         
-        # Find the first .ko file in the module directory
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         
-        TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-        OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
         if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
+            TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+            OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
+            
             cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
-            echo "Copied: $KO_FILE -> /github/workspace/out/$OUTPUT_NAME"
-            echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
-            llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
-            echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+            echo "Output: /github/workspace/out/$OUTPUT_NAME"
+            
+            # Use DeClang's strip if available
+            if command -v strip >/dev/null 2>&1; then
+                echo "Stripping debug symbols..."
+                strip -d "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null || true
+                echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+            fi
+            
+            echo "✅ Build successful with DeClang toolchain"
         else
-            echo "ERROR: No .ko file found in ${{ inputs.module_dir }}/!"
-            echo "Available files in ${{ inputs.module_dir }}/:"
-            ls -la "${{ inputs.module_dir }}/" || echo "Directory doesn't exist"
+            echo "❌ ERROR: No .ko file produced!"
+            echo "Checking module directory:"
+            ls -la "${{ inputs.module_dir }}/" 2>/dev/null || echo "Directory doesn't exist"
+            echo "Build logs might show more details"
             exit 1
         fi
 
-    - name: Upload ${{ inputs.module_dir }}.ko artifact
+    - name: Upload DeClang-built artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ github.run_id }}
+        name: ${{ inputs.module_dir }}-declang-${{ matrix.kmi }}-${{ github.run_id }}
         path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-*.ko
