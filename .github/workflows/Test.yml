@@ -41,60 +41,35 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Setup DeClang
+    - name: Setup DeClang from repo scripts
       run: |
-        apt-get update && apt-get install -y wget unzip
-        wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        chmod +x Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/*
+        # Make scripts executable
+        chmod +x scripts/*.sh
+        
+        # Run setup script
+        ./scripts/setup-declang.sh
 
-    - name: Build with DeClang
+    - name: Build with DeClang using wrapper
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
         
-        # Path to DeClang
-        DECLANG_CLANG="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
-        DECLANG_CLANGPP="$PWD/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang++"
+        # Set DECLANG_HOME
+        export DECLANG_HOME=~/.DeClang
         
-        # Create wrapper scripts WITHOUT HEREDOC
-        mkdir -p /tmp/mycc
+        # Paths to DeClang binaries
+        DECLANG_CLANG="$DECLANG_HOME/declang/compiler/bin/clang"
+        DECLANG_CLANGPP="$DECLANG_HOME/declang/compiler/bin/clang++"
         
-        # Create clang wrapper
-        echo '#!/bin/bash' > /tmp/mycc/clang
-        echo 'NEWARGS=()' >> /tmp/mycc/clang
-        echo 'for arg in "$@"; do' >> /tmp/mycc/clang
-        echo '    if echo "$arg" | grep -q "enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"; then' >> /tmp/mycc/clang
-        echo '        continue' >> /tmp/mycc/clang
-        echo '    fi' >> /tmp/mycc/clang
-        echo '    NEWARGS+=("$arg")' >> /tmp/mycc/clang
-        echo 'done' >> /tmp/mycc/clang
-        echo "exec \"$DECLANG_CLANG\" \"\${NEWARGS[@]}\"" >> /tmp/mycc/clang
-        
-        chmod +x /tmp/mycc/clang
-        
-        # Create clang++ wrapper
-        echo '#!/bin/bash' > /tmp/mycc/clang++
-        echo 'NEWARGS=()' >> /tmp/mycc/clang++
-        echo 'for arg in "$@"; do' >> /tmp/mycc/clang++
-        echo '    if echo "$arg" | grep -q "enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"; then' >> /tmp/mycc/clang++
-        echo '        continue' >> /tmp/mycc/clang++
-        echo '    fi' >> /tmp/mycc/clang++
-        echo '    NEWARGS+=("$arg")' >> /tmp/mycc/clang++
-        echo 'done' >> /tmp/mycc/clang++
-        echo "exec \"$DECLANG_CLANGPP\" \"\${NEWARGS[@]}\"" >> /tmp/mycc/clang++
-        
-        chmod +x /tmp/mycc/clang++
-        
-        # Build
+        # Build using our wrapper scripts
         make -C $KERNEL_SRC \
             M=$PWD/${{ inputs.module_dir }} \
-            CC="/tmp/mycc/clang" \
-            CXX="/tmp/mycc/clang++" \
-            LD="/tmp/mycc/clang" \
+            CC="scripts/declang-wrapper.sh $DECLANG_CLANG" \
+            CXX="scripts/declang-wrapper-cpp.sh $DECLANG_CLANGPP" \
+            LD="scripts/declang-wrapper.sh $DECLANG_CLANG" \
             modules
         
         echo "=== Build completed ==="
-        
+
         # Output
         mkdir -p /github/workspace/out
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
@@ -102,7 +77,7 @@ jobs:
         if [ -n "$KO_FILE" ]; then
             TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
             cp "$KO_FILE" "/github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
-            echo "Build successful"
+            echo "✅ Build successful"
         fi
 
     - name: Upload artifact
