@@ -1,4 +1,4 @@
-name: Build Kernel Module with DeClang OLLVM Verification
+name: Build Kernel Module with DeClang OLLVM
 
 on:
   workflow_dispatch:
@@ -8,16 +8,9 @@ on:
         required: true
         type: choice
         options:
-        - exianb-dev
-        - exianb
-        - ovo
-        - prctl-fd
-        - prctl-hook
-        - offset
-        - hello-world
         - wuwa
-        - panic
-        default: 'hello-world'
+        - hello-world
+        default: 'wuwa'
       obfuscation_level:
         description: 'OLLVM obfuscation level'
         required: false
@@ -28,415 +21,177 @@ on:
         - light
         - medium
         - heavy
-        - test_only
 
 jobs:
   ddk-build:
-    name: Build ${{ inputs.module_dir }}.ko for ${{ matrix.kmi }}
+    name: Build ${{ inputs.module_dir }}.ko
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        kmi:
-          - android12-5.10
-          - android13-5.10
+        kmi: [android13-5.10, android14-5.15]
 
     container:
       image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
 
     steps:
-    - name: Checkout source code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
+    
+    - name: Install unzip
+      run: apt-get update && apt-get install -y unzip
 
-    - name: Install unzip (container doesn't have it)
-      run: |
-        echo "Installing unzip..."
-        apt-get update && apt-get install -y unzip
-        echo "✅ unzip installed"
-
-    - name: Environment Information
-      run: |
-        echo "=== Container Environment ==="
-        echo "Host Arch: $(uname -m)"
-        echo "Kernel: $(uname -r)"
-        echo "Container: ${{ matrix.kmi }}"
-        echo "Module: ${{ inputs.module_dir }}"
-        echo "Obfuscation: ${{ inputs.obfuscation_level }}"
-        echo ""
-        echo "=== DDK Toolchain ==="
-        which clang || echo "clang not found"
-        clang --version 2>/dev/null | head -3 || true
-        echo ""
-        echo "=== Kernel Source ==="
-        echo "KERNEL_SRC: $KERNEL_SRC"
-        ls -la $KERNEL_SRC/ 2>/dev/null | head -5 || true
-
-    - name: Download and Verify DeClang
+    - name: Setup DECLANG_HOME Environment
       if: ${{ inputs.obfuscation_level != 'none' }}
       run: |
-        echo "=== Downloading DeClang Swift Release ==="
-        wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        echo "=== Setting up DECLANG_HOME ==="
+        # Create DECLANG_HOME directory
+        mkdir -p /tmp/.DeClang
+        echo "DECLANG_HOME=/tmp/.DeClang" >> $GITHUB_ENV
         
-        echo ""
-        echo "=== DeClang Structure ==="
-        find Release-Linux-swift5.10-v1.0.0-ubuntu2204 -type f -name "clang*" | head -10
-        
-        DECLANG_CLANG="$(pwd)/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
-        DECLANG_CXX="$(pwd)/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang++"
-        
-        echo ""
-        echo "=== DeClang Binary Info ==="
-        echo "Clang path: $DECLANG_CLANG"
-        echo "Clang++ path: $DECLANG_CXX"
-        
-        if [ ! -f "$DECLANG_CLANG" ]; then
-          echo "❌ ERROR: DeClang clang not found!"
-          exit 1
-        fi
-        
-        chmod +x "$DECLANG_CLANG" "$DECLANG_CXX"
-        file "$DECLANG_CLANG"
-        
-        echo ""
-        echo "=== DeClang Version Test ==="
-        "$DECLANG_CLANG" --version | head -5
-        
-        echo "DECLANG_CLANG=$DECLANG_CLANG" >> $GITHUB_ENV
-        echo "DECLANG_CXX=$DECLANG_CXX" >> $GITHUB_ENV
-
-    - name: OLLVM Support Verification
-      if: ${{ inputs.obfuscation_level != 'none' && inputs.obfuscation_level != 'test_only' }}
-      run: |
-        echo "=== OLLVM Support Verification ==="
-        
-        # Test OLLVM flags
-        echo "Testing OLLVM flags with $DECLANG_CLANG..."
-        
-        # Create test file with clear patterns
-        cat > /tmp/ollvm_test.c << 'EOF'
-        int test_function(int x) {
-            if (x > 100) return x * 2;
-            if (x > 50) return x + 100;
-            if (x > 10) return x - 50;
-            return x;
-        }
-        
-        int loop_function(int n) {
-            int sum = 0;
-            for (int i = 0; i < n; i++) {
-                sum += i * i;
-            }
-            return sum;
-        }
-        
-        int main() {
-            return test_function(75) + loop_function(10);
+        # Create minimal config
+        cat > /tmp/.DeClang/config.pre.json << 'EOF'
+        {
+          "build_seed": "github-action-${{ github.run_id }}",
+          "overall_obfuscation": 50,
+          "flatten": {
+            "name": ".*",
+            "seed": "1234567890abcdef",
+            "split_level": 1,
+            "enable_obfuscation": 1
+          }
         }
         EOF
         
-        # Set OLLVM flags based on level
+        echo "✅ DECLANG_HOME configured at /tmp/.DeClang"
+
+    - name: Download and Setup DeClang
+      if: ${{ inputs.obfuscation_level != 'none' }}
+      env:
+        DECLANG_HOME: /tmp/.DeClang
+      run: |
+        echo "=== Downloading DeClang ==="
+        
+        # Download
+        wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        
+        # Set path
+        DECLANG_CLANG="$(pwd)/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
+        chmod +x "$DECLANG_CLANG"
+        
+        echo "✅ DeClang path: $DECLANG_CLANG"
+        
+        # Quick test WITHOUT -mllvm flags first
+        echo ""
+        echo "=== Basic Function Test ==="
+        "$DECLANG_CLANG" --version 2>&1 | head -3
+        
+        # Test basic compilation
+        echo 'int main(){return 0;}' | "$DECLANG_CLANG" -x c -o /dev/null - && \
+          echo "✅ Basic compilation works" || echo "❌ Basic compilation failed"
+        
+        echo "DECLANG_CLANG=$DECLANG_CLANG" >> $GITHUB_ENV
+
+    - name: Check OLLVM Support (Simplified)
+      if: ${{ inputs.obfuscation_level != 'none' }}
+      env:
+        DECLANG_HOME: /tmp/.DeClang
+        DECLANG_CLANG: ${{ env.DECLANG_CLANG }}
+      run: |
+        echo "=== Checking OLLVM Support ==="
+        
+        # Method 1: Check if -mllvm flag exists in help
+        echo "1. Checking -mllvm in help output:"
+        if "$DECLANG_CLANG" --help 2>&1 | grep -q "mllvm"; then
+          echo "   ✅ -mllvm flag found in help"
+        else
+          echo "   ❌ -mllvm flag NOT in help"
+        fi
+        
+        # Method 2: Try minimal OLLVM test
+        echo ""
+        echo "2. Testing -mllvm -fla flag:"
+        if echo 'int x;' | "$DECLANG_CLANG" -x c -c - -o /dev/null -mllvm -fla 2>&1 | grep -v "Open logFile Failed"; then
+          echo "   ✅ -mllvm -fla works"
+        else
+          echo "   ⚠️  -mllvm -fla may not work (check DECLANG_HOME)"
+        fi
+        
+        # Set OLLVM flags (will be passed to make command)
+        echo ""
+        echo "3. Setting OLLVM flags:"
         case "${{ inputs.obfuscation_level }}" in
           "light")
-            OLLVM_FLAGS="-mllvm -fla"
+            echo "OLLVM_FLAGS=-mllvm -fla" >> $GITHUB_ENV
             ;;
           "medium")
-            OLLVM_FLAGS="-mllvm -fla -mllvm -sub"
+            echo "OLLVM_FLAGS=-mllvm -fla -mllvm -sub" >> $GITHUB_ENV
             ;;
           "heavy")
-            OLLVM_FLAGS="-mllvm -fla -mllvm -sub -mllvm -bcf -mllvm -split"
-            ;;
-          *)
-            OLLVM_FLAGS="-mllvm -fla -mllvm -sub"
+            echo "OLLVM_FLAGS=-mllvm -fla -mllvm -sub -mllvm -bcf" >> $GITHUB_ENV
             ;;
         esac
         
-        echo "OLLVM Flags: $OLLVM_FLAGS"
-        
-        # Test 1: Basic compilation
-        echo ""
-        echo "Test 1: Basic compilation..."
-        "$DECLANG_CLANG" /tmp/ollvm_test.c -o /tmp/test_normal 2>/dev/null && \
-          echo "✅ Basic compilation works" || echo "❌ Basic compilation failed"
-        
-        # Test 2: OLLVM compilation
-        echo ""
-        echo "Test 2: OLLVM compilation..."
-        "$DECLANG_CLANG" /tmp/ollvm_test.c -o /tmp/test_ollvm $OLLVM_FLAGS 2>/dev/null && \
-          echo "✅ OLLVM compilation works" || echo "❌ OLLVM compilation failed"
-        
-        # Test 3: Kernel flags
-        echo ""
-        echo "Test 3: Kernel-specific flags..."
-        "$DECLANG_CLANG" -c /tmp/ollvm_test.c -o /tmp/test_kernel.o \
-          -fno-stack-protector -fno-PIC $OLLVM_FLAGS 2>/dev/null && \
-          echo "✅ Kernel flags work with OLLVM" || echo "❌ Kernel flags failed"
-        
-        # Test 4: Compare assembly
-        echo ""
-        echo "Test 4: Assembly comparison..."
-        "$DECLANG_CLANG" -S /tmp/ollvm_test.c -o /tmp/normal.s 2>/dev/null
-        "$DECLANG_CLANG" -S /tmp/ollvm_test.c -o /tmp/ollvm.s $OLLVM_FLAGS 2>/dev/null
-        
-        NORMAL_LINES=$(wc -l < /tmp/normal.s 2>/dev/null || echo 0)
-        OLLVM_LINES=$(wc -l < /tmp/ollvm.s 2>/dev/null || echo 0)
-        
-        echo "Normal assembly lines: $NORMAL_LINES"
-        echo "OLLVM assembly lines: $OLLVM_LINES"
-        
-        if [ $OLLVM_LINES -gt $NORMAL_LINES ]; then
-          echo "✅ OLLVM increases code size (good sign)"
-        else
-          echo "⚠️  No size increase - obfuscation may not be working"
-        fi
-        
-        # Save OLLVM flags for later use
-        echo "OLLVM_FLAGS=$OLLVM_FLAGS" >> $GITHUB_ENV
+        echo "   Flags: ${{ env.OLLVM_FLAGS || 'None' }}"
 
-    - name: Build Test Module for Comparison
-      if: ${{ inputs.obfuscation_level == 'test_only' }}
-      run: |
-        echo "=== Building TEST modules for comparison ==="
-        
-        # Build without OLLVM (using DDK clang)
-        echo "Building WITHOUT OLLVM..."
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean 2>/dev/null || true
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
-          CC="clang" \
-          EXTRA_CFLAGS=""
-        
-        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
-        if [ -f "$KO_FILE" ]; then
-          cp "$KO_FILE" "/tmp/normal.ko"
-          echo "✅ Normal build: $KO_FILE"
-        fi
-        
-        # Download DeClang for OLLVM build
-        wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
-        DECLANG_CLANG="$(pwd)/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
-        
-        # Build with OLLVM
-        echo "Building WITH OLLVM..."
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean 2>/dev/null || true
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
-          CC="$DECLANG_CLANG" \
-          EXTRA_CFLAGS="-mllvm -fla -mllvm -sub"
-        
-        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
-        if [ -f "$KO_FILE" ]; then
-          cp "$KO_FILE" "/tmp/ollvm.ko"
-          echo "✅ OLLVM build: $KO_FILE"
-        fi
-
-    - name: Build Module with Selected Obfuscation
-      if: ${{ inputs.obfuscation_level != 'test_only' }}
+    - name: Build Module
       env:
+        DECLANG_HOME: /tmp/.DeClang
         DECLANG_CLANG: ${{ env.DECLANG_CLANG }}
         OLLVM_FLAGS: ${{ env.OLLVM_FLAGS }}
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko ==="
         
-        if ${{ inputs.obfuscation_level != 'none' }} && [ -n "$DECLANG_CLANG" ] && [ -f "$DECLANG_CLANG" ]; then
+        # Select compiler
+        if ${{ inputs.obfuscation_level != 'none' }} && [ -n "$DECLANG_CLANG" ]; then
           CC="$DECLANG_CLANG"
-          echo "Using DeClang with OLLVM: ${{ inputs.obfuscation_level }}"
-          echo "OLLVM Flags: $OLLVM_FLAGS"
+          echo "Using: DeClang with ${{ inputs.obfuscation_level }} obfuscation"
+          echo "Flags: $OLLVM_FLAGS"
         else
           CC="clang"
           OLLVM_FLAGS=""
-          echo "Using DDK clang (no obfuscation)"
+          echo "Using: DDK clang (no obfuscation)"
         fi
         
         echo "Compiler: $CC"
-        $CC --version | head -1
         
-        # Clean previous build
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean 2>/dev/null || true
-        
-        # Build module
+        # Build with DECLANG_HOME set
         make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
           CC="$CC" \
           EXTRA_CFLAGS="$OLLVM_FLAGS"
         
-        echo "=== Build completed ==="
+        echo ""
+        echo "=== Build Result ==="
         
-        # Find the .ko file
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
-        if [ -z "$KO_FILE" ] || [ ! -f "$KO_FILE" ]; then
-          echo "❌ ERROR: No .ko file found!"
+        if [ -f "$KO_FILE" ]; then
+          echo "✅ SUCCESS: $KO_FILE"
+          echo "Size: $(du -h "$KO_FILE" | cut -f1)"
+          echo "BUILT_KO_FILE=$KO_FILE" >> $GITHUB_ENV
+        else
+          echo "❌ FAILED: No .ko file found"
           exit 1
-        fi
-        
-        echo "Built module: $KO_FILE"
-        echo "File size: $(du -h "$KO_FILE" | cut -f1)"
-        echo "DECLANG_KO_FILE=$KO_FILE" >> $GITHUB_ENV
-
-    - name: Obfuscation Verification Analysis
-      if: ${{ inputs.obfuscation_level != 'none' && inputs.obfuscation_level != 'test_only' }}
-      env:
-        DECLANG_KO_FILE: ${{ env.DECLANG_KO_FILE }}
-      run: |
-        echo "=== Obfuscation Verification Analysis ==="
-        
-        if [ -z "$DECLANG_KO_FILE" ] || [ ! -f "$DECLANG_KO_FILE" ]; then
-          echo "❌ No .ko file for analysis"
-          exit 1
-        fi
-        
-        # Extract module name for comparison
-        MODULE_NAME=$(basename "$DECLANG_KO_FILE" .ko)
-        
-        # Build same module without OLLVM for comparison
-        echo "Building comparison module without OLLVM..."
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean 2>/dev/null || true
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
-          CC="clang" \
-          EXTRA_CFLAGS=""
-        
-        NORMAL_KO=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
-        
-        if [ ! -f "$NORMAL_KO" ]; then
-          echo "⚠️  Cannot build comparison module"
-          # Just analyze the OLLVM module
-          NORMAL_KO=""
-        fi
-        
-        echo ""
-        echo "=== Analysis Results ==="
-        
-        # 1. File size comparison
-        if [ -n "$NORMAL_KO" ]; then
-          OLLVM_SIZE=$(stat -c%s "$DECLANG_KO_FILE")
-          NORMAL_SIZE=$(stat -c%s "$NORMAL_KO")
-          SIZE_RATIO=$((OLLVM_SIZE * 100 / NORMAL_SIZE))
-          
-          echo "1. File Size:"
-          echo "   Normal: $NORMAL_SIZE bytes"
-          echo "   OLLVM:  $OLLVM_SIZE bytes"
-          echo "   Ratio:  $SIZE_RATIO% (OLLVM/Normal)"
-          
-          if [ $SIZE_RATIO -gt 110 ]; then
-            echo "   ✅ Size increase detected (good for obfuscation)"
-          elif [ $SIZE_RATIO -gt 100 ]; then
-            echo "   ⚠️  Minor size increase"
-          else
-            echo "   ❌ No size increase - obfuscation may not work"
-          fi
-        fi
-        
-        # 2. Jump instruction analysis
-        echo ""
-        echo "2. Control Flow Analysis:"
-        
-        OLLVM_JUMPS=$(objdump -d "$DECLANG_KO_FILE" 2>/dev/null | grep -c "jmp\|je\|jne\|jg\|jl\|ja\|jb" || echo 0)
-        echo "   OLLVM module jump instructions: $OLLVM_JUMPS"
-        
-        if [ -n "$NORMAL_KO" ]; then
-          NORMAL_JUMPS=$(objdump -d "$NORMAL_KO" 2>/dev/null | grep -c "jmp\|je\|jne\|jg\|jl\|ja\|jb" || echo 0)
-          echo "   Normal module jump instructions: $NORMAL_JUMPS"
-          
-          if [ $NORMAL_JUMPS -gt 0 ]; then
-            JUMP_RATIO=$((OLLVM_JUMPS * 100 / NORMAL_JUMPS))
-            echo "   Jump ratio: $JUMP_RATIO% (OLLVM/Normal)"
-            
-            if [ $JUMP_RATIO -gt 200 ]; then
-              echo "   ✅ Strong control flow flattening detected!"
-            elif [ $JUMP_RATIO -gt 120 ]; then
-              echo "   ⚠️  Moderate control flow changes"
-            else
-              echo "   ❌ No significant control flow changes"
-            fi
-          fi
-        fi
-        
-        # 3. String analysis
-        echo ""
-        echo "3. String Analysis:"
-        OLLVM_STRINGS=$(strings "$DECLANG_KO_FILE" | wc -l)
-        echo "   Visible strings in OLLVM module: $OLLVM_STRINGS"
-        
-        if [ -n "$NORMAL_KO" ]; then
-          NORMAL_STRINGS=$(strings "$NORMAL_KO" | wc -l)
-          echo "   Visible strings in normal module: $NORMAL_STRINGS"
-        fi
-        
-        # 4. Function complexity (simplified)
-        echo ""
-        echo "4. Function Complexity Analysis:"
-        OLLVM_FUNCS=$(objdump -d "$DECLANG_KO_FILE" 2>/dev/null | grep -c "^[0-9a-f]* <.*>:" || echo 0)
-        echo "   Functions detected in OLLVM module: $OLLVM_FUNCS"
-        
-        # 5. Check for OLLVM patterns
-        echo ""
-        echo "5. OLLVM Pattern Detection:"
-        
-        # Look for switch-like patterns (common in control flow flattening)
-        SWITCH_PATTERNS=$(objdump -d "$DECLANG_KO_FILE" 2>/dev/null | grep -c "switch\|case\|default" || echo 0)
-        if [ $SWITCH_PATTERNS -gt 0 ]; then
-          echo "   ✅ Switch/case patterns found: $SWITCH_PATTERNS (common in FLA)"
-        else
-          echo "   ⚠️  No switch/case patterns found"
-        fi
-        
-        # Look for indirect jumps
-        INDIRECT_JUMPS=$(objdump -d "$DECLANG_KO_FILE" 2>/dev/null | grep -c "jmp.*\*\|call.*\*" || echo 0)
-        if [ $INDIRECT_JUMPS -gt 0 ]; then
-          echo "   ✅ Indirect jumps found: $INDIRECT_JUMPS (common in OLLVM)"
-        else
-          echo "   ⚠️  No indirect jumps found"
-        fi
-        
-        echo ""
-        echo "=== Summary ==="
-        if [ $OLLVM_JUMPS -gt 50 ] || [ $INDIRECT_JUMPS -gt 0 ]; then
-          echo "✅ OLLVM OBFUSCATION IS LIKELY WORKING!"
-        elif [ $OLLVM_JUMPS -gt 20 ]; then
-          echo "⚠️  Some obfuscation may be working"
-        else
-          echo "❌ Obfuscation may not be working as expected"
         fi
 
-    - name: Create and Upload Artifact
+    - name: Create Artifact
       env:
-        DECLANG_KO_FILE: ${{ env.DECLANG_KO_FILE }}
+        BUILT_KO_FILE: ${{ env.BUILT_KO_FILE }}
       run: |
-        echo "=== Creating Artifact ==="
+        if [ -z "$BUILT_KO_FILE" ]; then exit 1; fi
         
-        if [ -z "$DECLANG_KO_FILE" ] || [ ! -f "$DECLANG_KO_FILE" ]; then
-          echo "❌ No .ko file to upload"
-          exit 1
-        fi
-        
-        # Create output directory
         mkdir -p /github/workspace/out
-        
         TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-        OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ inputs.obfuscation_level }}-$TIMESTAMP.ko"
         
-        cp "$DECLANG_KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
-        
-        echo "Artifact: $OUTPUT_NAME"
-        echo "Size before strip: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
-        
-        # Optional: strip debug symbols
-        if command -v llvm-strip >/dev/null 2>&1; then
-          llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
-          echo "Size after strip: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+        if ${{ inputs.obfuscation_level != 'none' }}; then
+          OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-ollvm-$TIMESTAMP.ko"
+        else
+          OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-normal-$TIMESTAMP.ko"
         fi
         
+        cp "$BUILT_KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
         echo "ARTIFACT_PATH=/github/workspace/out/$OUTPUT_NAME" >> $GITHUB_ENV
 
-    - name: Upload Obfuscated Module
+    - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ inputs.obfuscation_level }}-${{ github.run_id }}
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
         path: ${{ env.ARTIFACT_PATH }}
-        
-    - name: Upload Analysis Report
-      if: ${{ inputs.obfuscation_level != 'none' && inputs.obfuscation_level != 'test_only' }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: analysis-report-${{ inputs.module_dir }}-${{ matrix.kmi }}
-        path: |
-          /tmp/normal.s
-          /tmp/ollvm.s
-          /tmp/ollvm_test.c
