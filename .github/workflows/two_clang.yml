@@ -1,0 +1,204 @@
+name: Build Kernel Module with DeClang OLLVM
+
+on:
+  workflow_dispatch:
+    inputs:
+      module_dir:
+        description: 'Module directory to build'
+        required: true
+        type: choice
+        options:
+        - wuwa
+        - hello-world
+        default: 'wuwa'
+      obfuscation_level:
+        description: 'OLLVM obfuscation level'
+        required: false
+        default: 'medium'
+        type: choice
+        options:
+        - none
+        - light
+        - medium
+        - heavy
+
+jobs:
+  ddk-build:
+    name: Build ${{ inputs.module_dir }}.ko
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        kmi: [android13-5.10, android14-5.15]
+
+    container:
+      image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install unzip
+      run: apt-get update && apt-get install -y unzip
+
+    - name: Setup DECLANG_HOME
+      if: ${{ inputs.obfuscation_level != 'none' }}
+      run: |
+        echo "=== Setting up DECLANG_HOME ==="
+        mkdir -p /tmp/.DeClang
+        echo "DECLANG_HOME=/tmp/.DeClang" >> $GITHUB_ENV
+
+    - name: Check for Uploaded DeClang
+      if: ${{ inputs.obfuscation_level != 'none' }}
+      run: |
+        echo "=== Checking for uploaded DeClang ==="
+        
+        # Check if YOUR clang is in the module directory
+        MODULE_DIR="${{ inputs.module_dir }}"
+        OUR_CLANG="$MODULE_DIR/clang"
+        
+        if [ -f "$OUR_CLANG" ]; then
+          echo "✅ Found YOUR uploaded DeClang at: $OUR_CLANG"
+          chmod +x "$OUR_CLANG"
+          
+          # Test it
+          echo ""
+          echo "=== Testing YOUR DeClang ==="
+          "$OUR_CLANG" --version 2>&1 | head -3
+          
+          # Test OLLVM flags
+          echo ""
+          echo "Testing OLLVM:"
+          echo 'int x;' | "$OUR_CLANG" -x c -c - -o /dev/null -mllvm -fla 2>&1 | \
+            grep -v "Open logFile Failed" && echo "✅ -mllvm -fla works" || echo "❌ -mllvm -fla failed"
+            
+          echo 'int x;' | "$OUR_CLANG" -x c -c - -o /dev/null -mllvm -bcf 2>&1 | \
+            grep -v "Open logFile Failed" && echo "✅ -mllvm -bcf works" || echo "❌ -mllvm -bcf failed"
+            
+          echo 'int x;' | "$OUR_CLANG" -x c -c - -o /dev/null -mllvm -sub 2>&1 | \
+            grep -v "Open logFile Failed" && echo "✅ -mllvm -sub works" || echo "❌ -mllvm -sub failed"
+          
+          # Set to use YOUR clang
+          echo "DECLANG_CLANG=$(pwd)/$OUR_CLANG" >> $GITHUB_ENV
+          echo "USING_CLANG=our" >> $GITHUB_ENV
+          
+        else
+          echo "❌ No uploaded clang found at: $OUR_CLANG"
+          echo "Will download Swift DeClang instead..."
+          echo "USING_CLANG=swift" >> $GITHUB_ENV
+        fi
+
+    - name: Download Swift DeClang (Fallback)
+      if: ${{ inputs.obfuscation_level != 'none' && env.USING_CLANG == 'swift' }}
+      env:
+        DECLANG_HOME: /tmp/.DeClang
+      run: |
+        echo "=== Downloading Swift DeClang ==="
+        
+        wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
+        
+        SWIFT_CLANG="$(pwd)/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
+        chmod +x "$SWIFT_CLANG"
+        
+        echo "✅ Swift DeClang path: $SWIFT_CLANG"
+        
+        # Test it
+        echo ""
+        echo "=== Testing Swift DeClang ==="
+        "$SWIFT_CLANG" --version 2>&1 | head -3
+        
+        echo 'int x;' | "$SWIFT_CLANG" -x c -c - -o /dev/null -mllvm -fla 2>&1 | \
+          grep -v "Open logFile Failed" && echo "✅ -mllvm -fla works" || echo "❌ -mllvm -fla failed"
+        
+        echo "DECLANG_CLANG=$SWIFT_CLANG" >> $GITHUB_ENV
+
+    - name: Set OLLVM Flags
+      if: ${{ inputs.obfuscation_level != 'none' }}
+      run: |
+        echo "=== Setting OLLVM flags ==="
+        
+        case "${{ inputs.obfuscation_level }}" in
+          "light")
+            echo "OLLVM_FLAGS=-mllvm -fla" >> $GITHUB_ENV
+            ;;
+          "medium")
+            echo "OLLVM_FLAGS=-mllvm -fla -mllvm -sub" >> $GITHUB_ENV
+            ;;
+          "heavy")
+            echo "OLLVM_FLAGS=-mllvm -fla -mllvm -sub -mllvm -bcf" >> $GITHUB_ENV
+            ;;
+        esac
+        
+        echo "OLLVM Flags: ${{ env.OLLVM_FLAGS }}"
+
+    - name: Build Module
+      env:
+        DECLANG_HOME: /tmp/.DeClang
+        DECLANG_CLANG: ${{ env.DECLANG_CLANG }}
+        OLLVM_FLAGS: ${{ env.OLLVM_FLAGS }}
+      run: |
+        echo "=== Building ${{ inputs.module_dir }}.ko ==="
+        
+        if ${{ inputs.obfuscation_level != 'none' }} && [ -n "$DECLANG_CLANG" ]; then
+          CC="$DECLANG_CLANG"
+          echo "Using: DeClang with ${{ inputs.obfuscation_level }} obfuscation"
+          echo "Compiler: $CC"
+          echo "OLLVM Flags: $OLLVM_FLAGS"
+          
+          # Final test before building
+          echo ""
+          echo "=== Final compiler test ==="
+          echo 'int x;' | "$CC" -x c -c - -o /dev/null $OLLVM_FLAGS 2>&1 | \
+            grep -v "Open logFile Failed" && echo "✅ Compiler test passed" || echo "⚠️  Compiler test warning"
+          
+        else
+          CC="clang"
+          OLLVM_FLAGS=""
+          echo "Using: DDK clang (no obfuscation)"
+        fi
+        
+        echo ""
+        echo "=== Starting build ==="
+        
+        # Build
+        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
+          CC="$CC" \
+          EXTRA_CFLAGS="$OLLVM_FLAGS"
+        
+        echo ""
+        echo "=== Build Result ==="
+        
+        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
+        if [ -f "$KO_FILE" ]; then
+          echo "✅ SUCCESS: $KO_FILE"
+          echo "Size: $(du -h "$KO_FILE" | cut -f1)"
+          echo "BUILT_KO_FILE=$KO_FILE" >> $GITHUB_ENV
+        else
+          echo "❌ FAILED: No .ko file found"
+          echo "Listing ${{ inputs.module_dir }}/:"
+          ls -la "${{ inputs.module_dir }}/" || true
+          exit 1
+        fi
+
+    - name: Create Artifact
+      env:
+        BUILT_KO_FILE: ${{ env.BUILT_KO_FILE }}
+      run: |
+        if [ -z "$BUILT_KO_FILE" ]; then exit 1; fi
+        
+        mkdir -p /github/workspace/out
+        TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+        
+        if ${{ inputs.obfuscation_level != 'none' }}; then
+          OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-ollvm-${{ env.USING_CLANG || 'unknown' }}-$TIMESTAMP.ko"
+        else
+          OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-normal-$TIMESTAMP.ko"
+        fi
+        
+        cp "$BUILT_KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
+        echo "ARTIFACT_PATH=/github/workspace/out/$OUTPUT_NAME" >> $GITHUB_ENV
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
+        path: ${{ env.ARTIFACT_PATH }}
