@@ -1,4 +1,4 @@
-name: Build with Swift DeClang (WITH VERIFICATION)
+name: Build with DeClang OLLVM (Verified)
 
 on:
   workflow_dispatch:
@@ -61,127 +61,78 @@ jobs:
         echo "✅ DeClang downloaded: $DECLANG_CLANG"
         echo "DECLANG_CLANG=$DECLANG_CLANG" >> $GITHUB_ENV
 
-    - name: VERIFY DECLANG BEFORE REPLACING
+    - name: TEST IF DECLANG SUPPORTS OLLVM
       if: ${{ inputs.obfuscation_level != 'none' }}
       run: |
-        echo "=== VERIFICATION STEP 1: Check DeClang ==="
+        echo "=== TESTING OLLVM SUPPORT ==="
         
         DECLANG_CLANG="${{ env.DECLANG_CLANG }}"
         
-        echo "1. File info:"
-        file "$DECLANG_CLANG"
+        echo "1. Check version:"
+        "$DECLANG_CLANG" --version 2>&1 | head -1
         echo ""
         
-        echo "2. Version:"
-        "$DECLANG_CLANG" --version
-        echo ""
+        echo "2. Test -mllvm flag (CRITICAL TEST):"
+        echo 'int x;' > test.c
         
-        echo "3. Check for -mllvm in help:"
-        if "$DECLANG_CLANG" --help 2>&1 | grep -q "mllvm"; then
-          echo "   ✅ -mllvm found in help"
+        # Test if -mllvm flag is accepted AT ALL
+        if "$DECLANG_CLANG" -c test.c -o test.o -mllvm 2>&1 | grep -q "requires a value"; then
+          echo "   ✅ -mllvm flag exists (but needs argument)"
         else
-          echo "   ❌ -mllvm NOT in help"
+          echo "   ❌ -mllvm flag NOT recognized!"
+          echo "   This clang does NOT support OLLVM!"
+          echo "OLLVM_SUPPORTED=false" >> $GITHUB_ENV
+          exit 1
         fi
         echo ""
         
-        echo "4. Test OLLVM flags:"
+        echo "3. Test specific OLLVM passes:"
+        # Test -fla
         echo "   Testing -mllvm -fla:"
-        echo 'int x;' | "$DECLANG_CLANG" -x c -c - -o /dev/null -mllvm -fla 2>&1 | \
-          grep -v "Open logFile Failed" && echo "   ✅ -mllvm -fla works" || echo "   ❌ -mllvm -fla failed"
+        if "$DECLANG_CLANG" -c test.c -o test.o -mllvm -fla 2>&1; then
+          echo "   ✅ -mllvm -fla ACCEPTED"
+          OLLVM_FLAGS="-mllvm -fla"
+        else
+          echo "   ❌ -mllvm -fla REJECTED"
+          echo "   Error:"
+          "$DECLANG_CLANG" -c test.c -o test.o -mllvm -fla 2>&1 | head -3
+          echo "OLLVM_SUPPORTED=false" >> $GITHUB_ENV
+          exit 1
+        fi
         echo ""
         
-        echo "   Testing -mllvm -bcf:"
-        echo 'int x;' | "$DECLANG_CLANG" -x c -c - -o /dev/null -mllvm -bcf 2>&1 | \
-          grep -v "Open logFile Failed" && echo "   ✅ -mllvm -bcf works" || echo "   ❌ -mllvm -bcf failed"
-        echo ""
+        echo "4. Test if this is actually DeClang with OLLVM:"
+        if "$DECLANG_CLANG" --version 2>&1 | grep -q -i "DeClang\|AntiHack"; then
+          echo "   ✅ This is DeClang"
+          echo "OLLVM_SUPPORTED=true" >> $GITHUB_ENV
+        else
+          echo "   ⚠️  This may not be DeClang with OLLVM"
+          echo "OLLVM_SUPPORTED=false" >> $GITHUB_ENV
+        fi
         
-        echo "   Testing -mllvm -sub:"
-        echo 'int x;' | "$DECLANG_CLANG" -x c -c - -o /dev/null -mllvm -sub 2>&1 | \
-          grep -v "Open logFile Failed" && echo "   ✅ -mllvm -sub works" || echo "   ❌ -mllvm -sub failed"
-        echo ""
-        
-        echo "5. Test Android target:"
-        "$DECLANG_CLANG" --target=aarch64-linux-android21 --version 2>&1 | head -1 && \
-          echo "   ✅ Android target works" || echo "   ❌ Android target failed"
+        rm -f test.c test.o
 
-    - name: VERIFY CURRENT SYSTEM CLANG
-      run: |
-        echo "=== VERIFICATION STEP 2: Current System Clang ==="
-        echo ""
-        
-        echo "1. Which clang:"
-        which clang
-        echo ""
-        
-        echo "2. System clang version:"
-        clang --version 2>&1 | head -2
-        echo ""
-        
-        echo "3. System clang path:"
-        ls -la $(which clang)
-        echo ""
-        
-        echo "4. Test system clang OLLVM:"
-        echo 'int x;' | clang -x c -c - -o /dev/null -mllvm -fla 2>&1 | head -2 && \
-          echo "   ✅ System clang accepts -mllvm" || echo "   ❌ System clang rejects -mllvm"
-
-    - name: Replace System Clang with DeClang
-      if: ${{ inputs.obfuscation_level != 'none' }}
+    - name: Replace System Clang (Only if OLLVM works)
+      if: ${{ inputs.obfuscation_level != 'none' && env.OLLVM_SUPPORTED == 'true' }}
       run: |
         echo "=== REPLACING SYSTEM CLANG ==="
         
         DECLANG_CLANG="${{ env.DECLANG_CLANG }}"
         
-        echo "1. Backing up original clang..."
+        # Backup original
         if [ -f "/usr/bin/clang" ]; then
-          cp -f /usr/bin/clang /usr/bin/clang.backup
-          echo "   Original backed up to: /usr/bin/clang.backup"
+          cp -f /usr/bin/clang /usr/bin/clang.original.backup
+          echo "Backed up original clang"
         fi
         
-        echo "2. Replacing with DeClang..."
+        # Replace with DeClang
         cp -f "$DECLANG_CLANG" /usr/bin/clang
         chmod +x /usr/bin/clang
         
-        echo "3. Verifying replacement..."
+        echo "✅ System clang replaced with DeClang"
         echo ""
-        echo "   New clang path:"
-        ls -la /usr/bin/clang
-        echo ""
-        echo "   New clang version:"
-        clang --version 2>&1 | head -2
-        echo ""
-        echo "   Testing OLLVM:"
-        echo 'int x;' | clang -x c -c - -o /dev/null -mllvm -fla 2>&1 | \
-          grep -v "Open logFile Failed" && echo "   ✅ Replacement successful" || echo "   ❌ Replacement failed"
-
-    - name: VERIFY MAKE USES CORRECT CLANG
-      run: |
-        echo "=== VERIFICATION STEP 3: Makefile Clang Usage ==="
-        echo ""
-        
-        echo "1. Dry run to see which clang make uses:"
-        make -n -C $KERNEL_SRC M=$PWD/wuwa modules 2>&1 | \
-          grep -i "clang\|cc " | head -5 || echo "   No clang found in make output"
-        echo ""
-        
-        echo "2. Testing with kernel build flags:"
-        cat > test_kernel.c << 'EOF'
-#include <linux/module.h>
-int test(void) { return 0; }
-EOF
-        
-        echo "   Compiling test with kernel flags..."
-        clang --target=aarch64-linux-android21 \
-          -c test_kernel.c \
-          -o /tmp/test.o \
-          -nostdinc \
-          -D__KERNEL__ \
-          -fno-PIC \
-          -mllvm -fla \
-          2>&1 | head -5 && echo "   ✅ Kernel compilation test passed" || \
-          echo "   ⚠️  Kernel compilation test had issues"
-        
-        rm -f test_kernel.c /tmp/test.o
+        echo "Verification:"
+        clang --version 2>&1 | head -1
 
     - name: Build Module
       env:
@@ -189,89 +140,74 @@ EOF
       run: |
         echo "=== BUILDING ${{ inputs.module_dir }}.ko ==="
         
-        # Set OLLVM flags
-        case "${{ inputs.obfuscation_level }}" in
-          "light")
-            OLLVM_FLAGS="-mllvm -fla"
-            echo "OLLVM Level: LIGHT (Control Flow Flattening)"
-            ;;
-          "medium")
-            OLLVM_FLAGS="-mllvm -fla -mllvm -sub"
-            echo "OLLVM Level: MEDIUM (Flattening + Instruction Substitution)"
-            ;;
-          "heavy")
-            OLLVM_FLAGS="-mllvm -fla -mllvm -sub -mllvm -bcf"
-            echo "OLLVM Level: HEAVY (Flattening + Substitution + Bogus Control Flow)"
-            ;;
-          *)
-            OLLVM_FLAGS=""
-            echo "OLLVM Level: NONE"
-            ;;
-        esac
-        
-        echo "OLLVM Flags to use: $OLLVM_FLAGS"
-        echo ""
-        
-        # FINAL VERIFICATION
-        echo "=== FINAL VERIFICATION BEFORE BUILD ==="
-        echo "Current clang: $(which clang)"
-        echo "Clang version:"
-        clang --version 2>&1 | head -1
-        echo ""
-        echo "Testing OLLVM flag one more time:"
-        echo 'int x;' | clang -x c -c - -o /dev/null $OLLVM_FLAGS 2>&1 | \
-          grep -v "Open logFile Failed" && echo "✅ OLLVM ready" || echo "❌ OLLVM failed"
-        
-        echo ""
-        echo "=== STARTING BUILD ==="
-        
-        if [ -n "$OLLVM_FLAGS" ]; then
+        # Determine if we should use OLLVM
+        if ${{ inputs.obfuscation_level != 'none' && env.OLLVM_SUPPORTED == 'true' }}; then
+          # Set OLLVM flags based on level
+          case "${{ inputs.obfuscation_level }}" in
+            "light")
+              OLLVM_FLAGS="-mllvm -fla"
+              echo "OLLVM Level: LIGHT (-mllvm -fla)"
+              ;;
+            "medium")
+              OLLVM_FLAGS="-mllvm -fla -mllvm -sub"
+              echo "OLLVM Level: MEDIUM (-mllvm -fla -mllvm -sub)"
+              ;;
+            "heavy")
+              OLLVM_FLAGS="-mllvm -fla -mllvm -sub -mllvm -bcf"
+              echo "OLLVM Level: HEAVY (-mllvm -fla -mllvm -sub -mllvm -bcf)"
+              ;;
+          esac
+          
+          # Test the flags one more time before building
+          echo ""
+          echo "=== Final OLLVM test before build ==="
+          echo 'int x;' | clang -x c -c - -o /dev/null $OLLVM_FLAGS 2>&1 && \
+            echo "✅ OLLVM flags work with system clang" || \
+            echo "❌ OLLVM flags failed with system clang"
+          
+          echo ""
+          echo "=== Starting OLLVM build ==="
+          
           # Build with OLLVM
           make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
-            OLLVM_FLAGS="$OLLVM_FLAGS" \
-            LLVM=1 \
-            LLVM_IAS=1
+            OLLVM_FLAGS="$OLLVM_FLAGS"
+            
         else
-          # Build without OLLVM
+          # No OLLVM - use normal build
+          echo "Building without OLLVM (level: ${{ inputs.obfuscation_level }})"
+          echo ""
+          
+          if ${{ inputs.obfuscation_level != 'none' }}; then
+            echo "⚠️  OLLVM requested but not supported by this DeClang"
+            echo "Falling back to normal build..."
+          fi
+          
           make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
         fi
         
         echo ""
-        echo "=== BUILD RESULT ==="
+        echo "=== Build Result ==="
         
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         if [ -f "$KO_FILE" ]; then
           echo "✅ SUCCESS: $KO_FILE"
           echo "Size: $(du -h "$KO_FILE" | cut -f1)"
-          
-          # Check for OLLVM evidence
-          if [ -n "$OLLVM_FLAGS" ]; then
-            echo ""
-            echo "=== OLLVM VERIFICATION IN BINARY ==="
-            strings "$KO_FILE" | grep -i "fla\|bcf\|sub\|obfuscat" | head -5 && \
-              echo "✅ OLLVM strings found" || echo "⚠️  No OLLVM strings (may be stripped)"
-          fi
-          
           echo "BUILT_KO_FILE=$KO_FILE" >> $GITHUB_ENV
         else
           echo "❌ FAILED: No .ko file found"
-          echo "Directory listing:"
-          ls -la "${{ inputs.module_dir }}/" || true
           exit 1
         fi
 
-    - name: Restore System Clang (Cleanup)
-      if: ${{ inputs.obfuscation_level != 'none' }}
+    - name: Restore System Clang
+      if: ${{ inputs.obfuscation_level != 'none' && env.OLLVM_SUPPORTED == 'true' }}
       run: |
         echo "=== RESTORING ORIGINAL CLANG ==="
         
-        if [ -f "/usr/bin/clang.backup" ]; then
-          cp -f /usr/bin/clang.backup /usr/bin/clang
-          chmod +x /usr/bin/clang
-          rm -f /usr/bin/clang.backup
+        if [ -f "/usr/bin/clang.original.backup" ]; then
+          cp -f /usr/bin/clang.original.backup /usr/bin/clang
           echo "✅ Original clang restored"
         else
-          echo "⚠️  No backup found, leaving DeClang"
+          echo "⚠️  No backup found"
         fi
 
     - name: Create Artifact
@@ -283,10 +219,12 @@ EOF
         mkdir -p /github/workspace/out
         TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
         
-        if ${{ inputs.obfuscation_level != 'none' }}; then
+        if ${{ inputs.obfuscation_level != 'none' && env.OLLVM_SUPPORTED == 'true' }}; then
           OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-ollvm-${{ inputs.obfuscation_level }}-$TIMESTAMP.ko"
+          echo "Artifact: OLLVM enabled (${{ inputs.obfuscation_level }})"
         else
           OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-normal-$TIMESTAMP.ko"
+          echo "Artifact: Normal build"
         fi
         
         cp "$BUILT_KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
