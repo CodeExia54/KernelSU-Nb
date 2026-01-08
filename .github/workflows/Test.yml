@@ -1,4 +1,4 @@
-name: Build Kernel Module with DeClang OLLVM (Fixed)
+name: Build Kernel Module with DeClang OLLVM
 
 on:
   workflow_dispatch:
@@ -21,6 +21,14 @@ on:
         - light
         - medium
         - heavy
+      use_declang:
+        description: 'Use DeClang or default clang'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+        - 'true'
+        - 'false'
 
 jobs:
   ddk-build:
@@ -40,14 +48,14 @@ jobs:
       run: apt-get update && apt-get install -y unzip
 
     - name: Setup DECLANG_HOME Environment
-      if: ${{ inputs.obfuscation_level != 'none' }}
+      if: ${{ inputs.obfuscation_level != 'none' && inputs.use_declang == 'true' }}
       run: |
         echo "=== Setting up DECLANG_HOME ==="
         mkdir -p /tmp/.DeClang
         echo "DECLANG_HOME=/tmp/.DeClang" >> $GITHUB_ENV
 
     - name: Download and Setup DeClang
-      if: ${{ inputs.obfuscation_level != 'none' }}
+      if: ${{ inputs.obfuscation_level != 'none' && inputs.use_declang == 'true' }}
       env:
         DECLANG_HOME: /tmp/.DeClang
       run: |
@@ -62,55 +70,80 @@ jobs:
         echo "✅ DeClang path: $DECLANG_CLANG"
         echo "DECLANG_CLANG=$DECLANG_CLANG" >> $GITHUB_ENV
         
-        # Test OLLVM flags DIRECTLY (not in separate step)
+        # Test OLLVM flags
         echo ""
-        echo "=== Direct OLLVM Test ==="
+        echo "=== Testing DeClang OLLVM ==="
         echo 'int x;' | "$DECLANG_CLANG" -x c -c - -o /dev/null -mllvm -fla 2>&1 | \
           grep -v "Open logFile Failed" && echo "✅ -mllvm -fla works" || echo "❌ -mllvm -fla failed"
-        
-        # Set OLLVM flags HERE, not in separate step
-        case "${{ inputs.obfuscation_level }}" in
-          "light")
-            echo "OLLVM_FLAGS=-mllvm -fla" >> $GITHUB_ENV
-            ;;
-          "medium")
-            echo "OLLVM_FLAGS=-mllvm -fla -mllvm -sub" >> $GITHUB_ENV
-            ;;
-          "heavy")
-            echo "OLLVM_FLAGS=-mllvm -fla -mllvm -sub -mllvm -bcf" >> $GITHUB_ENV
-            ;;
-        esac
 
-    - name: Build Module
+    - name: Test Your Uploaded Clang
+      if: ${{ inputs.obfuscation_level != 'none' }}
+      run: |
+        echo "=== Checking for your uploaded DeClang ==="
+        
+        # Check if you uploaded your built clang
+        if [ -f "${{ inputs.module_dir }}/clang" ]; then
+          YOUR_CLANG="$(pwd)/${{ inputs.module_dir }}/clang"
+          chmod +x "$YOUR_CLANG"
+          
+          echo "✅ Found your uploaded clang at: $YOUR_CLANG"
+          
+          # Test it
+          echo ""
+          echo "=== Testing your clang ==="
+          "$YOUR_CLANG" --version 2>&1 | head -1
+          echo 'int x;' | "$YOUR_CLANG" -x c -c - -o /dev/null -mllvm -fla 2>&1 | \
+            grep -v "Open logFile Failed" && echo "✅ Your clang works!" || echo "❌ Your clang has issues"
+          
+          # Prefer your clang if it works
+          echo "YOUR_CLANG=$YOUR_CLANG" >> $GITHUB_ENV
+        else
+          echo "⚠️ No uploaded clang found at ${{ inputs.module_dir }}/clang"
+        fi
+
+    - name: Build Module with OLLVM
       env:
         DECLANG_HOME: /tmp/.DeClang
         DECLANG_CLANG: ${{ env.DECLANG_CLANG }}
-        OLLVM_FLAGS: ${{ env.OLLVM_FLAGS }}
+        YOUR_CLANG: ${{ env.YOUR_CLANG }}
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko ==="
         
-        if ${{ inputs.obfuscation_level != 'none' }} && [ -n "$DECLANG_CLANG" ]; then
-          CC="$DECLANG_CLANG"
-          echo "Using: DeClang with ${{ inputs.obfuscation_level }} obfuscation"
-          echo "OLLVM Flags: $OLLVM_FLAGS"
-          
-          # DEBUG: Show exact command
-          echo ""
-          echo "=== DEBUG: Test command ==="
-          echo 'int x;' | "$CC" -x c -c - -o /dev/null $OLLVM_FLAGS 2>&1 | head -5
+        # Select compiler (prefer your uploaded clang if available)
+        if ${{ inputs.use_declang == 'true' && inputs.obfuscation_level != 'none' }}; then
+          if [ -n "$YOUR_CLANG" ]; then
+            CC="$YOUR_CLANG"
+            echo "Using: YOUR UPLOADED DeClang"
+          elif [ -n "$DECLANG_CLANG" ]; then
+            CC="$DECLANG_CLANG"
+            echo "Using: SWIFT DeClang"
+          else
+            CC="clang"
+            echo "Using: DDK clang (fallback)"
+          fi
         else
           CC="clang"
-          OLLVM_FLAGS=""
-          echo "Using: DDK clang (no obfuscation)"
+          echo "Using: DDK clang (no DeClang)"
+        fi
+        
+        echo "Compiler: $CC"
+        
+        # Set OLLVM variables for Makefile
+        if ${{ inputs.obfuscation_level != 'none' }}; then
+          OLLVM_VARS="OLLVM=1 OLLVM_LEVEL=${{ inputs.obfuscation_level }}"
+          echo "OLLVM Level: ${{ inputs.obfuscation_level }}"
+        else
+          OLLVM_VARS="OLLVM=0"
+          echo "No OLLVM obfuscation"
         fi
         
         echo ""
-        echo "Compiler: $CC"
+        echo "=== Starting Build ==="
         
-        # Build with CORRECT flags
+        # Build using Makefile's OLLVM support
         make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
           CC="$CC" \
-          EXTRA_CFLAGS="$OLLVM_FLAGS"
+          $OLLVM_VARS
         
         echo ""
         echo "=== Build Result ==="
@@ -118,9 +151,22 @@ jobs:
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         if [ -f "$KO_FILE" ]; then
           echo "✅ SUCCESS: $KO_FILE"
+          echo "Size: $(du -h "$KO_FILE" | cut -f1)"
+          
+          # Check if OLLVM was applied
+          echo ""
+          echo "=== Checking OLLVM in binary ==="
+          if [[ "$OLLVM_VARS" == *"OLLVM=1"* ]]; then
+            strings "$KO_FILE" | grep -i "fla\|bcf\|sub" | head -5 && \
+              echo "✅ OLLVM strings found in binary" || \
+              echo "⚠️ No OLLVM strings found (may be stripped)"
+          fi
+          
           echo "BUILT_KO_FILE=$KO_FILE" >> $GITHUB_ENV
         else
           echo "❌ FAILED: No .ko file found"
+          echo "Listing ${{ inputs.module_dir }}/:"
+          ls -la "${{ inputs.module_dir }}/" || true
           exit 1
         fi
 
@@ -133,8 +179,14 @@ jobs:
         mkdir -p /github/workspace/out
         TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
         
-        if ${{ inputs.obfuscation_level != 'none' }}; then
-          OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-ollvm-$TIMESTAMP.ko"
+        # Determine artifact name
+        if ${{ inputs.use_declang == 'true' && inputs.obfuscation_level != 'none' }}; then
+          if [ -n "$YOUR_CLANG" ]; then
+            CLANG_TYPE="your-declang"
+          else
+            CLANG_TYPE="swift-declang"
+          fi
+          OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-ollvm-${{ inputs.obfuscation_level }}-$CLANG_TYPE-$TIMESTAMP.ko"
         else
           OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-normal-$TIMESTAMP.ko"
         fi
