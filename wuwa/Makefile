@@ -30,6 +30,28 @@ ccflags-y += -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-
 ccflags-y += -Wno-declaration-after-statement -Wno-unused-function -Wno-unused-variable
 ccflags-y += -Wno-unused-label  # ADDED THIS LINE TO FIX THE ERROR
 
+# ========== OLLVM OBFUSCATION SUPPORT ==========
+OLLVM ?= 0
+OLLVM_LEVEL ?= medium
+
+ifeq ($(OLLVM),1)
+  ifeq ($(OLLVM_LEVEL),light)
+    OLLVM_FLAGS := -mllvm -fla
+  else ifeq ($(OLLVM_LEVEL),medium)
+    OLLVM_FLAGS := -mllvm -fla -mllvm -sub
+  else ifeq ($(OLLVM_LEVEL),heavy)
+    OLLVM_FLAGS := -mllvm -fla -mllvm -sub -mllvm -bcf
+  else ifeq ($(OLLVM_LEVEL),custom)
+    # Use custom flags if provided
+    OLLVM_FLAGS ?= -mllvm -fla -mllvm -bcf -mllvm -sub
+  endif
+  
+  # Add OLLVM flags to ccflags-y
+  ccflags-y += $(OLLVM_FLAGS)
+  $(info -- Using OLLVM obfuscation: $(OLLVM_LEVEL))
+  $(info -- OLLVM flags: $(OLLVM_FLAGS))
+endif
+
 # ========== DECLANG COMPATIBILITY FIXES ==========
 # Check if we're using DeClang and fix incompatible flags
 ifneq ($(CC),clang)
