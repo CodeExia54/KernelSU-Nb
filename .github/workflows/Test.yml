@@ -1,4 +1,4 @@
-name: Build Kernel Module with DeClang OLLVM
+name: Build Kernel Module with DeClang OLLVM (Fixed)
 
 on:
   workflow_dispatch:
@@ -43,25 +43,8 @@ jobs:
       if: ${{ inputs.obfuscation_level != 'none' }}
       run: |
         echo "=== Setting up DECLANG_HOME ==="
-        # Create DECLANG_HOME directory
         mkdir -p /tmp/.DeClang
         echo "DECLANG_HOME=/tmp/.DeClang" >> $GITHUB_ENV
-        
-        # Create minimal config
-        cat > /tmp/.DeClang/config.pre.json << 'EOF'
-        {
-          "build_seed": "github-action-${{ github.run_id }}",
-          "overall_obfuscation": 50,
-          "flatten": {
-            "name": ".*",
-            "seed": "1234567890abcdef",
-            "split_level": 1,
-            "enable_obfuscation": 1
-          }
-        }
-        EOF
-        
-        echo "✅ DECLANG_HOME configured at /tmp/.DeClang"
 
     - name: Download and Setup DeClang
       if: ${{ inputs.obfuscation_level != 'none' }}
@@ -70,55 +53,22 @@ jobs:
       run: |
         echo "=== Downloading DeClang ==="
         
-        # Download
         wget -q https://github.com/DeNA/DeClang/releases/download/swift5.10-v1.0.0/Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         unzip -q Release-Linux-swift5.10-v1.0.0-ubuntu2204.zip
         
-        # Set path
         DECLANG_CLANG="$(pwd)/Release-Linux-swift5.10-v1.0.0-ubuntu2204/compiler/bin/clang"
         chmod +x "$DECLANG_CLANG"
         
         echo "✅ DeClang path: $DECLANG_CLANG"
-        
-        # Quick test WITHOUT -mllvm flags first
-        echo ""
-        echo "=== Basic Function Test ==="
-        "$DECLANG_CLANG" --version 2>&1 | head -3
-        
-        # Test basic compilation
-        echo 'int main(){return 0;}' | "$DECLANG_CLANG" -x c -o /dev/null - && \
-          echo "✅ Basic compilation works" || echo "❌ Basic compilation failed"
-        
         echo "DECLANG_CLANG=$DECLANG_CLANG" >> $GITHUB_ENV
-
-    - name: Check OLLVM Support (Simplified)
-      if: ${{ inputs.obfuscation_level != 'none' }}
-      env:
-        DECLANG_HOME: /tmp/.DeClang
-        DECLANG_CLANG: ${{ env.DECLANG_CLANG }}
-      run: |
-        echo "=== Checking OLLVM Support ==="
         
-        # Method 1: Check if -mllvm flag exists in help
-        echo "1. Checking -mllvm in help output:"
-        if "$DECLANG_CLANG" --help 2>&1 | grep -q "mllvm"; then
-          echo "   ✅ -mllvm flag found in help"
-        else
-          echo "   ❌ -mllvm flag NOT in help"
-        fi
-        
-        # Method 2: Try minimal OLLVM test
+        # Test OLLVM flags DIRECTLY (not in separate step)
         echo ""
-        echo "2. Testing -mllvm -fla flag:"
-        if echo 'int x;' | "$DECLANG_CLANG" -x c -c - -o /dev/null -mllvm -fla 2>&1 | grep -v "Open logFile Failed"; then
-          echo "   ✅ -mllvm -fla works"
-        else
-          echo "   ⚠️  -mllvm -fla may not work (check DECLANG_HOME)"
-        fi
+        echo "=== Direct OLLVM Test ==="
+        echo 'int x;' | "$DECLANG_CLANG" -x c -c - -o /dev/null -mllvm -fla 2>&1 | \
+          grep -v "Open logFile Failed" && echo "✅ -mllvm -fla works" || echo "❌ -mllvm -fla failed"
         
-        # Set OLLVM flags (will be passed to make command)
-        echo ""
-        echo "3. Setting OLLVM flags:"
+        # Set OLLVM flags HERE, not in separate step
         case "${{ inputs.obfuscation_level }}" in
           "light")
             echo "OLLVM_FLAGS=-mllvm -fla" >> $GITHUB_ENV
@@ -130,8 +80,6 @@ jobs:
             echo "OLLVM_FLAGS=-mllvm -fla -mllvm -sub -mllvm -bcf" >> $GITHUB_ENV
             ;;
         esac
-        
-        echo "   Flags: ${{ env.OLLVM_FLAGS || 'None' }}"
 
     - name: Build Module
       env:
@@ -141,20 +89,25 @@ jobs:
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko ==="
         
-        # Select compiler
         if ${{ inputs.obfuscation_level != 'none' }} && [ -n "$DECLANG_CLANG" ]; then
           CC="$DECLANG_CLANG"
           echo "Using: DeClang with ${{ inputs.obfuscation_level }} obfuscation"
-          echo "Flags: $OLLVM_FLAGS"
+          echo "OLLVM Flags: $OLLVM_FLAGS"
+          
+          # DEBUG: Show exact command
+          echo ""
+          echo "=== DEBUG: Test command ==="
+          echo 'int x;' | "$CC" -x c -c - -o /dev/null $OLLVM_FLAGS 2>&1 | head -5
         else
           CC="clang"
           OLLVM_FLAGS=""
           echo "Using: DDK clang (no obfuscation)"
         fi
         
+        echo ""
         echo "Compiler: $CC"
         
-        # Build with DECLANG_HOME set
+        # Build with CORRECT flags
         make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
           CC="$CC" \
           EXTRA_CFLAGS="$OLLVM_FLAGS"
@@ -165,7 +118,6 @@ jobs:
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         if [ -f "$KO_FILE" ]; then
           echo "✅ SUCCESS: $KO_FILE"
-          echo "Size: $(du -h "$KO_FILE" | cut -f1)"
           echo "BUILT_KO_FILE=$KO_FILE" >> $GITHUB_ENV
         else
           echo "❌ FAILED: No .ko file found"
