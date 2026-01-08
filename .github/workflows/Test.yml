@@ -1,4 +1,4 @@
-name: Build with Swift DeClang OLLVM
+name: Build with Swift DeClang (REPLACE SYSTEM CLANG)
 
 on:
   workflow_dispatch:
@@ -59,22 +59,43 @@ jobs:
         chmod +x "$DECLANG_CLANG"
         
         echo "✅ DeClang: $DECLANG_CLANG"
-        
-        # Quick test
-        echo ""
-        echo "=== Testing DeClang ==="
-        "$DECLANG_CLANG" --version 2>&1 | head -1
-        
-        # Test OLLVM
-        echo 'int x;' | "$DECLANG_CLANG" -x c -c - -o /dev/null -mllvm -fla 2>&1 | \
-          grep -v "Open logFile Failed" && echo "✅ OLLVM works" || echo "❌ OLLVM failed"
-        
         echo "DECLANG_CLANG=$DECLANG_CLANG" >> $GITHUB_ENV
+
+    - name: Replace System Clang
+      if: ${{ inputs.obfuscation_level != 'none' }}
+      run: |
+        echo "=== REPLACING SYSTEM CLANG ==="
+        
+        DECLANG_CLANG="${{ env.DECLANG_CLANG }}"
+        
+        # Backup originals
+        echo "Backing up system compilers..."
+        for tool in clang clang++ gcc g++; do
+          if [ -f "/usr/bin/$tool" ]; then
+            cp "/usr/bin/$tool" "/usr/bin/$tool.backup"
+          fi
+        done
+        
+        # Replace with DeClang
+        echo "Replacing with DeClang..."
+        cp "$DECLANG_CLANG" /usr/bin/clang
+        cp "$DECLANG_CLANG" /usr/bin/clang++
+        
+        # Make executable
+        chmod +x /usr/bin/clang /usr/bin/clang++
+        
+        # Verify
+        echo ""
+        echo "=== Verification ==="
+        echo "System clang now points to:"
+        ls -la /usr/bin/clang
+        echo ""
+        echo "Version:"
+        clang --version 2>&1 | head -2
 
     - name: Build Module
       env:
         DECLANG_HOME: /tmp/.DeClang
-        DECLANG_CLANG: ${{ env.DECLANG_CLANG }}
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko ==="
         
@@ -94,22 +115,15 @@ jobs:
             ;;
         esac
         
-        if ${{ inputs.obfuscation_level != 'none' }} && [ -n "$DECLANG_CLANG" ]; then
-          CC="$DECLANG_CLANG"
-          echo "Using: Swift DeClang"
-          echo "OLLVM Flags: $OLLVM_FLAGS"
-        else
-          CC="clang"
-          OLLVM_FLAGS=""
-          echo "Using: DDK clang (no OLLVM)"
-        fi
-        
-        echo "Compiler: $CC"
+        echo "OLLVM Flags: $OLLVM_FLAGS"
         
         # Build with OLLVM flags
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
-          CC="$CC" \
-          OLLVM_FLAGS="$OLLVM_FLAGS"
+        if [ -n "$OLLVM_FLAGS" ]; then
+          make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
+            OLLVM_FLAGS="$OLLVM_FLAGS"
+        else
+          make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
+        fi
         
         echo ""
         echo "=== Build Result ==="
@@ -122,6 +136,18 @@ jobs:
           echo "❌ FAILED: No .ko file found"
           exit 1
         fi
+
+    - name: Restore System Clang (Cleanup)
+      if: ${{ inputs.obfuscation_level != 'none' }}
+      run: |
+        echo "=== Restoring system clang ==="
+        
+        # Restore backups
+        for tool in clang clang++ gcc g++; do
+          if [ -f "/usr/bin/$tool.backup" ]; then
+            mv "/usr/bin/$tool.backup" "/usr/bin/$tool"
+          fi
+        done
 
     - name: Create Artifact
       env:
