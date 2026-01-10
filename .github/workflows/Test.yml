@@ -59,23 +59,7 @@ jobs:
     - name: Install unzip in container
       run: |
         echo "=== Installing unzip ==="
-        apt-get update && apt-get install -y unzip tree
-
-    - name: Debug - List Module Directory
-      if: ${{ inputs.use_custom_clang }}
-      run: |
-        echo "=== Debug: Listing ${{ inputs.module_dir }} directory ==="
-        ls -la "${{ inputs.module_dir }}/" || echo "Directory not found"
-        
-        echo ""
-        echo "=== Looking for ZIP files ==="
-        find "${{ inputs.module_dir }}" -name "*.zip" -type f | while read zip; do
-          echo "Found: $zip"
-          echo "Size: $(stat -c%s "$zip") bytes"
-          echo "Contents:"
-          unzip -l "$zip" | head -5 || echo "  Cannot list contents"
-          echo ""
-        done
+        apt-get update && apt-get install -y unzip
 
     - name: Extract OLLVM Toolchain
       if: ${{ inputs.use_custom_clang }}
@@ -108,79 +92,48 @@ jobs:
           # Extract preserving directory structure
           unzip -q "$zip_file" -d /usr/local/ollvm/
           
-          # List what was extracted
-          echo "Extracted structure from $(basename "$zip_file"):"
-          find /usr/local/ollvm -type f -name "clang" -o -name "ld.lld" -o -name "llvm-*" | head -10 || true
-        done
-        
-        # Now organize the extracted files
-        echo ""
-        echo "=== Organizing Extracted Files ==="
-        
-        # Create bin directory
-        mkdir -p /usr/local/ollvm/bin
-        
-        # Find and move all binaries to bin directory
-        echo "Looking for binaries..."
-        
-        # Find clang (the most important)
-        CLANG_FILES=$(find /usr/local/ollvm -type f -name "clang" ! -path "*/.*")
-        echo "Found clang files:"
-        echo "$CLANG_FILES"
-        
-        # Copy all found clang files to bin
-        if [ -n "$CLANG_FILES" ]; then
-          echo "Copying clang binaries..."
-          for clang_file in $CLANG_FILES; do
-            echo "  Copying: $clang_file"
-            cp "$clang_file" /usr/local/ollvm/bin/
-            chmod +x /usr/local/ollvm/bin/clang
-          done
-        fi
-        
-        # Find and copy other binaries
-        echo ""
-        echo "Copying other binaries..."
-        
-        # Look for common binary patterns
-        BINARY_PATTERNS=("ld.lld" "clang++" "llvm-*" "lld")
-        for pattern in "${BINARY_PATTERNS[@]}"; do
-          find /usr/local/ollvm -type f -name "$pattern" ! -path "*/.*" ! -path "*/bin/*" 2>/dev/null | while read binary; do
-            BIN_NAME=$(basename "$binary")
-            echo "  Copying $BIN_NAME"
-            cp "$binary" /usr/local/ollvm/bin/ 2>/dev/null || true
-            chmod +x "/usr/local/ollvm/bin/$BIN_NAME" 2>/dev/null || true
-          done
+          # List what was extracted (just a summary)
+          echo "Files extracted from $(basename "$zip_file"):"
+          unzip -l "$zip_file" | tail -5 || true
         done
         
         # Make everything in bin executable
-        chmod -R +x /usr/local/ollvm/bin/ 2>/dev/null || true
+        if [ -d "/usr/local/ollvm/bin" ]; then
+          chmod -R +x /usr/local/ollvm/bin/ 2>/dev/null || true
+        fi
         
         # Show final structure
         echo ""
         echo "=== Final Toolchain Structure ==="
-        echo "Tree structure of /usr/local/ollvm:"
-        tree /usr/local/ollvm -L 3 2>/dev/null || find /usr/local/ollvm -type f | head -20
         
-        echo ""
-        echo "=== Files in /usr/local/ollvm/bin/ ==="
-        ls -la /usr/local/ollvm/bin/ 2>/dev/null || echo "bin directory is empty!"
-        
-        # Count files
-        FILE_COUNT=$(ls -1 /usr/local/ollvm/bin/ 2>/dev/null | wc -l)
-        echo "Total binaries in bin/: $FILE_COUNT"
+        if [ -d "/usr/local/ollvm/bin" ]; then
+          echo "Files in /usr/local/ollvm/bin/:"
+          ls -la /usr/local/ollvm/bin/
+          echo ""
+          echo "Total binaries: $(ls -1 /usr/local/ollvm/bin/ 2>/dev/null | wc -l)"
+        else
+          echo "⚠️ No bin directory found! Listing /usr/local/ollvm:"
+          find /usr/local/ollvm -type f | head -20
+        fi
         
         # Test if clang exists and works
         echo ""
         echo "=== Testing clang ==="
         if [ -f "/usr/local/ollvm/bin/clang" ]; then
           echo "✅ clang found at: /usr/local/ollvm/bin/clang"
-          echo "Testing version:"
+          echo "Version:"
           /usr/local/ollvm/bin/clang --version 2>&1 | head -2 || echo "  Version test failed"
         else
           echo "❌ clang NOT FOUND in /usr/local/ollvm/bin/"
-          echo "Searching for clang anywhere in /usr/local/ollvm..."
-          find /usr/local/ollvm -type f -name "clang" 2>/dev/null
+          exit 1
+        fi
+        
+        # Test ld.lld if available
+        if [ -f "/usr/local/ollvm/bin/ld.lld" ]; then
+          echo ""
+          echo "=== Testing ld.lld ==="
+          echo "✅ ld.lld found"
+          /usr/local/ollvm/bin/ld.lld --version 2>&1 | head -1 || true
         fi
         
         # Add to PATH
@@ -196,25 +149,14 @@ jobs:
         
         MODULE_DIR="${{ inputs.module_dir }}"
         
-        # Check if clang exists (multiple ways)
-        echo "=== Checking for clang ==="
-        
-        # Check in ollvm bin
-        if [ -f "/usr/local/ollvm/bin/clang" ]; then
-          CLANG_PATH="/usr/local/ollvm/bin/clang"
-          echo "✅ Found clang at: $CLANG_PATH"
-        else
-          # Check in PATH
-          CLANG_PATH=$(which clang 2>/dev/null || echo "")
-          if [ -n "$CLANG_PATH" ]; then
-            echo "✅ Found clang in PATH: $CLANG_PATH"
-          else
-            echo "❌ clang not found anywhere!"
-            echo "Searching entire /usr/local/ollvm..."
-            find /usr/local/ollvm -type f -name "clang" 2>/dev/null
-            exit 1
-          fi
+        # Verify clang exists
+        CLANG_PATH="/usr/local/ollvm/bin/clang"
+        if [ ! -f "$CLANG_PATH" ]; then
+          echo "❌ clang not found at $CLANG_PATH"
+          exit 1
         fi
+        
+        echo "✅ Using clang: $CLANG_PATH"
         
         # Set OLLVM flags
         case "${{ inputs.obfuscation_level }}" in
@@ -239,15 +181,12 @@ jobs:
         echo ""
         echo "=== Build Configuration ==="
         
-        # Build command - SIMPLIFIED - only override CC
-        echo "Using SIMPLIFIED approach: Only override CC with OLLVM clang"
-        
         # Clean first
         make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
         
-        # Try simple build first
+        # Try simple build first - just override CC
         echo ""
-        echo "=== Attempt 1: Simple build (CC only) ==="
+        echo "=== Attempt 1: Simple build (override CC only) ==="
         
         set +e
         make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
@@ -260,55 +199,21 @@ jobs:
           echo "✅ Simple build successful!"
           cp /tmp/build_simple.log /tmp/build.log
         else
-          echo "❌ Simple build failed, trying with more tool overrides"
+          echo "❌ Simple build failed"
+          echo "Checking error..."
+          tail -20 /tmp/build_simple.log | grep -i "error\|fail" || true
           
-          # Try with more tools if available
+          # Try with LTO disabled
           echo ""
-          echo "=== Attempt 2: Build with full toolchain ==="
+          echo "=== Attempt 2: Build without LTO ==="
           
           make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
           
-          # Build command with available tools
-          BUILD_CMD="make -C \"$KERNEL_SRC\" M=\"$PWD/$MODULE_DIR\" modules"
-          BUILD_CMD="$BUILD_CMD CC=\"$CLANG_PATH $OLLVM_FLAGS\""
-          BUILD_CMD="$BUILD_CMD HOSTCC=\"gcc\" HOSTCXX=\"g++\""
-          BUILD_CMD="$BUILD_CMD -j$(nproc)"
+          make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
+            CC="$CLANG_PATH $OLLVM_FLAGS -fno-lto" \
+            -j$(nproc) 2>&1 | tee /tmp/build_no_lto.log
           
-          # Add LD if available
-          if [ -f "/usr/local/ollvm/bin/ld.lld" ]; then
-            BUILD_CMD="$BUILD_CMD LD=\"/usr/local/ollvm/bin/ld.lld\""
-            echo "Using OLLVM ld.lld"
-          fi
-          
-          # Add other tools if available
-          for tool in ar nm objcopy strip; do
-            if [ -f "/usr/local/ollvm/bin/llvm-$tool" ]; then
-              BUILD_CMD="$BUILD_CMD $(echo $tool | tr '[:lower:]' '[:upper:]')=\"/usr/local/ollvm/bin/llvm-$tool\""
-              echo "Using OLLVM llvm-$tool"
-            fi
-          done
-          
-          echo "Build command: $BUILD_CMD"
-          
-          set +e
-          eval $BUILD_CMD 2>&1 | tee /tmp/build_full.log
-          FULL_EXIT=$?
-          set -e
-          
-          cp /tmp/build_full.log /tmp/build.log
-          
-          if [ $FULL_EXIT -ne 0 ] || [ ! -f "$MODULE_DIR"/*.ko ]; then
-            echo ""
-            echo "=== Attempt 3: Build without LTO ==="
-            
-            make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
-            
-            make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-              CC="$CLANG_PATH $OLLVM_FLAGS -fno-lto" \
-              -j$(nproc) 2>&1 | tee /tmp/build_no_lto.log
-            
-            cp /tmp/build_no_lto.log /tmp/build.log
-          fi
+          cp /tmp/build_no_lto.log /tmp/build.log
         fi
 
     - name: Build with Default Toolchain
@@ -332,6 +237,17 @@ jobs:
           echo "✅ Build successful! Found: $KO_FILE"
           echo "FILE_EXISTS=true" >> $GITHUB_ENV
           echo "KO_FILE_PATH=$KO_FILE" >> $GITHUB_ENV
+          
+          # Check for OLLVM usage
+          if [ "${{ inputs.use_custom_clang }}" = "true" ]; then
+            echo ""
+            echo "=== OLLVM Verification ==="
+            if grep -q "mllvm" /tmp/build.log 2>/dev/null; then
+              echo "✅ OLLVM flags were used in build"
+            else
+              echo "⚠️ No OLLVM flags found in build log"
+            fi
+          fi
         else
           echo "❌ Build failed! No .ko file found."
           echo "FILE_EXISTS=false" >> $GITHUB_ENV
@@ -363,11 +279,10 @@ jobs:
         retention-days: 7
       if: env.FILE_EXISTS == 'true'
 
-    - name: Upload Debug Information
+    - name: Upload Build Logs
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-debug
-        path: |
-          /tmp/build*.log
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-logs
+        path: /tmp/build*.log
         retention-days: 7
       if: always()
