@@ -1,4 +1,4 @@
-name: Build Kernel Module with OLLVM
+name: Build Kernel Module ddk
 
 on:
   workflow_dispatch:
@@ -18,21 +18,6 @@ on:
         - wuwa
         - panic
         default: 'exianb-dev'
-      obfuscation_level:
-        description: 'OLLVM obfuscation level'
-        required: false
-        default: 'medium'
-        type: choice
-        options:
-        - none
-        - light
-        - medium
-        - heavy
-      use_custom_clang:
-        description: 'Use custom OLLVM clang from ZIP'
-        required: false
-        default: 'false'
-        type: boolean
 
 jobs:
   ddk-build:
@@ -56,236 +41,38 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Install unzip in container
+    - name: Build ${{ inputs.module_dir }}.ko
       run: |
-        apt-get update && apt-get install -y unzip
+        echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
 
-    - name: Extract OLLVM Toolchain (Binaries Only)
-      if: ${{ inputs.use_custom_clang }}
-      run: |
-        echo "=== Extracting OLLVM Toolchain (Binaries Only) ==="
+        # Build the module
+        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules
         
-        MODULE_DIR="${{ inputs.module_dir }}"
-        
-        # Clean any existing ollvm directory
-        rm -rf /usr/local/ollvm
-        mkdir -p /usr/local/ollvm/bin
-        
-        # Find and extract ZIP files
-        for zip_file in "$MODULE_DIR"/clang*.zip; do
-          if [ -f "$zip_file" ]; then
-            echo "=== Extracting $(basename "$zip_file") ==="
-            unzip -q "$zip_file" -d /usr/local/ollvm/
-          fi
-        done
-        
-        # Organize binaries - move everything to bin/
-        if [ -d "/usr/local/ollvm/bin" ]; then
-          echo "Binaries already in bin/"
-        else
-          echo "Moving binaries..."
-          # Find and move all clang and llvm binaries
-          find /usr/local/ollvm -type f -executable -name "clang*" -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
-          find /usr/local/ollvm -type f -executable -name "llvm-*" -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
-          find /usr/local/ollvm -type f -executable -name "ld.lld" -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
-        fi
-        
-        # Make everything executable
-        chmod -R +x /usr/local/ollvm/bin/
-        
-        # Test OLLVM clang
-        echo ""
-        echo "=== Testing OLLVM clang ==="
-        if [ -f "/usr/local/ollvm/bin/clang" ]; then
-          echo "✅ OLLVM clang found:"
-          /usr/local/ollvm/bin/clang --version | head -2
-        else
-          echo "❌ OLLVM clang not found in /usr/local/ollvm/bin/"
-          echo "Available files:"
-          ls -la /usr/local/ollvm/bin/ || echo "bin/ directory empty"
-          exit 1
-        fi
-        
-        export PATH=/usr/local/ollvm/bin:$PATH
-        echo "OLLVM_TOOLCHAIN_INSTALLED=true" >> $GITHUB_ENV
+        echo "=== Build completed ==="
 
-    - name: Build with OLLVM (Using System Headers)
-      if: ${{ inputs.use_custom_clang }}
-      run: |
-        echo "=== Building ${{ inputs.module_dir }}.ko with OLLVM ==="
+        # Create output directory
+        mkdir -p /github/workspace/out
         
-        MODULE_DIR="${{ inputs.module_dir }}"
-        
-        # Get system clang path and version (from DDK container)
-        SYS_CLANG=$(which clang || echo "")
-        echo "System clang path: $SYS_CLANG"
-        echo "System clang version:"
-        $SYS_CLANG --version | head -2 || true
-        
-        # Set OLLVM flags
-        case "${{ inputs.obfuscation_level }}" in
-          "light")
-            OLLVM_FLAGS="-mllvm -fla"
-            echo "OLLVM Level: light (-fla)"
-            ;;
-          "medium")
-            OLLVM_FLAGS="-mllvm -fla -mllvm -sub"
-            echo "OLLVM Level: medium (-fla -sub)"
-            ;;
-          "heavy")
-            OLLVM_FLAGS="-mllvm -fla -mllvm -sub -mllvm -bcf"
-            echo "OLLVM Level: heavy (-fla -sub -bcf)"
-            ;;
-          *)
-            OLLVM_FLAGS=""
-            echo "OLLVM Level: none"
-            ;;
-        esac
-        
-        # Disable LTO for OLLVM builds (important!)
-        LTO_FLAGS="-fno-lto"
-        
-        # Get system include paths from the existing toolchain
-        echo ""
-        echo "=== Getting system include paths ==="
-        
-        # Method 1: Use system clang to get include paths
-        if [ -n "$SYS_CLANG" ]; then
-          echo "Querying system clang for include paths..."
-          SYS_INCLUDES=$($SYS_CLANG -E -x c - -v </dev/null 2>&1 | grep "^ /" | head -10)
-          echo "System includes found:"
-          echo "$SYS_INCLUDES"
-          
-          # Convert to -isystem flags
-          INCLUDE_FLAGS=""
-          while IFS= read -r line; do
-            INCLUDE_FLAGS="$INCLUDE_FLAGS -isystem \"$line\""
-          done <<< "$SYS_INCLUDES"
-        else
-          # Method 2: Use common include paths
-          INCLUDE_FLAGS="-isystem /usr/include -isystem /usr/local/include"
-        fi
-        
-        echo ""
-        echo "=== Build Configuration ==="
-        echo "OLLVM flags: $OLLVM_FLAGS"
-        echo "LTO flags: $LTO_FLAGS"
-        echo "Include flags: $INCLUDE_FLAGS"
-        
-        # Clean first
-        make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
-        
-        # Build with OLLVM but using system headers
-        # We need to preserve the kernel's original CC_FLAGS but add our own
-        echo ""
-        echo "=== Building module ==="
-        
-        set +e
-        make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-          CC="/usr/local/ollvm/bin/clang" \
-          CC_FLAGS="$OLLVM_FLAGS $LTO_FLAGS $INCLUDE_FLAGS" \
-          LD="/usr/local/ollvm/bin/ld.lld" \
-          AR="/usr/local/ollvm/bin/llvm-ar" \
-          NM="/usr/local/ollvm/bin/llvm-nm" \
-          OBJCOPY="/usr/local/ollvm/bin/llvm-objcopy" \
-          STRIP="/usr/local/ollvm/bin/llvm-strip" \
-          HOSTCC="gcc" \
-          HOSTCXX="g++" \
-          KCFLAGS="$OLLVM_FLAGS $LTO_FLAGS" \
-          -j$(nproc) 2>&1 | tee /tmp/build.log
-        BUILD_EXIT=$?
-        set -e
-        
-        if [ $BUILD_EXIT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
-          echo "✅ OLLVM build successful!"
-        else
-          echo "❌ OLLVM build failed, trying alternative approach..."
-          
-          # Alternative: Use KCFLAGS instead of overriding CC
-          make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
-          
-          # This approach lets the kernel use its own clang but passes our flags
-          make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-            KCFLAGS="$OLLVM_FLAGS $LTO_FLAGS -fno-lto" \
-            -j$(nproc) 2>&1 | tee /tmp/build_alt.log
-        fi
-
-    - name: Build with Default Toolchain
-      if: ${{ !inputs.use_custom_clang }}
-      run: |
-        echo "=== Building with Default Toolchain ==="
-        MODULE_DIR="${{ inputs.module_dir }}"
-        
-        make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules -j$(nproc) 2>&1 | tee /tmp/build.log
-
-    - name: Check Build Result
-      run: |
-        echo "=== Checking Build Result ==="
-        
-        MODULE_DIR="${{ inputs.module_dir }}"
-        
-        # Find the .ko file
-        KO_FILE=$(find "$MODULE_DIR" -name "*.ko" -type f | head -1)
-        
-        if [ -f "$KO_FILE" ]; then
-          echo "✅ Build successful! Found: $KO_FILE"
-          
-          # Check if OLLVM was used
-          if [ "${{ inputs.use_custom_clang }}" = "true" ]; then
-            echo "Checking for OLLVM patterns..."
-            # Simple check for obfuscated code patterns
-            if readelf -p .comment "$KO_FILE" 2>/dev/null | grep -i ollvm; then
-              echo "✅ OLLVM obfuscation detected in binary"
-            else
-              echo "⚠️ OLLVM patterns not found in .comment section"
-            fi
-          fi
-          
-          echo "FILE_EXISTS=true" >> $GITHUB_ENV
-          echo "KO_FILE_PATH=$KO_FILE" >> $GITHUB_ENV
-        else
-          echo "❌ Build failed! No .ko file found."
-          echo "Checking build logs..."
-          tail -50 /tmp/build*.log 2>/dev/null || true
-          echo "FILE_EXISTS=false" >> $GITHUB_ENV
-        fi
-
-    - name: Process Successful Build
-      if: env.FILE_EXISTS == 'true'
-      run: |
-        MODULE_DIR="${{ inputs.module_dir }}"
-        KO_FILE="${{ env.KO_FILE_PATH }}"
+        # Find the first .ko file in the module directory
+        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         
         TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-        
-        if [ "${{ inputs.use_custom_clang }}" = "true" ]; then
-          OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-ollvm-${{ inputs.obfuscation_level }}-$TIMESTAMP.ko"
+        OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-$TIMESTAMP.ko"
+        if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
+            cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
+            echo "Copied: $KO_FILE -> /github/workspace/out/$OUTPUT_NAME"
+            echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+            llvm-strip -d "/github/workspace/out/$OUTPUT_NAME"
+            echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
         else
-          OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-default-$TIMESTAMP.ko"
+            echo "ERROR: No .ko file found in ${{ inputs.module_dir }}/!"
+            echo "Available files in ${{ inputs.module_dir }}/:"
+            ls -la "${{ inputs.module_dir }}/" || echo "Directory doesn't exist"
+            exit 1
         fi
-        
-        mkdir -p /github/workspace/out
-        cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
-        
-        # Strip debug symbols (optional)
-        llvm-strip -d "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null || \
-        strip --strip-debug "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null || true
-        
-        echo "ARTIFACT_PATH=/github/workspace/out/$OUTPUT_NAME" >> $GITHUB_ENV
-        echo "Module size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
 
-    - name: Upload Artifact
+    - name: Upload ${{ inputs.module_dir }}.ko artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
-        path: ${{ env.ARTIFACT_PATH }}
-        retention-days: 7
-      if: env.FILE_EXISTS == 'true'
-
-    - name: Upload Build Logs
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-logs
-        path: /tmp/build*.log
-        retention-days: 7
-      if: always()
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ github.run_id }}
+        path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-*.ko
