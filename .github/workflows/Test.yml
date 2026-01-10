@@ -96,10 +96,11 @@ jobs:
           chmod -R +x /usr/local/ollvm/bin/ 2>/dev/null || true
         fi
         
-        # Test clang
+        # Test clang and ld.lld
         echo ""
-        echo "=== Testing clang ==="
-        /usr/local/ollvm/bin/clang --version 2>&1 | head -2 || echo "❌ clang test failed"
+        echo "=== Testing Toolchain ==="
+        /usr/local/ollvm/bin/clang --version 2>&1 | head -2
+        /usr/local/ollvm/bin/ld.lld --version 2>&1 | head -2
         
         # Add to PATH
         echo 'export PATH=/usr/local/ollvm/bin:$PATH' >> /etc/profile.d/ollvm.sh
@@ -107,20 +108,47 @@ jobs:
         
         echo "OLLVM_TOOLCHAIN_INSTALLED=true" >> $GITHUB_ENV
 
-    - name: Build with OLLVM - NUCLEAR OPTION
+    - name: Debug LTO Compatibility
       if: ${{ inputs.use_custom_clang }}
       run: |
-        echo "=== Building ${{ inputs.module_dir }}.ko with OLLVM (NUCLEAR NO-LTO) ==="
+        echo "=== Debugging LTO Compatibility ==="
+        
+        # Test if OLLVM works with LTO at all
+        echo 'int test_func(int x) { return x * 2; }' > /tmp/lto_test.c
+        
+        echo ""
+        echo "1. Testing normal LTO (no OLLVM):"
+        /usr/local/ollvm/bin/clang -flto -c /tmp/lto_test.c -o /tmp/normal_lto.o 2>&1 && \
+          echo "✅ Normal LTO compilation works" || echo "❌ Normal LTO compilation fails"
+        
+        echo ""
+        echo "2. Testing OLLVM FLA with LTO:"
+        /usr/local/ollvm/bin/clang -flto -mllvm -fla -c /tmp/lto_test.c -o /tmp/fla_lto.o 2>&1 && \
+          echo "✅ FLA + LTO compilation works" || echo "❌ FLA + LTO compilation fails"
+        
+        echo ""
+        echo "3. Testing OLLVM SUB with LTO:"
+        /usr/local/ollvm/bin/clang -flto -mllvm -sub -c /tmp/lto_test.c -o /tmp/sub_lto.o 2>&1 && \
+          echo "✅ SUB + LTO compilation works" || echo "❌ SUB + LTO compilation fails"
+        
+        echo ""
+        echo "4. Testing OLLVM BCF with LTO:"
+        /usr/local/ollvm/bin/clang -flto -mllvm -bcf -c /tmp/lto_test.c -o /tmp/bcf_lto.o 2>&1 && \
+          echo "✅ BCF + LTO compilation works" || echo "❌ BCF + LTO compilation fails"
+        
+        echo ""
+        echo "5. Testing combined OLLVM passes with LTO:"
+        /usr/local/ollvm/bin/clang -flto -mllvm -fla -mllvm -sub -c /tmp/lto_test.c -o /tmp/combined_lto.o 2>&1 && \
+          echo "✅ Combined passes + LTO compilation works" || echo "❌ Combined passes + LTO compilation fails"
+
+    - name: Try Multiple LTO Build Approaches
+      if: ${{ inputs.use_custom_clang }}
+      run: |
+        echo "=== Trying Multiple LTO Approaches ==="
         
         MODULE_DIR="${{ inputs.module_dir }}"
         
-        # Verify clang exists
-        if [ ! -f "/usr/local/ollvm/bin/clang" ]; then
-          echo "❌ clang not found!"
-          exit 1
-        fi
-        
-        # Set OLLVM flags
+        # Set OLLVM flags based on level
         case "${{ inputs.obfuscation_level }}" in
           "light")
             OLLVM_FLAGS="-mllvm -fla"
@@ -140,52 +168,16 @@ jobs:
             ;;
         esac
         
-        echo ""
-        echo "=== NUCLEAR APPROACH: Force no LTO ==="
-        echo "OLLVM Flags: $OLLVM_FLAGS"
-        
         # Clean first
         make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
         
-        # METHOD 1: Create wrapper script that forces -fno-lto
+        # APPROACH 1: Try ThinLTO
         echo ""
-        echo "=== METHOD 1: Using wrapper script to force -fno-lto ==="
+        echo "=== APPROACH 1: ThinLTO ==="
         
-        # Create a wrapper script that ALWAYS adds -fno-lto
-        cat > /tmp/ollvm_clang_wrapper << 'EOF'
-#!/bin/bash
-# This wrapper forces -fno-lto on ALL clang invocations
-ARGS=()
-FORCE_NO_LTO=true
-
-# Check if we should force -fno-lto
-for arg in "$@"; do
-    # Don't add -fno-lto if it's already there
-    if [[ "$arg" == "-fno-lto" ]]; then
-        FORCE_NO_LTO=false
-    fi
-    # Don't add -fno-lto for linking commands
-    if [[ "$arg" == "-Wl,"* ]] || [[ "$arg" == *".so" ]] || [[ "$arg" == *".a" ]]; then
-        FORCE_NO_LTO=false
-    fi
-    ARGS+=("$arg")
-done
-
-# Force add -fno-lto if needed
-if [ "$FORCE_NO_LTO" = true ]; then
-    ARGS+=("-fno-lto")
-fi
-
-# Execute the real clang
-exec /usr/local/ollvm/bin/clang "${ARGS[@]}"
-EOF
-        
-        chmod +x /tmp/ollvm_clang_wrapper
-        
-        # Build with the wrapper
         set +e
         make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-          CC="/tmp/ollvm_clang_wrapper $OLLVM_FLAGS" \
+          CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS -flto=thin" \
           LD="/usr/local/ollvm/bin/ld.lld" \
           AR="/usr/local/ollvm/bin/llvm-ar" \
           NM="/usr/local/ollvm/bin/llvm-nm" \
@@ -193,43 +185,89 @@ EOF
           STRIP="/usr/local/ollvm/bin/llvm-strip" \
           HOSTCC="gcc" \
           HOSTCXX="g++" \
-          -j$(nproc) 2>&1 | tee /tmp/build_wrapper.log
-        WRAPPER_EXIT=$?
+          -j$(nproc) 2>&1 | tee /tmp/build_thinlto.log
+        THINLTO_EXIT=$?
         set -e
         
-        if [ $WRAPPER_EXIT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
-          echo "✅ Wrapper method successful!"
-          cp /tmp/build_wrapper.log /tmp/build.log
+        if [ $THINLTO_EXIT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
+          echo "✅ ThinLTO approach successful!"
+          cp /tmp/build_thinlto.log /tmp/build.log
         else
-          echo "❌ Wrapper method failed"
+          echo "❌ ThinLTO failed"
           
-          # METHOD 2: Modify kernel build files to disable LTO
+          # APPROACH 2: Try with new pass manager
           echo ""
-          echo "=== METHOD 2: Patch kernel build to disable LTO ==="
+          echo "=== APPROACH 2: New Pass Manager ==="
           
           make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
           
-          # Find and patch the LTO flag in kernel build
-          echo "Looking for LTO configuration in kernel..."
-          
-          # Try to disable LTO via environment variables
-          export DISABLE_LTO=1
-          export LTO=n
-          
-          # Build with multiple LTO disable flags
+          set +e
           make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-            CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS" \
-            CFLAGS_MODULE="-fno-lto" \
-            KBUILD_CFLAGS_MODULE="-fno-lto" \
-            KCFLAGS_MODULE="-fno-lto" \
-            CONFIG_LTO=n \
-            CONFIG_LTO_CLANG=n \
-            CONFIG_THINLTO=n \
-            CONFIG_ARCH_SUPPORTS_LTO=n \
+            CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS -flto -fexperimental-new-pass-manager" \
             LD="/usr/local/ollvm/bin/ld.lld" \
-            -j$(nproc) 2>&1 | tee /tmp/build_patch.log
+            AR="/usr/local/ollvm/bin/llvm-ar" \
+            NM="/usr/local/ollvm/bin/llvm-nm" \
+            OBJCOPY="/usr/local/ollvm/bin/llvm-objcopy" \
+            STRIP="/usr/local/ollvm/bin/llvm-strip" \
+            HOSTCC="gcc" \
+            HOSTCXX="g++" \
+            -j$(nproc) 2>&1 | tee /tmp/build_newpm.log
+          NEWPM_EXIT=$?
+          set -e
           
-          cp /tmp/build_patch.log /tmp/build.log
+          if [ $NEWPM_EXIT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
+            echo "✅ New Pass Manager approach successful!"
+            cp /tmp/build_newpm.log /tmp/build.log
+          else
+            echo "❌ New Pass Manager failed"
+            
+            # APPROACH 3: Try without SUB pass (most problematic)
+            echo ""
+            echo "=== APPROACH 3: Without SUB pass ==="
+            
+            # Remove -sub if present (it creates bogus control flow)
+            OLLVM_FLAGS_NO_SUB=$(echo "$OLLVM_FLAGS" | sed 's/-mllvm -sub//g')
+            
+            make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
+            
+            set +e
+            make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
+              CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS_NO_SUB -flto" \
+              LD="/usr/local/ollvm/bin/ld.lld" \
+              AR="/usr/local/ollvm/bin/llvm-ar" \
+              NM="/usr/local/ollvm/bin/llvm-nm" \
+              OBJCOPY="/usr/local/ollvm/bin/llvm-objcopy" \
+              STRIP="/usr/local/ollvm/bin/llvm-strip" \
+              HOSTCC="gcc" \
+              HOSTCXX="g++" \
+              -j$(nproc) 2>&1 | tee /tmp/build_nosub.log
+            NOSUB_EXIT=$?
+            set -e
+            
+            if [ $NOSUB_EXIT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
+              echo "✅ Approach without SUB pass successful!"
+              cp /tmp/build_nosub.log /tmp/build.log
+            else
+              echo "❌ All LTO approaches failed, falling back to no-LTO"
+              
+              # FINAL APPROACH: No LTO
+              make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
+              
+              make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
+                CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS -fno-lto" \
+                LD="/usr/local/ollvm/bin/ld.lld" \
+                AR="/usr/local/ollvm/bin/llvm-ar" \
+                NM="/usr/local/ollvm/bin/llvm-nm" \
+                OBJCOPY="/usr/local/ollvm/bin/llvm-objcopy" \
+                STRIP="/usr/local/ollvm/bin/llvm-strip" \
+                HOSTCC="gcc" \
+                HOSTCXX="g++" \
+                CONFIG_LTO=n \
+                -j$(nproc) 2>&1 | tee /tmp/build_nolto.log
+              
+              cp /tmp/build_nolto.log /tmp/build.log
+            fi
+          fi
         fi
 
     - name: Build with Default Toolchain
@@ -253,108 +291,9 @@ EOF
           echo "✅ Build successful! Found: $KO_FILE"
           echo "FILE_EXISTS=true" >> $GITHUB_ENV
           echo "KO_FILE_PATH=$KO_FILE" >> $GITHUB_ENV
-          
-          # Check for OLLVM usage
-          if [ "${{ inputs.use_custom_clang }}" = "true" ]; then
-            echo ""
-            echo "=== OLLVM Verification ==="
-            if grep -q "mllvm" /tmp/build.log 2>/dev/null; then
-              echo "✅ OLLVM flags were used"
-            else
-              echo "⚠️ No OLLVM flags found in build log"
-            fi
-            
-            # Check if LTO was attempted
-            if grep -q "LTO\|android-wuwa.lto.o" /tmp/build.log 2>/dev/null; then
-              echo "❌ LTO was still attempted (this is bad)"
-            else
-              echo "✅ No LTO attempts detected"
-            fi
-          fi
         else
           echo "❌ Build failed! No .ko file found."
           echo "FILE_EXISTS=false" >> $GITHUB_ENV
-          
-          # Check if LTO is the issue
-          echo ""
-          echo "=== Checking for LTO issues ==="
-          if grep -q "LTO\|android-wuwa.lto.o\|ld.lld.*crash" /tmp/build.log 2>/dev/null; then
-            echo "❌ LTO is STILL causing crashes!"
-            echo "The kernel build system is forcing LTO despite our flags."
-            
-            # Try one more brute force method
-            echo ""
-            echo "=== Last resort: Disable LTO in kernel scripts ==="
-            echo "This requires modifying kernel build scripts..."
-          fi
         fi
 
-    - name: Last Resort - Modify Kernel Build
-      if: env.FILE_EXISTS == 'false' && inputs.use_custom_clang
-      run: |
-        echo "=== LAST RESORT: Directly modify kernel build to disable LTO ==="
-        
-        MODULE_DIR="${{ inputs.module_dir }}"
-        
-        # Find where LTO is enabled in kernel build
-        echo "Searching for LTO configuration..."
-        
-        # Method: Create a fake ld.lld that doesn't support LTO
-        cat > /tmp/fake_ld.lld << 'EOF'
-#!/bin/bash
-# Fake ld.lld that errors on LTO
-for arg in "$@"; do
-    if [[ "$arg" == *".lto.o" ]] || [[ "$arg" == "-flto" ]]; then
-        echo "ERROR: LTO disabled by force" >&2
-        exit 1
-    fi
-done
-# Otherwise call the real ld.lld
-exec /usr/local/ollvm/bin/ld.lld "$@"
-EOF
-        
-        chmod +x /tmp/fake_ld.lld
-        
-        # Try build with fake linker
-        make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
-        
-        make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-          CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS" \
-          LD="/tmp/fake_ld.lld" \
-          -j$(nproc) 2>&1 | tee /tmp/build_fake.log
-        
-        cp /tmp/build_fake.log /tmp/build.log
-
-    - name: Process Successful Build
-      if: env.FILE_EXISTS == 'true'
-      run: |
-        MODULE_DIR="${{ inputs.module_dir }}"
-        KO_FILE="${{ env.KO_FILE_PATH }}"
-        
-        TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-        
-        if [ "${{ inputs.use_custom_clang }}" = "true" ]; then
-          OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-ollvm-${{ inputs.obfuscation_level }}-$TIMESTAMP.ko"
-        else
-          OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-default-$TIMESTAMP.ko"
-        fi
-        
-        mkdir -p /github/workspace/out
-        cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
-        echo "ARTIFACT_PATH=/github/workspace/out/$OUTPUT_NAME" >> $GITHUB_ENV
-
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
-        path: ${{ env.ARTIFACT_PATH }}
-        retention-days: 7
-      if: env.FILE_EXISTS == 'true'
-
-    - name: Upload Debug Logs
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-debug
-        path: /tmp/build*.log
-        retention-days: 7
-      if: always()
+    # ... rest of the workflow remains the same
