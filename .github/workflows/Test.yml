@@ -125,163 +125,159 @@ jobs:
       run: |
         echo "=== Creating Obfuscation Scripts ==="
         
-        # Create string encryption script
-        cat > /tmp/encrypt_strings.py << 'PYEOF'
-import lief
-import sys
-import os
-
-def encrypt_strings(ko_file):
-    try:
-        # Load the binary
-        binary = lief.parse(ko_file)
+        # Create string encryption script - write line by line to avoid heredoc issues
+        echo 'import lief' > /tmp/encrypt_strings.py
+        echo 'import sys' >> /tmp/encrypt_strings.py
+        echo 'import os' >> /tmp/encrypt_strings.py
+        echo '' >> /tmp/encrypt_strings.py
+        echo 'def encrypt_strings(ko_file):' >> /tmp/encrypt_strings.py
+        echo '    try:' >> /tmp/encrypt_strings.py
+        echo '        # Load the binary' >> /tmp/encrypt_strings.py
+        echo '        binary = lief.parse(ko_file)' >> /tmp/encrypt_strings.py
+        echo '        ' >> /tmp/encrypt_strings.py
+        echo '        if binary is None:' >> /tmp/encrypt_strings.py
+        echo '            print("Failed to parse ELF")' >> /tmp/encrypt_strings.py
+        echo '            return False' >> /tmp/encrypt_strings.py
+        echo '        ' >> /tmp/encrypt_strings.py
+        echo '        # Get the .rodata section (contains strings)' >> /tmp/encrypt_strings.py
+        echo '        rodata = None' >> /tmp/encrypt_strings.py
+        echo '        for section in binary.sections:' >> /tmp/encrypt_strings.py
+        echo '            if section.name == ".rodata":' >> /tmp/encrypt_strings.py
+        echo '                rodata = section' >> /tmp/encrypt_strings.py
+        echo '                break' >> /tmp/encrypt_strings.py
+        echo '        ' >> /tmp/encrypt_strings.py
+        echo '        if rodata is not None:' >> /tmp/encrypt_strings.py
+        echo '            print(f"Found .rodata section: 0x{rodata.virtual_address:x} - 0x{rodata.virtual_address + rodata.size:x}")' >> /tmp/encrypt_strings.py
+        echo '            ' >> /tmp/encrypt_strings.py
+        echo '            # Simple XOR encryption of printable strings' >> /tmp/encrypt_strings.py
+        echo '            content = bytearray(rodata.content)' >> /tmp/encrypt_strings.py
+        echo '            changed = 0' >> /tmp/encrypt_strings.py
+        echo '            ' >> /tmp/encrypt_strings.py
+        echo '            for i in range(len(content)):' >> /tmp/encrypt_strings.py
+        echo '                # Simple XOR with pattern for printable ASCII' >> /tmp/encrypt_strings.py
+        echo '                if 32 <= content[i] <= 126:' >> /tmp/encrypt_strings.py
+        echo '                    content[i] ^= 0xAA' >> /tmp/encrypt_strings.py
+        echo '                    changed += 1' >> /tmp/encrypt_strings.py
+        echo '            ' >> /tmp/encrypt_strings.py
+        echo '            print(f"Encrypted {changed} bytes in .rodata")' >> /tmp/encrypt_strings.py
+        echo '            rodata.content = list(content)' >> /tmp/encrypt_strings.py
+        echo '            ' >> /tmp/encrypt_strings.py
+        echo '            # Write back' >> /tmp/encrypt_strings.py
+        echo '            binary.write(ko_file)' >> /tmp/encrypt_strings.py
+        echo '            print("String encryption complete")' >> /tmp/encrypt_strings.py
+        echo '            return True' >> /tmp/encrypt_strings.py
+        echo '        else:' >> /tmp/encrypt_strings.py
+        echo '            print("No .rodata section found")' >> /tmp/encrypt_strings.py
+        echo '            return False' >> /tmp/encrypt_strings.py
+        echo '            ' >> /tmp/encrypt_strings.py
+        echo '    except Exception as e:' >> /tmp/encrypt_strings.py
+        echo '        print(f"Error during string encryption: {e}")' >> /tmp/encrypt_strings.py
+        echo '        return False' >> /tmp/encrypt_strings.py
+        echo '' >> /tmp/encrypt_strings.py
+        echo 'if __name__ == "__main__":' >> /tmp/encrypt_strings.py
+        echo '    if len(sys.argv) != 2:' >> /tmp/encrypt_strings.py
+        echo '        print("Usage: python3 encrypt_strings.py <ko_file>")' >> /tmp/encrypt_strings.py
+        echo '        sys.exit(1)' >> /tmp/encrypt_strings.py
+        echo '    ' >> /tmp/encrypt_strings.py
+        echo '    ko_file = sys.argv[1]' >> /tmp/encrypt_strings.py
+        echo '    if encrypt_strings(ko_file):' >> /tmp/encrypt_strings.py
+        echo '        sys.exit(0)' >> /tmp/encrypt_strings.py
+        echo '    else:' >> /tmp/encrypt_strings.py
+        echo '        sys.exit(1)' >> /tmp/encrypt_strings.py
         
-        if binary is None:
-            print('Failed to parse ELF')
-            return False
-        
-        # Get the .rodata section (contains strings)
-        rodata = None
-        for section in binary.sections:
-            if section.name == '.rodata':
-                rodata = section
-                break
-        
-        if rodata is not None:
-            print(f'Found .rodata section: 0x{rodata.virtual_address:x} - 0x{rodata.virtual_address + rodata.size:x}')
-            
-            # Simple XOR encryption of printable strings
-            content = bytearray(rodata.content)
-            changed = 0
-            
-            for i in range(len(content)):
-                # Simple XOR with pattern for printable ASCII
-                if 32 <= content[i] <= 126:
-                    content[i] ^= 0xAA
-                    changed += 1
-            
-            print(f'Encrypted {changed} bytes in .rodata')
-            rodata.content = list(content)
-            
-            # Write back
-            binary.write(ko_file)
-            print('String encryption complete')
-            return True
-        else:
-            print('No .rodata section found')
-            return False
-            
-    except Exception as e:
-        print(f'Error during string encryption: {e}')
-        return False
-
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python3 encrypt_strings.py <ko_file>")
-        sys.exit(1)
-    
-    ko_file = sys.argv[1]
-    if encrypt_strings(ko_file):
-        sys.exit(0)
-    else:
-        sys.exit(1)
-PYEOF
-
         # Create binary transformation script
-        cat > /tmp/transform_binary.py << 'PYEOF'
-import sys
-
-def transform_binary(ko_file):
-    try:
-        with open(ko_file, 'rb') as f:
-            data = bytearray(f.read())
-
-        # Only transform first 1KB to avoid breaking things
-        transform_len = min(1024, len(data))
-
-        # Simple byte swap every 4 bytes
-        for i in range(0, transform_len - 4, 4):
-            data[i], data[i+1] = data[i+1], data[i]
-            data[i+2], data[i+3] = data[i+3], data[i+2]
-
-        with open(ko_file, 'wb') as f:
-            f.write(data)
-
-        print(f'Transformed {transform_len} bytes')
-        return True
+        echo 'import sys' > /tmp/transform_binary.py
+        echo '' >> /tmp/transform_binary.py
+        echo 'def transform_binary(ko_file):' >> /tmp/transform_binary.py
+        echo '    try:' >> /tmp/transform_binary.py
+        echo '        with open(ko_file, "rb") as f:' >> /tmp/transform_binary.py
+        echo '            data = bytearray(f.read())' >> /tmp/transform_binary.py
+        echo '' >> /tmp/transform_binary.py
+        echo '        # Only transform first 1KB to avoid breaking things' >> /tmp/transform_binary.py
+        echo '        transform_len = min(1024, len(data))' >> /tmp/transform_binary.py
+        echo '' >> /tmp/transform_binary.py
+        echo '        # Simple byte swap every 4 bytes' >> /tmp/transform_binary.py
+        echo '        for i in range(0, transform_len - 4, 4):' >> /tmp/transform_binary.py
+        echo '            data[i], data[i+1] = data[i+1], data[i]' >> /tmp/transform_binary.py
+        echo '            data[i+2], data[i+3] = data[i+3], data[i+2]' >> /tmp/transform_binary.py
+        echo '' >> /tmp/transform_binary.py
+        echo '        with open(ko_file, "wb") as f:' >> /tmp/transform_binary.py
+        echo '            f.write(data)' >> /tmp/transform_binary.py
+        echo '' >> /tmp/transform_binary.py
+        echo '        print(f"Transformed {transform_len} bytes")' >> /tmp/transform_binary.py
+        echo '        return True' >> /tmp/transform_binary.py
+        echo '        ' >> /tmp/transform_binary.py
+        echo '    except Exception as e:' >> /tmp/transform_binary.py
+        echo '        print(f"Error during binary transformation: {e}")' >> /tmp/transform_binary.py
+        echo '        return False' >> /tmp/transform_binary.py
+        echo '' >> /tmp/transform_binary.py
+        echo 'if __name__ == "__main__":' >> /tmp/transform_binary.py
+        echo '    if len(sys.argv) != 2:' >> /tmp/transform_binary.py
+        echo '        print("Usage: python3 transform_binary.py <ko_file>")' >> /tmp/transform_binary.py
+        echo '        sys.exit(1)' >> /tmp/transform_binary.py
+        echo '    ' >> /tmp/transform_binary.py
+        echo '    ko_file = sys.argv[1]' >> /tmp/transform_binary.py
+        echo '    if transform_binary(ko_file):' >> /tmp/transform_binary.py
+        echo '        sys.exit(0)' >> /tmp/transform_binary.py
+        echo '    else:' >> /tmp/transform_binary.py
+        echo '        sys.exit(1)' >> /tmp/transform_binary.py
         
-    except Exception as e:
-        print(f'Error during binary transformation: {e}')
-        return False
-
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python3 transform_binary.py <ko_file>")
-        sys.exit(1)
-    
-    ko_file = sys.argv[1]
-    if transform_binary(ko_file):
-        sys.exit(0)
-    else:
-        sys.exit(1)
-PYEOF
-
         # Create section XOR script
-        cat > /tmp/xor_sections.py << 'PYEOF'
-import lief
-import sys
-
-def xor_sections(ko_file):
-    try:
-        binary = lief.parse(ko_file)
+        echo 'import lief' > /tmp/xor_sections.py
+        echo 'import sys' >> /tmp/xor_sections.py
+        echo '' >> /tmp/xor_sections.py
+        echo 'def xor_sections(ko_file):' >> /tmp/xor_sections.py
+        echo '    try:' >> /tmp/xor_sections.py
+        echo '        binary = lief.parse(ko_file)' >> /tmp/xor_sections.py
+        echo '        ' >> /tmp/xor_sections.py
+        echo '        if binary is None:' >> /tmp/xor_sections.py
+        echo '            print("Failed to parse ELF")' >> /tmp/xor_sections.py
+        echo '            return False' >> /tmp/xor_sections.py
+        echo '        ' >> /tmp/xor_sections.py
+        echo '        # Find executable sections' >> /tmp/xor_sections.py
+        echo '        transformed = 0' >> /tmp/xor_sections.py
+        echo '        for section in binary.sections:' >> /tmp/xor_sections.py
+        echo '            if section.has(lief.ELF.SECTION_FLAGS.EXECINSTR):' >> /tmp/xor_sections.py
+        echo '                print(f"Found executable section: {section.name}")' >> /tmp/xor_sections.py
+        echo '                ' >> /tmp/xor_sections.py
+        echo '                content = bytearray(section.content)' >> /tmp/xor_sections.py
+        echo '                ' >> /tmp/xor_sections.py
+        echo '                # XOR with pattern' >> /tmp/xor_sections.py
+        echo '                pattern = [0x90, 0x90, 0x90, 0x90]  # NOP sled pattern' >> /tmp/xor_sections.py
+        echo '                for i in range(len(content)):' >> /tmp/xor_sections.py
+        echo '                    content[i] ^= pattern[i % len(pattern)]' >> /tmp/xor_sections.py
+        echo '                ' >> /tmp/xor_sections.py
+        echo '                section.content = list(content)' >> /tmp/xor_sections.py
+        echo '                transformed += len(content)' >> /tmp/xor_sections.py
+        echo '                print(f"XOR transformed {len(content)} bytes in {section.name}")' >> /tmp/xor_sections.py
+        echo '        ' >> /tmp/xor_sections.py
+        echo '        if transformed > 0:' >> /tmp/xor_sections.py
+        echo '            # Write back' >> /tmp/xor_sections.py
+        echo '            binary.write(ko_file)' >> /tmp/xor_sections.py
+        echo '            print(f"XOR transformation complete: {transformed} total bytes")' >> /tmp/xor_sections.py
+        echo '            return True' >> /tmp/xor_sections.py
+        echo '        else:' >> /tmp/xor_sections.py
+        echo '            print("No executable sections found")' >> /tmp/xor_sections.py
+        echo '            return False' >> /tmp/xor_sections.py
+        echo '            ' >> /tmp/xor_sections.py
+        echo '    except Exception as e:' >> /tmp/xor_sections.py
+        echo '        print(f"Error during XOR transformation: {e}")' >> /tmp/xor_sections.py
+        echo '        return False' >> /tmp/xor_sections.py
+        echo '' >> /tmp/xor_sections.py
+        echo 'if __name__ == "__main__":' >> /tmp/xor_sections.py
+        echo '    if len(sys.argv) != 2:' >> /tmp/xor_sections.py
+        echo '        print("Usage: python3 xor_sections.py <ko_file>")' >> /tmp/xor_sections.py
+        echo '        sys.exit(1)' >> /tmp/xor_sections.py
+        echo '    ' >> /tmp/xor_sections.py
+        echo '    ko_file = sys.argv[1]' >> /tmp/xor_sections.py
+        echo '    if xor_sections(ko_file):' >> /tmp/xor_sections.py
+        echo '        sys.exit(0)' >> /tmp/xor_sections.py
+        echo '    else:' >> /tmp/xor_sections.py
+        echo '        sys.exit(1)' >> /tmp/xor_sections.py
         
-        if binary is None:
-            print('Failed to parse ELF')
-            return False
-        
-        # Find executable sections
-        transformed = 0
-        for section in binary.sections:
-            if section.has(lief.ELF.SECTION_FLAGS.EXECINSTR):
-                print(f'Found executable section: {section.name}')
-                
-                content = bytearray(section.content)
-                
-                # XOR with pattern
-                pattern = [0x90, 0x90, 0x90, 0x90]  # NOP sled pattern
-                for i in range(len(content)):
-                    content[i] ^= pattern[i % len(pattern)]
-                
-                section.content = list(content)
-                transformed += len(content)
-                print(f'XOR transformed {len(content)} bytes in {section.name}')
-        
-        if transformed > 0:
-            # Write back
-            binary.write(ko_file)
-            print(f'XOR transformation complete: {transformed} total bytes')
-            return True
-        else:
-            print('No executable sections found')
-            return False
-            
-    except Exception as e:
-        print(f'Error during XOR transformation: {e}')
-        return False
-
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python3 xor_sections.py <ko_file>")
-        sys.exit(1)
-    
-    ko_file = sys.argv[1]
-    if xor_sections(ko_file):
-        sys.exit(0)
-    else:
-        sys.exit(1)
-PYEOF
-
         echo "✅ Obfuscation scripts created"
+        echo "Script contents:"
+        wc -l /tmp/*.py
 
     - name: Build Kernel Module
       run: |
@@ -460,20 +456,4 @@ PYEOF
         echo "Warning: Could not strip debug symbols"
         
         echo "Final module: $OUTPUT_NAME"
-        echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
-        echo "ARTIFACT_PATH=/github/workspace/out/$OUTPUT_NAME" >> $GITHUB_ENV
-
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
-        path: ${{ env.ARTIFACT_PATH }}
-        retention-days: 7
-
-    - name: Upload Build Logs
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-logs
-        path: /tmp/build*.log
-        retention-days: 7
-      if: always()
+        echo "Size: $(du -h "/github/works
