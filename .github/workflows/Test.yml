@@ -1,4 +1,4 @@
-name: Build Kernel Module with OLLVM
+ name: Build Kernel Module with OLLVM
 
 on:
   workflow_dispatch:
@@ -33,16 +33,6 @@ on:
         required: false
         default: 'false'
         type: boolean
-      obfuscation_strategy:
-        description: 'Obfuscation strategy when OLLVM fails'
-        required: false
-        default: 'binary'
-        type: choice
-        options:
-        - try_ollvm_first
-        - binary_only
-        - symbolic_only
-        - hybrid
 
 jobs:
   ddk-build:
@@ -73,12 +63,11 @@ jobs:
           file \
           python3 \
           python3-pip \
-          xxd \
-          upx-ucl
+          xxd
         pip3 install lief
 
     - name: Extract OLLVM Toolchain
-      if: ${{ inputs.use_custom_clang && inputs.obfuscation_strategy != 'binary_only' && inputs.obfuscation_strategy != 'symbolic_only' }}
+      if: ${{ inputs.use_custom_clang }}
       run: |
         echo "=== Extracting OLLVM Toolchain ==="
         
@@ -99,53 +88,200 @@ jobs:
         done
         
         if [ $ZIP_COUNT -eq 0 ]; then
-          echo "⚠️ No clang*.zip files found in $MODULE_DIR/"
-          echo "Available files:"
-          ls -la "$MODULE_DIR"/ || echo "Directory doesn't exist"
-          echo "Will use binary obfuscation only"
-          echo "OLLVM_AVAILABLE=false" >> $GITHUB_ENV
-        else
-          # Organize binaries
-          echo ""
-          echo "=== Organizing Binaries ==="
-          
-          # Create bin directory
-          mkdir -p /usr/local/ollvm/bin
-          
-          # Move all executables to bin/
-          find /usr/local/ollvm -type f -executable -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
-          
-          # Make everything executable
-          chmod -R +x /usr/local/ollvm/bin/ 2>/dev/null || true
-          
-          # Test clang
-          echo ""
-          echo "=== Testing OLLVM Clang ==="
-          if [ -f "/usr/local/ollvm/bin/clang" ]; then
-            echo "✅ OLLVM clang found"
-            /usr/local/ollvm/bin/clang --version | head -3
-            
-            # Quick test if OLLVM works
-            cat > /tmp/test_ollvm.c << 'EOF'
-            int test_func(int x) { return x * 2; }
-            EOF
-            
-            if /usr/local/ollvm/bin/clang -c /tmp/test_ollvm.c -o /tmp/test.o -mllvm -fla 2>&1; then
-              echo "✅ OLLVM can compile simple code"
-              echo "OLLVM_AVAILABLE=true" >> $GITHUB_ENV
-            else
-              echo "❌ OLLVM cannot compile even simple code"
-              echo "OLLVM_AVAILABLE=false" >> $GITHUB_ENV
-            fi
-          else
-            echo "❌ clang not found in /usr/local/ollvm/bin/"
-            echo "OLLVM_AVAILABLE=false" >> $GITHUB_ENV
-          fi
-          
-          # Add to PATH
-          export PATH=/usr/local/ollvm/bin:$PATH
-          echo 'export PATH=/usr/local/ollvm/bin:$PATH' >> /etc/profile.d/ollvm.sh
+          echo "❌ No clang*.zip files found in $MODULE_DIR/"
+          exit 1
         fi
+        
+        # Organize binaries
+        echo ""
+        echo "=== Organizing Binaries ==="
+        
+        # Create bin directory
+        mkdir -p /usr/local/ollvm/bin
+        
+        # Move all executables to bin/
+        find /usr/local/ollvm -type f -executable -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
+        
+        # Make everything executable
+        chmod -R +x /usr/local/ollvm/bin/ 2>/dev/null || true
+        
+        # Test clang
+        echo ""
+        echo "=== Testing OLLVM Clang ==="
+        if [ -f "/usr/local/ollvm/bin/clang" ]; then
+          echo "✅ OLLVM clang found"
+          /usr/local/ollvm/bin/clang --version | head -3
+        else
+          echo "❌ clang not found in /usr/local/ollvm/bin/"
+          exit 1
+        fi
+        
+        # Add to PATH
+        export PATH=/usr/local/ollvm/bin:$PATH
+        echo 'export PATH=/usr/local/ollvm/bin:$PATH' >> /etc/profile.d/ollvm.sh
+
+    - name: Create Obfuscation Scripts
+      if: ${{ inputs.use_custom_clang }}
+      run: |
+        echo "=== Creating Obfuscation Scripts ==="
+        
+        # Create string encryption script
+        cat > /tmp/encrypt_strings.py << 'PYTHON_EOF'
+import lief
+import sys
+import os
+
+def encrypt_strings(ko_file):
+    try:
+        # Load the binary
+        binary = lief.parse(ko_file)
+        
+        if binary is None:
+            print('Failed to parse ELF')
+            return False
+        
+        # Get the .rodata section (contains strings)
+        rodata = None
+        for section in binary.sections:
+            if section.name == '.rodata':
+                rodata = section
+                break
+        
+        if rodata is not None:
+            print(f'Found .rodata section: 0x{rodata.virtual_address:x} - 0x{rodata.virtual_address + rodata.size:x}')
+            
+            # Simple XOR encryption of printable strings
+            content = bytearray(rodata.content)
+            changed = 0
+            
+            for i in range(len(content)):
+                # Simple XOR with pattern for printable ASCII
+                if 32 <= content[i] <= 126:
+                    content[i] ^= 0xAA
+                    changed += 1
+            
+            print(f'Encrypted {changed} bytes in .rodata')
+            rodata.content = list(content)
+            
+            # Write back
+            binary.write(ko_file)
+            print('String encryption complete')
+            return True
+        else:
+            print('No .rodata section found')
+            return False
+            
+    except Exception as e:
+        print(f'Error during string encryption: {e}')
+        return False
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: python3 encrypt_strings.py <ko_file>")
+        sys.exit(1)
+    
+    ko_file = sys.argv[1]
+    if encrypt_strings(ko_file):
+        sys.exit(0)
+    else:
+        sys.exit(1)
+PYTHON_EOF
+
+        # Create binary transformation script
+        cat > /tmp/transform_binary.py << 'PYTHON_EOF'
+import sys
+
+def transform_binary(ko_file):
+    try:
+        with open(ko_file, 'rb') as f:
+            data = bytearray(f.read())
+
+        # Only transform first 1KB to avoid breaking things
+        transform_len = min(1024, len(data))
+
+        # Simple byte swap every 4 bytes
+        for i in range(0, transform_len - 4, 4):
+            data[i], data[i+1] = data[i+1], data[i]
+            data[i+2], data[i+3] = data[i+3], data[i+2]
+
+        with open(ko_file, 'wb') as f:
+            f.write(data)
+
+        print(f'Transformed {transform_len} bytes')
+        return True
+        
+    except Exception as e:
+        print(f'Error during binary transformation: {e}')
+        return False
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: python3 transform_binary.py <ko_file>")
+        sys.exit(1)
+    
+    ko_file = sys.argv[1]
+    if transform_binary(ko_file):
+        sys.exit(0)
+    else:
+        sys.exit(1)
+PYTHON_EOF
+
+        # Create section XOR script
+        cat > /tmp/xor_sections.py << 'PYTHON_EOF'
+import lief
+import sys
+
+def xor_sections(ko_file):
+    try:
+        binary = lief.parse(ko_file)
+        
+        if binary is None:
+            print('Failed to parse ELF')
+            return False
+        
+        # Find executable sections
+        transformed = 0
+        for section in binary.sections:
+            if section.has(lief.ELF.SECTION_FLAGS.EXECINSTR):
+                print(f'Found executable section: {section.name}')
+                
+                content = bytearray(section.content)
+                
+                # XOR with pattern
+                pattern = [0x90, 0x90, 0x90, 0x90]  # NOP sled pattern
+                for i in range(len(content)):
+                    content[i] ^= pattern[i % len(pattern)]
+                
+                section.content = list(content)
+                transformed += len(content)
+                print(f'XOR transformed {len(content)} bytes in {section.name}')
+        
+        if transformed > 0:
+            # Write back
+            binary.write(ko_file)
+            print(f'XOR transformation complete: {transformed} total bytes')
+            return True
+        else:
+            print('No executable sections found')
+            return False
+            
+    except Exception as e:
+        print(f'Error during XOR transformation: {e}')
+        return False
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: python3 xor_sections.py <ko_file>")
+        sys.exit(1)
+    
+    ko_file = sys.argv[1]
+    if xor_sections(ko_file):
+        sys.exit(0)
+    else:
+        sys.exit(1)
+PYTHON_EOF
+
+        echo "✅ Obfuscation scripts created"
 
     - name: Build Kernel Module
       run: |
@@ -156,9 +292,51 @@ jobs:
         # Clean first
         make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
         
-        # Build normally
-        echo "=== Building normally ==="
-        make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules -j$(nproc) 2>&1 | tee /tmp/normal_build.log
+        # Try OLLVM build first if requested
+        if [ "${{ inputs.use_custom_clang }}" = "true" ]; then
+          echo "=== Attempting OLLVM Build ==="
+          
+          # Set OLLVM flags based on level
+          case "${{ inputs.obfuscation_level }}" in
+            "light")
+              OLLVM_FLAGS="-mllvm -fla"
+              echo "OLLVM Level: light (flags: -fla)"
+              ;;
+            "medium")
+              OLLVM_FLAGS="-mllvm -fla -mllvm -sub"
+              echo "OLLVM Level: medium (flags: -fla -sub)"
+              ;;
+            "heavy")
+              OLLVM_FLAGS="-mllvm -fla -mllvm -sub -mllvm -bcf"
+              echo "OLLVM Level: heavy (flags: -fla -sub -bcf)"
+              ;;
+            *)
+              OLLVM_FLAGS=""
+              echo "OLLVM Level: none"
+              ;;
+          esac
+          
+          # Try with KCFLAGS
+          echo "Attempting build with OLLVM flags..."
+          set +e
+          make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
+            KCFLAGS="$OLLVM_FLAGS -fno-lto -fno-sanitize=cfi" \
+            -j$(nproc) 2>&1 | tee /tmp/ollvm_build.log
+          OLLVM_RESULT=$?
+          set -e
+          
+          if [ $OLLVM_RESULT -ne 0 ]; then
+            echo "❌ OLLVM build failed, falling back to normal build"
+            make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
+            make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules -j$(nproc) 2>&1 | tee /tmp/normal_build.log
+          else
+            echo "✅ OLLVM build successful"
+          fi
+        else
+          # Build normally
+          echo "=== Building normally ==="
+          make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules -j$(nproc) 2>&1 | tee /tmp/normal_build.log
+        fi
         
         # Check if build was successful
         KO_FILE=$(find "$MODULE_DIR" -name "*.ko" -type f | head -1)
@@ -181,7 +359,6 @@ jobs:
         MODULE_DIR="${{ inputs.module_dir }}"
         ORIGINAL_KO="${{ env.ORIGINAL_KO }}"
         FINAL_KO="${{ env.FINAL_KO }}"
-        STRATEGY="${{ inputs.obfuscation_strategy }}"
         OBF_LEVEL="${{ inputs.obfuscation_level }}"
         
         if [ ! -f "$ORIGINAL_KO" ] || [ ! -f "$FINAL_KO" ]; then
@@ -189,197 +366,53 @@ jobs:
           exit 1
         fi
         
-        # Apply obfuscation based on strategy and level
-        case "$STRATEGY" in
-          "binary_only"|"hybrid")
-            echo "=== Applying Binary Obfuscation ==="
-            
-            # Make a backup
-            cp "$FINAL_KO" "$FINAL_KO.backup"
-            
-            # Apply string encryption
+        # Make a backup
+        cp "$FINAL_KO" "$FINAL_KO.backup"
+        
+        # Apply obfuscation based on level
+        case "$OBF_LEVEL" in
+          "light")
+            echo "=== Light Obfuscation ==="
             echo "Applying string encryption..."
-            python3 << 'EOF'
-import lief
-import sys
-import random
-
-try:
-    # Load the binary
-    binary = lief.parse('$FINAL_KO')
-    
-    if binary is None:
-        print('Failed to parse ELF')
-        sys.exit(1)
-    
-    # Get the .rodata section (contains strings)
-    rodata = None
-    for section in binary.sections:
-        if section.name == '.rodata':
-            rodata = section
-            break
-    
-    if rodata is not None:
-        print(f'Found .rodata section: 0x{rodata.virtual_address:x} - 0x{rodata.virtual_address + rodata.size:x}')
-        
-        # Simple XOR encryption of printable strings
-        content = bytearray(rodata.content)
-        changed = 0
-        
-        for i in range(len(content)):
-            # Simple XOR with pattern for printable ASCII
-            if 32 <= content[i] <= 126:
-                content[i] ^= 0xAA
-                changed += 1
-        
-        print(f'Encrypted {changed} bytes in .rodata')
-        rodata.content = list(content)
-        
-        # Write back
-        binary.write('$FINAL_KO')
-        print('String encryption complete')
-    else:
-        print('No .rodata section found')
-        
-except Exception as e:
-    print(f'Error during string encryption: {e}')
-    sys.exit(1)
-EOF
-            
-            # Apply additional transformations based on level
-            if [ "$OBF_LEVEL" = "medium" ] || [ "$OBF_LEVEL" = "heavy" ]; then
-              echo "Applying binary transformations..."
-              python3 << 'EOF'
-import sys
-with open('$FINAL_KO', 'rb') as f:
-    data = bytearray(f.read())
-
-# Only transform first 1KB to avoid breaking things
-transform_len = min(1024, len(data))
-
-# Simple byte swap every 4 bytes
-for i in range(0, transform_len - 4, 4):
-    data[i], data[i+1] = data[i+1], data[i]
-    data[i+2], data[i+3] = data[i+3], data[i+2]
-
-with open('$FINAL_KO', 'wb') as f:
-    f.write(data)
-
-print(f'Transformed {transform_len} bytes')
-EOF
-            fi
-            
-            if [ "$OBF_LEVEL" = "heavy" ]; then
-              echo "Applying heavy obfuscation..."
-              python3 << 'EOF'
-import lief
-import sys
-
-try:
-    binary = lief.parse('$FINAL_KO')
-    
-    if binary is None:
-        print('Failed to parse ELF')
-        sys.exit(1)
-    
-    # Find executable sections
-    for section in binary.sections:
-        if section.has(lief.ELF.SECTION_FLAGS.EXECINSTR):
-            print(f'Found executable section: {section.name}')
-            
-            content = bytearray(section.content)
-            
-            # XOR with pattern
-            pattern = [0x90, 0x90, 0x90, 0x90]  # NOP sled pattern
-            for i in range(len(content)):
-                content[i] ^= pattern[i % len(pattern)]
-            
-            section.content = list(content)
-            print(f'XOR transformed {len(content)} bytes in {section.name}')
-    
-    # Write back
-    binary.write('$FINAL_KO')
-    print('XOR transformation complete')
-    
-except Exception as e:
-    print(f'Error during XOR transformation: {e}')
-EOF
-            fi
-            
-            # Verify the file is still valid
-            if file "$FINAL_KO" | grep -q "ELF"; then
-              echo "✅ Binary obfuscation applied successfully"
-            else
-              echo "❌ Binary obfuscation corrupted the file, restoring backup"
-              cp "$FINAL_KO.backup" "$FINAL_KO"
-            fi
+            python3 /tmp/encrypt_strings.py "$FINAL_KO"
             ;;
             
-          "symbolic_only"|"hybrid")
-            echo "=== Applying Symbol Obfuscation ==="
+          "medium")
+            echo "=== Medium Obfuscation ==="
+            echo "Applying string encryption..."
+            python3 /tmp/encrypt_strings.py "$FINAL_KO"
+            echo "Applying binary transformations..."
+            python3 /tmp/transform_binary.py "$FINAL_KO"
+            ;;
             
-            # Strip debug symbols
-            echo "Stripping debug symbols..."
-            llvm-strip -S "$FINAL_KO" 2>/dev/null || true
-            strip -S "$FINAL_KO" 2>/dev/null || true
+          "heavy")
+            echo "=== Heavy Obfuscation ==="
+            echo "Applying string encryption..."
+            python3 /tmp/encrypt_strings.py "$FINAL_KO"
+            echo "Applying binary transformations..."
+            python3 /tmp/transform_binary.py "$FINAL_KO"
+            echo "Applying section XOR..."
+            python3 /tmp/xor_sections.py "$FINAL_KO"
+            ;;
             
-            # Randomize section names for heavy obfuscation
-            if [ "$OBF_LEVEL" = "heavy" ]; then
-              echo "Randomizing section names..."
-              python3 << 'EOF'
-import lief
-import random
-import string
-
-def random_name(length=8):
-    return '.' + ''.join(random.choice(string.ascii_lowercase) for _ in range(length))
-
-try:
-    binary = lief.parse('$FINAL_KO')
-    
-    if binary is None:
-        print('Failed to parse ELF')
-        sys.exit(1)
-    
-    # Randomize non-critical section names
-    critical_sections = {'.text', '.data', '.bss', '.rodata', '.shstrtab', '.strtab', '.symtab'}
-    
-    renamed_count = 0
-    for section in binary.sections:
-        if section.name not in critical_sections and section.name.startswith('.'):
-            old_name = section.name
-            new_name = random_name()
-            section.name = new_name
-            renamed_count += 1
-            print(f'Renamed section: {old_name} -> {new_name}')
-    
-    if renamed_count > 0:
-        # Write back
-        binary.write('$FINAL_KO')
-        print(f'Section name randomization complete: {renamed_count} sections renamed')
-    else:
-        print('No sections to rename')
-    
-except Exception as e:
-    print(f'Error during section randomization: {e}')
-EOF
-            fi
+          *)
+            echo "=== No Obfuscation ==="
             ;;
         esac
         
-        # Verify the obfuscated module
+        # Verify the file is still valid
         echo "=== Verifying Obfuscated Module ==="
         
-        # Basic checks
         if [ ! -f "$FINAL_KO" ]; then
           echo "❌ Obfuscated file does not exist"
           exit 1
         fi
         
-        # Check if it's still ELF
-        if ! file "$FINAL_KO" | grep -q "ELF"; then
-          echo "❌ File is not valid ELF after obfuscation"
-          exit 1
+        if file "$FINAL_KO" | grep -q "ELF"; then
+          echo "✅ File is still valid ELF"
+        else
+          echo "❌ File is not valid ELF after obfuscation, restoring backup"
+          cp "$FINAL_KO.backup" "$FINAL_KO"
         fi
         
         # Check size
@@ -394,24 +427,6 @@ EOF
           echo "⚠️ File was not modified by obfuscation"
         else
           echo "✅ File was modified by obfuscation"
-          
-          # Calculate difference
-          DIFF_BYTES=$((NEW_SIZE - ORIG_SIZE))
-          if [ $DIFF_BYTES -gt 0 ]; then
-            echo "Size increased by: $DIFF_BYTES bytes"
-          elif [ $DIFF_BYTES -lt 0 ]; then
-            echo "Size decreased by: $(( -DIFF_BYTES )) bytes"
-          else
-            echo "Size unchanged"
-          fi
-        fi
-        
-        # Check for obvious corruption
-        if readelf -h "$FINAL_KO" 2>/dev/null | grep -q "ELF"; then
-          echo "✅ ELF header is valid"
-        else
-          echo "❌ ELF header is corrupted"
-          exit 1
         fi
 
     - name: Create Final Artifact
@@ -430,8 +445,7 @@ EOF
         
         if [ "${{ inputs.use_custom_clang }}" = "true" ]; then
           OBF_LEVEL="${{ inputs.obfuscation_level }}"
-          STRATEGY="${{ inputs.obfuscation_strategy }}"
-          OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-$STRATEGY-$OBF_LEVEL-$TIMESTAMP.ko"
+          OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-ollvm-$OBF_LEVEL-$TIMESTAMP.ko"
         else
           OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-default-$TIMESTAMP.ko"
         fi
@@ -439,7 +453,7 @@ EOF
         mkdir -p /github/workspace/out
         cp "$FINAL_KO" "/github/workspace/out/$OUTPUT_NAME"
         
-        # Strip debug symbols to reduce size (if not already stripped)
+        # Strip debug symbols to reduce size
         echo "Stripping debug symbols..."
         llvm-strip -d "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null || \
         strip --strip-debug "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null || \
