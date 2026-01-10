@@ -33,6 +33,16 @@ on:
         required: false
         default: 'false'
         type: boolean
+      obfuscation_strategy:
+        description: 'Obfuscation strategy when OLLVM fails'
+        required: false
+        default: 'binary'
+        type: choice
+        options:
+        - try_ollvm_first
+        - binary_only
+        - symbolic_only
+        - hybrid
 
 jobs:
   ddk-build:
@@ -56,12 +66,19 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Install unzip in container
+    - name: Install dependencies
       run: |
-        apt-get update && apt-get install -y unzip file
+        apt-get update && apt-get install -y \
+          unzip \
+          file \
+          python3 \
+          python3-pip \
+          xxd \
+          upx-ucl
+        pip3 install lief
 
     - name: Extract OLLVM Toolchain
-      if: ${{ inputs.use_custom_clang }}
+      if: ${{ inputs.use_custom_clang && inputs.obfuscation_strategy != 'binary_only' && inputs.obfuscation_strategy != 'symbolic_only' }}
       run: |
         echo "=== Extracting OLLVM Toolchain ==="
         
@@ -82,273 +99,193 @@ jobs:
         done
         
         if [ $ZIP_COUNT -eq 0 ]; then
-          echo "❌ No clang*.zip files found in $MODULE_DIR/"
+          echo "⚠️ No clang*.zip files found in $MODULE_DIR/"
           echo "Available files:"
           ls -la "$MODULE_DIR"/ || echo "Directory doesn't exist"
-          exit 1
-        fi
-        
-        # Organize binaries
-        echo ""
-        echo "=== Organizing Binaries ==="
-        
-        # Create bin directory
-        mkdir -p /usr/local/ollvm/bin
-        
-        # Move all executables to bin/
-        find /usr/local/ollvm -type f -executable -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
-        
-        # Also look for clang/llvm specifically
-        find /usr/local/ollvm -type f -name "clang*" -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
-        find /usr/local/ollvm -type f -name "llvm-*" -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
-        find /usr/local/ollvm -type f -name "ld.lld" -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
-        find /usr/local/ollvm -type f -name "lld" -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
-        
-        # Make everything executable
-        chmod -R +x /usr/local/ollvm/bin/ 2>/dev/null || true
-        
-        # Check what we have
-        echo ""
-        echo "=== Toolchain Contents ==="
-        echo "Binaries in /usr/local/ollvm/bin/:"
-        ls -la /usr/local/ollvm/bin/ || echo "No binaries found"
-        
-        # Test clang
-        echo ""
-        echo "=== Testing OLLVM Clang ==="
-        if [ -f "/usr/local/ollvm/bin/clang" ]; then
-          echo "✅ OLLVM clang found"
-          /usr/local/ollvm/bin/clang --version | head -3
-          
-          # Check if it's actually OLLVM
-          if /usr/local/ollvm/bin/clang --version 2>&1 | grep -i "ollvm\|obfuscator"; then
-            echo "✅ This is OLLVM/obfuscator version"
-          else
-            echo "⚠️ This doesn't appear to be OLLVM (no 'ollvm' or 'obfuscator' in version)"
-          fi
+          echo "Will use binary obfuscation only"
+          echo "OLLVM_AVAILABLE=false" >> $GITHUB_ENV
         else
-          echo "❌ clang not found in /usr/local/ollvm/bin/"
-          echo "Looking for any clang binary..."
-          find /usr/local/ollvm -name "*clang*" -type f | head -10
-          exit 1
+          # Organize binaries
+          echo ""
+          echo "=== Organizing Binaries ==="
+          
+          # Create bin directory
+          mkdir -p /usr/local/ollvm/bin
+          
+          # Move all executables to bin/
+          find /usr/local/ollvm -type f -executable -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
+          
+          # Make everything executable
+          chmod -R +x /usr/local/ollvm/bin/ 2>/dev/null || true
+          
+          # Test clang
+          echo ""
+          echo "=== Testing OLLVM Clang ==="
+          if [ -f "/usr/local/ollvm/bin/clang" ]; then
+            echo "✅ OLLVM clang found"
+            /usr/local/ollvm/bin/clang --version | head -3
+            
+            # Quick test if OLLVM works
+            cat > /tmp/test_ollvm.c << 'EOF'
+            int test_func(int x) { return x * 2; }
+            EOF
+            
+            if /usr/local/ollvm/bin/clang -c /tmp/test_ollvm.c -o /tmp/test.o -mllvm -fla 2>&1; then
+              echo "✅ OLLVM can compile simple code"
+              echo "OLLVM_AVAILABLE=true" >> $GITHUB_ENV
+            else
+              echo "❌ OLLVM cannot compile even simple code"
+              echo "OLLVM_AVAILABLE=false" >> $GITHUB_ENV
+            fi
+          else
+            echo "❌ clang not found in /usr/local/ollvm/bin/"
+            echo "OLLVM_AVAILABLE=false" >> $GITHUB_ENV
+          fi
+          
+          # Add to PATH
+          export PATH=/usr/local/ollvm/bin:$PATH
+          echo 'export PATH=/usr/local/ollvm/bin:$PATH' >> /etc/profile.d/ollvm.sh
         fi
-        
-        # Add to PATH
-        export PATH=/usr/local/ollvm/bin:$PATH
-        echo 'export PATH=/usr/local/ollvm/bin:$PATH' >> /etc/profile.d/ollvm.sh
-        
-        echo "OLLVM_TOOLCHAIN_INSTALLED=true" >> $GITHUB_ENV
 
-    - name: Build with OLLVM
-      if: ${{ inputs.use_custom_clang }}
+    - name: Build Kernel Module
       run: |
-        echo "=== Building ${{ inputs.module_dir }}.ko with OLLVM ==="
+        echo "=== Building ${{ inputs.module_dir }}.ko ==="
         
         MODULE_DIR="${{ inputs.module_dir }}"
+        STRATEGY="${{ inputs.obfuscation_strategy }}"
+        USE_OLLVM="${{ inputs.use_custom_clang }}"
+        OLLVM_AVAILABLE="${{ env.OLLVM_AVAILABLE || 'false' }}"
         
-        # Set OLLVM flags based on level
-        case "${{ inputs.obfuscation_level }}" in
-          "light")
-            OLLVM_FLAGS="-mllvm -fla"
-            echo "OLLVM Level: light (flags: -fla)"
+        # Clean first
+        make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
+        
+        # Determine build approach based on strategy
+        case "$STRATEGY" in
+          "try_ollvm_first")
+            if [ "$USE_OLLVM" = "true" ] && [ "$OLLVM_AVAILABLE" = "true" ]; then
+              echo "=== Strategy: Try OLLVM first ==="
+              attempt_ollvm_build "$MODULE_DIR"
+            else
+              echo "=== Strategy: OLLVM not available, building normally ==="
+              build_normal "$MODULE_DIR"
+            fi
             ;;
-          "medium")
-            OLLVM_FLAGS="-mllvm -fla -mllvm -sub"
-            echo "OLLVM Level: medium (flags: -fla -sub)"
+            
+          "binary_only")
+            echo "=== Strategy: Binary obfuscation only ==="
+            build_normal "$MODULE_DIR"
             ;;
-          "heavy")
-            OLLVM_FLAGS="-mllvm -fla -mllvm -sub -mllvm -bcf"
-            echo "OLLVM Level: heavy (flags: -fla -sub -bcf)"
+            
+          "symbolic_only")
+            echo "=== Strategy: Symbol obfuscation only ==="
+            build_normal "$MODULE_DIR"
             ;;
+            
+          "hybrid")
+            echo "=== Strategy: Hybrid ==="
+            build_normal "$MODULE_DIR"
+            ;;
+            
           *)
-            OLLVM_FLAGS=""
-            echo "OLLVM Level: none"
+            echo "=== Default: Building normally ==="
+            build_normal "$MODULE_DIR"
             ;;
         esac
         
-        # CRITICAL: Disable LTO and CFI for Android kernels
-        # Android kernels enable CFI which requires LTO
-        DISABLE_LTO_CFI_FLAGS="-fno-lto -fno-sanitize=cfi"
-        
-        echo ""
-        echo "=== Build Configuration ==="
-        echo "OLLVM flags: $OLLVM_FLAGS"
-        echo "LTO/CFI flags: $DISABLE_LTO_CFI_FLAGS"
-        echo "Module directory: $MODULE_DIR"
-        echo "Kernel source: $KERNEL_SRC"
-        echo "KMI: ${{ matrix.kmi }}"
-        
-        # Clean first
-        echo ""
-        echo "=== Cleaning previous build ==="
-        make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
-        
-        # Try multiple approaches
-        echo ""
-        echo "=== Attempt 1: Simple KCFLAGS approach ==="
-        
-        set +e
-        make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-          KCFLAGS="$OLLVM_FLAGS $DISABLE_LTO_CFI_FLAGS" \
-          -j$(nproc) 2>&1 | tee /tmp/build_attempt1.log
-        ATTEMPT1_EXIT=$?
-        set -e
-        
-        if [ $ATTEMPT1_EXIT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
-          echo "✅ Attempt 1 successful!"
-        else
-          echo "❌ Attempt 1 failed, trying Attempt 2..."
-          
-          # Clean again
-          make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
-          
-          echo ""
-          echo "=== Attempt 2: More comprehensive LTO/CFI disable ==="
-          
-          # More comprehensive LTO/CFI disable flags
-          COMPREHENSIVE_DISABLE_FLAGS=" \
-            -fno-lto \
-            -fno-sanitize=cfi \
-            -fno-sanitize=cfi-icall \
-            -fno-sanitize=cfi-nvcall \
-            -fno-sanitize=cfi-derived-cast \
-            -fno-sanitize=cfi-unrelated-cast"
-          
-          set +e
-          make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-            KCFLAGS="$OLLVM_FLAGS $COMPREHENSIVE_DISABLE_FLAGS" \
-            -j$(nproc) 2>&1 | tee /tmp/build_attempt2.log
-          ATTEMPT2_EXIT=$?
-          set -e
-          
-          if [ $ATTEMPT2_EXIT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
-            echo "✅ Attempt 2 successful!"
-          else
-            echo "❌ Attempt 2 failed, trying Attempt 3..."
-            
-            # Clean again
-            make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
-            
-            echo ""
-            echo "=== Attempt 3: CC override approach ==="
-            
-            # Try overriding the compiler directly
-            set +e
-            make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-              CC="/usr/local/ollvm/bin/clang" \
-              KCFLAGS="$OLLVM_FLAGS $DISABLE_LTO_CFI_FLAGS" \
-              HOSTCC="gcc" \
-              HOSTCXX="g++" \
-              -j$(nproc) 2>&1 | tee /tmp/build_attempt3.log
-            ATTEMPT3_EXIT=$?
-            set -e
-            
-            if [ $ATTEMPT3_EXIT -ne 0 ] || [ ! -f "$MODULE_DIR"/*.ko ]; then
-              echo "❌ Attempt 3 failed, trying final attempt..."
-              
-              # Clean again
-              make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
-              
-              echo ""
-              echo "=== Final Attempt: Kernel build flags approach ==="
-              
-              # Set environment variables that the kernel build system respects
-              export KCFLAGS="$OLLVM_FLAGS $DISABLE_LTO_CFI_FLAGS"
-              export CC="/usr/local/ollvm/bin/clang"
-              
-              set +e
-              make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules -j$(nproc) 2>&1 | tee /tmp/build_final.log
-              FINAL_EXIT=$?
-              set -e
-              
-              if [ $FINAL_EXIT -ne 0 ] || [ ! -f "$MODULE_DIR"/*.ko ]; then
-                echo "❌ All attempts failed!"
-                echo "=== Last 50 lines of build log ==="
-                tail -50 /tmp/build_final.log || tail -50 /tmp/build_attempt3.log || tail -50 /tmp/build_attempt2.log || tail -50 /tmp/build_attempt1.log
-                exit 1
-              fi
-            fi
-          fi
-        fi
-        
-        echo "✅ Build completed successfully!"
-
-    - name: Build with Default Toolchain
-      if: ${{ !inputs.use_custom_clang }}
-      run: |
-        echo "=== Building with Default Toolchain ==="
-        MODULE_DIR="${{ inputs.module_dir }}"
-        
-        make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules -j$(nproc) 2>&1 | tee /tmp/build.log
-
-    - name: Check Build Result
-      run: |
-        echo "=== Checking Build Result ==="
-        
-        MODULE_DIR="${{ inputs.module_dir }}"
-        
-        # Find the .ko file
+        # Check if build was successful
         KO_FILE=$(find "$MODULE_DIR" -name "*.ko" -type f | head -1)
         
         if [ -f "$KO_FILE" ]; then
-          echo "✅ Build successful! Found: $KO_FILE"
-          echo "File size: $(du -h "$KO_FILE" | cut -f1)"
-          echo "File type:"
-          file "$KO_FILE"
-          
-          # Check for OLLVM patterns if OLLVM was used
-          if [ "${{ inputs.use_custom_clang }}" = "true" ]; then
-            echo ""
-            echo "=== Checking for OLLVM obfuscation ==="
-            
-            # Check .comment section for OLLVM markers
-            if readelf -p .comment "$KO_FILE" 2>/dev/null | grep -i "fla\|sub\|bcf\|ollvm\|obfuscator"; then
-              echo "✅ OLLVM obfuscation detected in .comment section"
-            else
-              echo "⚠️ No OLLVM markers in .comment section"
-              
-              # Try checking for obfuscated code patterns
-              echo "Checking for control flow flattening patterns..."
-              if objdump -d "$KO_FILE" 2>/dev/null | head -100 | grep -i "switch\|jump\|indirect"; then
-                echo "⚠️ Potential obfuscation patterns found (needs manual verification)"
-              fi
-            fi
-          fi
-          
-          echo "FILE_EXISTS=true" >> $GITHUB_ENV
-          echo "KO_FILE_PATH=$KO_FILE" >> $GITHUB_ENV
+          echo "✅ Build successful: $KO_FILE"
+          cp "$KO_FILE" "$KO_FILE.original"
+          echo "ORIGINAL_KO=$KO_FILE.original" >> $GITHUB_ENV
+          echo "FINAL_KO=$KO_FILE" >> $GITHUB_ENV
         else
-          echo "❌ Build failed! No .ko file found in $MODULE_DIR/"
-          echo "Directory contents:"
-          ls -la "$MODULE_DIR"/ 2>/dev/null || echo "Directory doesn't exist"
-          echo "FILE_EXISTS=false" >> $GITHUB_ENV
+          echo "❌ Build failed: No .ko file found"
+          exit 1
         fi
 
-    - name: Process Successful Build
-      if: env.FILE_EXISTS == 'true'
+    - name: Apply Obfuscation
+      if: ${{ inputs.use_custom_clang && success() }}
       run: |
+        echo "=== Applying Obfuscation ==="
+        
         MODULE_DIR="${{ inputs.module_dir }}"
-        KO_FILE="${{ env.KO_FILE_PATH }}"
+        ORIGINAL_KO="${{ env.ORIGINAL_KO }}"
+        FINAL_KO="${{ env.FINAL_KO }}"
+        STRATEGY="${{ inputs.obfuscation_strategy }}"
+        OBF_LEVEL="${{ inputs.obfuscation_level }}"
+        
+        if [ ! -f "$ORIGINAL_KO" ] || [ ! -f "$FINAL_KO" ]; then
+          echo "❌ Kernel module files not found"
+          exit 1
+        fi
+        
+        # Apply obfuscation based on strategy
+        case "$STRATEGY" in
+          "try_ollvm_first")
+            # If OLLVM was used in build, skip additional obfuscation
+            if [ "${{ env.OLLVM_USED_IN_BUILD || 'false' }}" = "true" ]; then
+              echo "✅ OLLVM was used during compilation, skipping post-processing"
+            else
+              apply_binary_obfuscation "$FINAL_KO" "$OBF_LEVEL"
+            fi
+            ;;
+            
+          "binary_only")
+            apply_binary_obfuscation "$FINAL_KO" "$OBF_LEVEL"
+            ;;
+            
+          "symbolic_only")
+            apply_symbol_obfuscation "$FINAL_KO" "$OBF_LEVEL"
+            ;;
+            
+          "hybrid")
+            apply_binary_obfuscation "$FINAL_KO" "$OBF_LEVEL"
+            apply_symbol_obfuscation "$FINAL_KO" "$OBF_LEVEL"
+            ;;
+            
+          *)
+            apply_binary_obfuscation "$FINAL_KO" "$OBF_LEVEL"
+            ;;
+        esac
+        
+        # Verify the obfuscated module
+        verify_module "$FINAL_KO" "$ORIGINAL_KO"
+
+    - name: Create Final Artifact
+      run: |
+        echo "=== Creating Final Artifact ==="
+        
+        MODULE_DIR="${{ inputs.module_dir }}"
+        FINAL_KO="${{ env.FINAL_KO }}"
+        
+        if [ ! -f "$FINAL_KO" ]; then
+          echo "❌ Final kernel module not found"
+          exit 1
+        fi
         
         TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
         
-        # Create output name based on build type
         if [ "${{ inputs.use_custom_clang }}" = "true" ]; then
-          OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-ollvm-${{ inputs.obfuscation_level }}-$TIMESTAMP.ko"
+          OBF_LEVEL="${{ inputs.obfuscation_level }}"
+          STRATEGY="${{ inputs.obfuscation_strategy }}"
+          OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-$STRATEGY-$OBF_LEVEL-$TIMESTAMP.ko"
         else
           OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-default-$TIMESTAMP.ko"
         fi
         
         mkdir -p /github/workspace/out
-        cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
+        cp "$FINAL_KO" "/github/workspace/out/$OUTPUT_NAME"
         
-        # Optional: Strip debug symbols to reduce size
+        # Strip debug symbols to reduce size
         echo "Stripping debug symbols..."
         llvm-strip -d "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null || \
         strip --strip-debug "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null || \
         echo "Warning: Could not strip debug symbols"
         
-        echo "Final size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+        echo "Final module: $OUTPUT_NAME"
+        echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
         echo "ARTIFACT_PATH=/github/workspace/out/$OUTPUT_NAME" >> $GITHUB_ENV
 
     - name: Upload Artifact
@@ -357,7 +294,6 @@ jobs:
         name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
         path: ${{ env.ARTIFACT_PATH }}
         retention-days: 7
-      if: env.FILE_EXISTS == 'true'
 
     - name: Upload Build Logs
       uses: actions/upload-artifact@v4
@@ -366,3 +302,325 @@ jobs:
         path: /tmp/build*.log
         retention-days: 7
       if: always()
+
+    # Helper functions (added at the end of the run command)
+    - name: Helper Functions Setup
+      run: |
+        cat > /tmp/helpers.sh << 'EOF'
+        #!/bin/bash
+        
+        # Function to attempt OLLVM build
+        attempt_ollvm_build() {
+          local MODULE_DIR="$1"
+          echo "=== Attempting OLLVM Build ==="
+          
+          # Set OLLVM flags based on level
+          local OLLVM_FLAGS=""
+          case "${{ inputs.obfuscation_level }}" in
+            "light") OLLVM_FLAGS="-mllvm -fla" ;;
+            "medium") OLLVM_FLAGS="-mllvm -fla -mllvm -sub" ;;
+            "heavy") OLLVM_FLAGS="-mllvm -fla -mllvm -sub -mllvm -bcf" ;;
+            *) OLLVM_FLAGS="" ;;
+          esac
+          
+          # Try multiple approaches
+          local ATTEMPTS=(
+            # Approach 1: Minimal flags
+            "make -C \"\$KERNEL_SRC\" M=\"\$PWD/\$MODULE_DIR\" modules KCFLAGS=\"\$OLLVM_FLAGS -fno-lto -fno-sanitize=cfi\" -j\$(nproc)"
+            
+            # Approach 2: CC override with minimal flags
+            "make -C \"\$KERNEL_SRC\" M=\"\$PWD/\$MODULE_DIR\" modules CC=\"/usr/local/ollvm/bin/clang\" KCFLAGS=\"\$OLLVM_FLAGS -fno-lto -fno-sanitize=cfi\" HOSTCC=\"gcc\" -j\$(nproc)"
+            
+            # Approach 3: Build individual files
+            "build_individual_files \"\$MODULE_DIR\" \"\$OLLVM_FLAGS\""
+          )
+          
+          for i in "${!ATTEMPTS[@]}"; do
+            local ATTEMPT_NUM=$((i+1))
+            echo ""
+            echo "=== OLLVM Attempt $ATTEMPT_NUM ==="
+            
+            # Clean
+            make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
+            
+            # Run attempt
+            set +e
+            eval "${ATTEMPTS[$i]}" 2>&1 | tee "/tmp/ollvm_attempt_${ATTEMPT_NUM}.log"
+            local RESULT=$?
+            set -e
+            
+            if [ $RESULT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
+              echo "✅ OLLVM Attempt $ATTEMPT_NUM successful!"
+              echo "OLLVM_USED_IN_BUILD=true" >> $GITHUB_ENV
+              return 0
+            fi
+          done
+          
+          echo "❌ All OLLVM attempts failed, falling back to normal build"
+          build_normal "$MODULE_DIR"
+          return 1
+        }
+        
+        # Function to build individual files with OLLVM
+        build_individual_files() {
+          local MODULE_DIR="$1"
+          local OLLVM_FLAGS="$2"
+          
+          echo "Building individual files with OLLVM..."
+          
+          # Get list of source files
+          local SRC_FILES=$(find "$MODULE_DIR/src" -name "*.c" 2>/dev/null)
+          if [ -z "$SRC_FILES" ]; then
+            SRC_FILES=$(find "$MODULE_DIR" -name "*.c" 2>/dev/null)
+          fi
+          
+          if [ -z "$SRC_FILES" ]; then
+            echo "❌ No source files found"
+            return 1
+          fi
+          
+          # Build object files one by one
+          for SRC_FILE in $SRC_FILES; do
+            local OBJ_FILE="${SRC_FILE%.c}.o"
+            local OBJ_DIR=$(dirname "$OBJ_FILE")
+            
+            mkdir -p "$OBJ_DIR"
+            
+            echo "Compiling: $SRC_FILE"
+            
+            # Try to compile with simplified flags
+            /usr/local/ollvm/bin/clang \
+              -c "$SRC_FILE" \
+              -o "$OBJ_FILE" \
+              -I"$KERNEL_SRC/include" \
+              -I"$KERNEL_SRC/arch/arm64/include" \
+              -D__KERNEL__ \
+              -DKBUILD_MODNAME=\"$(basename "$MODULE_DIR")\" \
+              $OLLVM_FLAGS \
+              2>&1 | tee -a "/tmp/individual_build.log"
+          done
+          
+          # Try to link them (this is complex for kernel modules)
+          echo "Note: Individual file compilation complete, but linking kernel modules is complex"
+          echo "This approach may not produce a working module"
+          return 1
+        }
+        
+        # Function to build normally
+        build_normal() {
+          local MODULE_DIR="$1"
+          echo "=== Building normally ==="
+          
+          make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules -j$(nproc) 2>&1 | tee /tmp/normal_build.log
+        }
+        
+        # Function to apply binary obfuscation
+        apply_binary_obfuscation() {
+          local KO_FILE="$1"
+          local LEVEL="$2"
+          
+          echo "=== Applying Binary Obfuscation (Level: $LEVEL) ==="
+          
+          # Make a backup
+          cp "$KO_FILE" "$KO_FILE.backup"
+          
+          # Apply different obfuscation techniques based on level
+          case "$LEVEL" in
+            "light")
+              echo "Light binary obfuscation: String encryption"
+              encrypt_strings "$KO_FILE"
+              ;;
+              
+            "medium")
+              echo "Medium binary obfuscation: String encryption + simple transformations"
+              encrypt_strings "$KO_FILE"
+              apply_simple_transform "$KO_FILE"
+              ;;
+              
+            "heavy")
+              echo "Heavy binary obfuscation: Multiple transformations"
+              encrypt_strings "$KO_FILE"
+              apply_simple_transform "$KO_FILE"
+              apply_xor_transform "$KO_FILE"
+              ;;
+              
+            *)
+              echo "No binary obfuscation"
+              ;;
+          esac
+          
+          # Verify the file is still valid
+          if file "$KO_FILE" | grep -q "ELF"; then
+            echo "✅ Binary obfuscation applied successfully"
+          else
+            echo "❌ Binary obfuscation corrupted the file, restoring backup"
+            cp "$KO_FILE.backup" "$KO_FILE"
+          fi
+        }
+        
+        # Function to encrypt strings in binary
+        encrypt_strings() {
+          local KO_FILE="$1"
+          
+          echo "Encrypting strings in binary..."
+          
+          # Use Python with lief to manipulate ELF
+          python3 -c "
+import lief
+import sys
+import random
+
+try:
+    # Load the binary
+    binary = lief.parse('$KO_FILE')
+    
+    if binary is None:
+        print('Failed to parse ELF')
+        sys.exit(1)
+    
+    # Get the .rodata section (contains strings)
+    rodata = None
+    for section in binary.sections:
+        if section.name == '.rodata':
+            rodata = section
+            break
+    
+    if rodata is not None:
+        print(f'Found .rodata section: 0x{rodata.virtual_address:x} - 0x{rodata.virtual_address + rodata.size:x}')
+        
+        # Simple XOR encryption of printable strings
+        content = bytearray(rodata.content)
+        changed = 0
+        
+        for i in range(len(content)):
+            # Simple XOR with pattern for printable ASCII
+            if 32 <= content[i] <= 126:
+                content[i] ^= 0xAA
+                changed += 1
+        
+        print(f'Encrypted {changed} bytes in .rodata')
+        rodata.content = list(content)
+        
+        # Write back
+        binary.write('$KO_FILE')
+        print('String encryption complete')
+    else:
+        print('No .rodata section found')
+        
+except Exception as e:
+    print(f'Error during string encryption: {e}')
+    sys.exit(1)
+" 2>&1 | tee -a /tmp/obfuscation.log
+        }
+        
+        # Function to apply simple transformations
+        apply_simple_transform() {
+          local KO_FILE="$1"
+          
+          echo "Applying simple binary transformations..."
+          
+          # Simple byte shuffling in first 1KB
+          python3 -c "
+import sys
+with open('$KO_FILE', 'rb') as f:
+    data = bytearray(f.read())
+
+# Only transform first 1KB to avoid breaking things
+transform_len = min(1024, len(data))
+
+# Simple byte swap every 4 bytes
+for i in range(0, transform_len - 4, 4):
+    data[i], data[i+1] = data[i+1], data[i]
+    data[i+2], data[i+3] = data[i+3], data[i+2]
+
+with open('$KO_FILE', 'wb') as f:
+    f.write(data)
+
+print(f'Transformed {transform_len} bytes')
+" 2>&1 | tee -a /tmp/obfuscation.log
+        }
+        
+        # Function to apply XOR transform
+        apply_xor_transform() {
+          local KO_FILE="$1"
+          
+          echo "Applying XOR transformation..."
+          
+          # XOR transform on code sections
+          python3 -c "
+import lief
+import sys
+
+try:
+    binary = lief.parse('$KO_FILE')
+    
+    if binary is None:
+        print('Failed to parse ELF')
+        sys.exit(1)
+    
+    # Find executable sections
+    for section in binary.sections:
+        if section.has(lief.ELF.SECTION_FLAGS.EXECINSTR):
+            print(f'Found executable section: {section.name}')
+            
+            content = bytearray(section.content)
+            
+            # XOR with pattern
+            pattern = [0x90, 0x90, 0x90, 0x90]  # NOP sled pattern
+            for i in range(len(content)):
+                content[i] ^= pattern[i % len(pattern)]
+            
+            section.content = list(content)
+            print(f'XOR transformed {len(content)} bytes in {section.name}')
+    
+    # Write back
+    binary.write('$KO_FILE')
+    print('XOR transformation complete')
+    
+except Exception as e:
+    print(f'Error during XOR transformation: {e}')
+" 2>&1 | tee -a /tmp/obfuscation.log
+        }
+        
+        # Function to apply symbol obfuscation
+        apply_symbol_obfuscation() {
+          local KO_FILE="$1"
+          local LEVEL="$2"
+          
+          echo "=== Applying Symbol Obfuscation (Level: $LEVEL) ==="
+          
+          # Use objcopy to strip/rename symbols
+          case "$LEVEL" in
+            "light"|"medium"|"heavy")
+              echo "Stripping debug symbols..."
+              llvm-strip -S "$KO_FILE" 2>/dev/null || true
+              strip -S "$KO_FILE" 2>/dev/null || true
+              
+              echo "Randomizing section names..."
+              randomize_section_names "$KO_FILE"
+              ;;
+          esac
+        }
+        
+        # Function to randomize section names
+        randomize_section_names() {
+          local KO_FILE="$1"
+          
+          echo "Randomizing ELF section names..."
+          
+          python3 -c "
+import lief
+import random
+import string
+
+def random_name(length=8):
+    return '.' + ''.join(random.choice(string.ascii_lowercase) for _ in range(length))
+
+try:
+    binary = lief.parse('$KO_FILE')
+    
+    if binary is None:
+        print('Failed to parse ELF')
+        sys.exit(1)
+
+    
