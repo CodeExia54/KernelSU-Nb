@@ -1,2 +1,0 @@
-#!/bin/bash
-exec "$(dirname "$0")/clang" --target=aarch64-linux-android21 "$@"
