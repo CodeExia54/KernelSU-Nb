@@ -41,13 +41,13 @@ jobs:
     strategy:
       matrix:
         kmi:
-        #  - android12-5.10
-       #   - android13-5.10
+          - android12-5.10
+          - android13-5.10
           - android13-5.15
-        #  - android14-5.15
-         # - android14-6.1
-         # - android15-6.6
-        #  - android16-6.12
+          - android14-5.15
+          - android14-6.1
+          - android15-6.6
+          - android16-6.12
 
     container:
       image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
@@ -101,30 +101,6 @@ jobs:
           cp "$OLLVM_CLANG" /usr/local/ollvm/bin/clang
           chmod +x /usr/local/ollvm/bin/clang
           
-          # Add to PATH globally
-          echo 'export PATH=/usr/local/ollvm/bin:$PATH' >> /etc/profile.d/ollvm.sh
-          export PATH=/usr/local/ollvm/bin:$PATH
-          
-          # Verify installation
-          echo ""
-          echo "=== Verifying OLLVM installation ==="
-          echo "PATH: $PATH"
-          echo "Which clang: $(which clang)"
-          /usr/local/ollvm/bin/clang --version 2>&1 | head -1
-          
-          # Test basic compilation without OLLVM flags first
-          echo ""
-          echo "=== Testing basic compilation ==="
-          echo 'int test_func() { return 0; }' > /tmp/simple.c
-          
-          if /usr/local/ollvm/bin/clang --target=aarch64-linux-android \
-            -c /tmp/simple.c -o /tmp/simple.o 2>&1; then
-            echo "✅ Basic compilation successful"
-          else
-            echo "❌ Basic compilation failed"
-            exit 1
-          fi
-          
           echo "OLLVM_INSTALLED=true" >> $GITHUB_ENV
           
         else
@@ -142,23 +118,22 @@ jobs:
         echo "Use custom clang: ${{ inputs.use_custom_clang }}"
         echo "OLLVM level: ${{ inputs.obfuscation_level }}"
         echo ""
-        echo "=== PATH ==="
-        echo $PATH
-        echo ""
-        echo "=== Available compilers ==="
-        echo "Default container clang:"
-        which clang
-        /opt/ddk/clang/clang-r450784e/bin/clang --version 2>&1 | head -1
-        echo ""
-        echo "OLLVM clang:"
+        echo "=== Toolchain information ==="
+        echo "Default clang: $(which clang)"
+        echo "Default ld.lld: $(which ld.lld 2>/dev/null || echo 'not found')"
+        echo "Default ar: $(which llvm-ar 2>/dev/null || which ar)"
+        echo "Default nm: $(which llvm-nm 2>/dev/null || which nm)"
+        echo "Default objcopy: $(which llvm-objcopy 2>/dev/null || which objcopy)"
+        echo "Default strip: $(which llvm-strip 2>/dev/null || which strip)"
+        
         if [ -f "/usr/local/ollvm/bin/clang" ]; then
-          which clang
+          echo ""
+          echo "OLLVM clang: /usr/local/ollvm/bin/clang"
+          echo "OLLVM clang version:"
           /usr/local/ollvm/bin/clang --version 2>&1 | head -1
-        else
-          echo "Not installed"
         fi
 
-    - name: Build module
+    - name: Build module with OLLVM clang only
       id: build_module
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko ==="
@@ -167,15 +142,8 @@ jobs:
         
         # Set compiler based on input
         if [ "${{ inputs.use_custom_clang }}" = "true" ] && [ -f "/usr/local/ollvm/bin/clang" ]; then
-          echo "=== USING OLLVM COMPILER ==="
-          
-          # Force use of OLLVM clang by overriding PATH
-          export PATH="/usr/local/ollvm/bin:$PATH"
-          export CC="/usr/local/ollvm/bin/clang"
-          export LD="/usr/local/ollvm/bin/clang"
-          
-          echo "CC: $(which $CC)"
-          echo "LD: $(which $LD)"
+          echo "=== USING OLLVM CLANG ONLY ==="
+          echo "Using OLLVM clang for compilation, original toolchain for everything else"
           
           # Set OLLVM flags
           case "${{ inputs.obfuscation_level }}" in
@@ -197,44 +165,28 @@ jobs:
               ;;
           esac
           
-          echo "OLLVM Flags: $OLLVM_FLAGS"
+          # IMPORTANT: Only override CC with OLLVM clang
+          # Let make use the default LD, AR, NM, OBJCOPY, STRIP from the container
           
-          # Test compiler with kernel flags
+          echo "=== Build configuration ==="
+          echo "CC (compiler): /usr/local/ollvm/bin/clang $OLLVM_FLAGS"
+          echo "LD (linker): Using default from container"
+          echo "AR, NM, OBJCOPY, STRIP: Using defaults from container"
+          
+          # Test OLLVM clang
           echo ""
-          echo "=== Testing compiler with kernel flags ==="
-          
-          # Try a simple test with kernel-like flags
-          TEST_CODE='#include <linux/types.h>\nint test_func(void) { return 0; }'
-          echo -e "$TEST_CODE" > /tmp/kernel_test.c
-          
-          if /usr/local/ollvm/bin/clang --target=aarch64-linux-android \
-            -nostdinc -isystem /opt/ddk/clang/clang-r450784e/include \
-            -I$KERNEL_SRC/include \
-            -I$KERNEL_SRC/arch/arm64/include \
-            -D__KERNEL__ -D__aarch64__ \
-            $OLLVM_FLAGS \
-            -c /tmp/kernel_test.c -o /tmp/kernel_test.o 2>&1; then
-            echo "✅ Kernel-style compilation successful"
-          else
-            echo "⚠️ Kernel-style compilation test failed (might still work with full build)"
-          fi
+          echo "=== Testing OLLVM clang ==="
+          /usr/local/ollvm/bin/clang --version 2>&1 | head -1
           
           echo ""
-          echo "=== Starting kernel module build ==="
+          echo "=== Starting build ==="
           
-          # Save the original build command
-          BUILD_CMD="make -C \"$KERNEL_SRC\" M=\"$PWD/$MODULE_DIR\" modules"
-          BUILD_CMD="$BUILD_CMD CC=\"$CC $OLLVM_FLAGS\""
-          BUILD_CMD="$BUILD_CMD LD=\"$LD $OLLVM_FLAGS\""
-          BUILD_CMD="$BUILD_CMD HOSTCC=\"gcc\" HOSTCXX=\"g++\""
-          BUILD_CMD="$BUILD_CMD -j$(nproc)"
-          
-          echo "Build command: $BUILD_CMD"
-          echo ""
-          
-          # Execute build and capture exit code
+          # Build with ONLY CC overridden to OLLVM clang
+          # Let all other tools (LD, AR, NM, etc.) use defaults
           set +e
-          eval $BUILD_CMD 2>&1 | tee /tmp/build.log
+          make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
+            CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS" \
+            -j$(nproc) 2>&1 | tee /tmp/build.log
           BUILD_EXIT=$?
           set -e
           
@@ -242,27 +194,22 @@ jobs:
           echo "Build exit code: $BUILD_EXIT"
           
           if [ $BUILD_EXIT -ne 0 ]; then
-            echo "❌ Build failed with OLLVM compiler"
-            echo "Last 50 lines of build log:"
-            tail -50 /tmp/build.log
+            echo "❌ Build failed with OLLVM clang"
+            echo "=== Build errors ==="
+            grep -i "error\|failed" /tmp/build.log 2>/dev/null | tail -20 || echo "No errors found"
             
+            # Try alternative: Use OLLVM flags in CFLAGS instead
             echo ""
-            echo "=== Trying fallback: Build without OLLVM flags ==="
-            # Try building without OLLVM flags but with OLLVM clang
+            echo "=== Trying alternative: Pass OLLVM flags via CFLAGS ==="
             make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-              CC="$CC" \
-              LD="$LD" \
-              HOSTCC="gcc" \
-              HOSTCXX="g++" \
-              -j$(nproc) 2>&1 | tee /tmp/build_no_ollvm.log
+              CFLAGS_MODULE="$OLLVM_FLAGS" \
+              -j$(nproc) 2>&1 | tee /tmp/build_cflags.log
           fi
           
         else
           echo "=== USING DEFAULT COMPILER ==="
-          echo "Reason - custom clang requested: ${{ inputs.use_custom_clang }}"
-          echo "Reason - OLLVM clang exists: $(if [ -f "/usr/local/ollvm/bin/clang" ]; then echo 'yes'; else echo 'no'; fi)"
           
-          # Build normally with default compiler
+          # Build normally
           make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules -j$(nproc) 2>&1 | tee /tmp/build.log
         fi
 
@@ -279,30 +226,30 @@ jobs:
           echo "✅ Build successful! Found: $KO_FILE"
           echo "FILE_EXISTS=true" >> $GITHUB_ENV
           echo "KO_FILE_PATH=$KO_FILE" >> $GITHUB_ENV
+          
+          # Verify OLLVM usage
+          if [ "${{ inputs.use_custom_clang }}" = "true" ] && [ -f "/tmp/build.log" ]; then
+            echo ""
+            echo "=== OLLVM Usage Check ==="
+            if grep -q "mllvm" /tmp/build.log 2>/dev/null; then
+              echo "✅ OLLVM flags were used in build"
+            else
+              echo "⚠️ No OLLVM flags found in build log"
+            fi
+          fi
         else
           echo "❌ Build failed! No .ko file found."
           echo "FILE_EXISTS=false" >> $GITHUB_ENV
           
-          # Show build errors
+          # Show what's in the module directory
           echo ""
-          echo "=== Build errors ==="
-          grep -i "error\|warning\|failed" /tmp/build.log 2>/dev/null | tail -20 || echo "No error log found"
+          echo "=== Module directory contents ==="
+          ls -la "$MODULE_DIR/" 2>/dev/null || echo "Directory not found"
           
-          # Check for specific issues
+          # Show build artifacts that were created
           echo ""
-          echo "=== Checking for common issues ==="
-          
-          if grep -i "unrecognized.*option.*mllvm" /tmp/build.log 2>/dev/null; then
-            echo "⚠️ OLLVM flags not supported by this clang version"
-          fi
-          
-          if grep -i "clang.*not found" /tmp/build.log 2>/dev/null; then
-            echo "⚠️ Clang compiler not found"
-          fi
-          
-          if grep -i "target.*not supported" /tmp/build.log 2>/dev/null; then
-            echo "⚠️ Target architecture not supported"
-          fi
+          echo "=== Build artifacts found ==="
+          find "$MODULE_DIR" -type f \( -name "*.o" -o -name "*.mod" -o -name "*.mod.c" \) 2>/dev/null | head -10
         fi
 
     - name: Process successful build
@@ -317,11 +264,11 @@ jobs:
         
         # Determine build type
         if [ "${{ inputs.use_custom_clang }}" = "true" ] && [ -f "/usr/local/ollvm/bin/clang" ]; then
-          BUILD_TYPE="ollvm-${{ inputs.obfuscation_level }}"
           OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-ollvm-${{ inputs.obfuscation_level }}-$TIMESTAMP.ko"
+          BUILD_TYPE="OLLVM-${{ inputs.obfuscation_level }}"
         else
-          BUILD_TYPE="default"
           OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-default-$TIMESTAMP.ko"
+          BUILD_TYPE="default"
         fi
         
         # Create output directory
@@ -339,105 +286,36 @@ jobs:
         if command -v llvm-strip >/dev/null 2>&1; then
           llvm-strip -d "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null || true
           STRIPPED_SIZE=$(stat -c%s "/github/workspace/out/$OUTPUT_NAME")
-          echo "Stripped size: $STRIPPED_SIZE bytes"
+          echo "Stripped size: $STRIPPED_SIZE bytes ($((STRIPPED_SIZE/1024)) KB)"
         fi
         
-        # Create detailed build info
+        # Create simple build info
         BUILD_INFO_FILE="/github/workspace/out/build-info-$OUTPUT_NAME.txt"
-        {
-          echo "========================================="
-          echo "BUILD INFORMATION"
-          echo "========================================="
-          echo "Module: $MODULE_DIR"
-          echo "KMI: ${{ matrix.kmi }}"
-          echo "Build Type: $BUILD_TYPE"
-          echo "Use Custom Clang: ${{ inputs.use_custom_clang }}"
-          echo "OLLVM Level: ${{ inputs.obfuscation_level }}"
-          echo "Timestamp: $(date)"
-          echo ""
-          echo "COMPILER INFORMATION:"
-          echo "Default Clang: $(which clang)"
-          echo "Default Clang Version: $(/opt/ddk/clang/clang-r450784e/bin/clang --version 2>&1 | head -1)"
-          echo ""
-          echo "OLLVM STATUS:"
-          if [ -f "/usr/local/ollvm/bin/clang" ]; then
-            echo "OLLVM Clang Installed: YES"
-            echo "OLLVM Clang Path: /usr/local/ollvm/bin/clang"
-            echo "OLLVM Clang Version: $(/usr/local/ollvm/bin/clang --version 2>&1 | head -1)"
-          else
-            echo "OLLVM Clang Installed: NO"
-            echo "OLLVM Clang Path: N/A"
-            echo "OLLVM Clang Version: N/A"
-          fi
-          echo ""
-          echo "BUILD OUTPUT:"
-          echo "Original File: $KO_FILE"
-          echo "Output File: $OUTPUT_NAME"
-          echo "Original Size: $ORIGINAL_SIZE bytes"
-          echo "Stripped Size: ${STRIPPED_SIZE:-$ORIGINAL_SIZE} bytes"
-          echo ""
-          echo "BUILD LOG SUMMARY:"
-          echo "Last 5 lines of build log:"
-          tail -5 /tmp/build.log 2>/dev/null || echo "No build log"
-          echo "========================================="
-        } > "$BUILD_INFO_FILE"
+        echo "Build Type: $BUILD_TYPE" > "$BUILD_INFO_FILE"
+        echo "Module: $MODULE_DIR" >> "$BUILD_INFO_FILE"
+        echo "KMI: ${{ matrix.kmi }}" >> "$BUILD_INFO_FILE"
+        echo "OLLVM Level: ${{ inputs.obfuscation_level }}" >> "$BUILD_INFO_FILE"
+        echo "Timestamp: $(date)" >> "$BUILD_INFO_FILE"
+        echo "Size: $ORIGINAL_SIZE bytes" >> "$BUILD_INFO_FILE"
+        echo "Compiler: $(if [ -f "/usr/local/ollvm/bin/clang" ]; then echo 'OLLVM clang'; else echo 'Default clang'; fi)" >> "$BUILD_INFO_FILE"
         
         echo "ARTIFACT_PATH=/github/workspace/out/$OUTPUT_NAME" >> $GITHUB_ENV
 
-    - name: Process failed build
-      if: env.FILE_EXISTS == 'false'
-      run: |
-        echo "=== Processing failed build ==="
-        
-        MODULE_DIR="${{ inputs.module_dir }}"
-        TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
-        
-        # Create output directory
-        mkdir -p /github/workspace/out
-        
-        # Create error report
-        ERROR_FILE="/github/workspace/out/build-error-$MODULE_DIR-${{ matrix.kmi }}-$TIMESTAMP.txt"
-        {
-          echo "========================================="
-          echo "BUILD FAILURE REPORT"
-          echo "========================================="
-          echo "Module: $MODULE_DIR"
-          echo "KMI: ${{ matrix.kmi }}"
-          echo "Use Custom Clang: ${{ inputs.use_custom_clang }}"
-          echo "OLLVM Level: ${{ inputs.obfuscation_level }}"
-          echo "Timestamp: $(date)"
-          echo "Status: BUILD FAILED"
-          echo ""
-          echo "COMPILER INFORMATION:"
-          echo "Default Clang: $(which clang)"
-          if [ -f "/usr/local/ollvm/bin/clang" ]; then
-            echo "OLLVM Clang: /usr/local/ollvm/bin/clang"
-            echo "OLLVM Clang Version: $(/usr/local/ollvm/bin/clang --version 2>&1 | head -1)"
-          fi
-          echo ""
-          echo "BUILD LOG (last 100 lines):"
-          echo "-----------------------------------------"
-          tail -100 /tmp/build.log 2>/dev/null || echo "No build log available"
-          echo "========================================="
-        } > "$ERROR_FILE"
-        
-        echo "Created error report: $ERROR_FILE"
-
-    - name: Upload successful artifact
-      if: env.FILE_EXISTS == 'true'
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-success
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
         path: |
           ${{ env.ARTIFACT_PATH }}
           /github/workspace/out/build-info-*.txt
         retention-days: 7
+      if: env.FILE_EXISTS == 'true'
 
-    - name: Upload error report
-      if: env.FILE_EXISTS == 'false'
+    - name: Upload error log
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-error
         path: |
-          /github/workspace/out/build-error-*.txt
+          /tmp/build.log
         retention-days: 7
+      if: env.FILE_EXISTS == 'false'
