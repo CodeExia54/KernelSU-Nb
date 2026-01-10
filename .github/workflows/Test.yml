@@ -128,18 +128,10 @@ jobs:
           echo "Which clang: $(which clang)"
           /usr/local/ollvm/bin/clang --version 2>&1 | head -1
           
-          # Test OLLVM flags
+          # Test OLLVM flags - use echo instead of heredoc
           echo ""
           echo "=== Testing OLLVM flags ==="
-          cat > /tmp/test.c << 'EOF'
-          int test_function(int a, int b) {
-              int result = 0;
-              for (int i = 0; i < a; i++) {
-                  result += b;
-              }
-              return result;
-          }
-          EOF
+          echo 'int test_function(int a, int b) { int result = 0; for (int i = 0; i < a; i++) { result += b; } return result; }' > /tmp/test.c
           
           /usr/local/ollvm/bin/clang --target=aarch64-linux-android \
             -mllvm -fla -O2 -c /tmp/test.c -o /tmp/test.o 2>&1 && \
@@ -333,44 +325,44 @@ jobs:
         
         # Create detailed build info
         cat > "/github/workspace/out/build-info-$OUTPUT_NAME.txt" << EOF
-        =========================================
-        BUILD INFORMATION
-        =========================================
-        Module: $MODULE_DIR
-        KMI: ${{ matrix.kmi }}
-        Build Type: $BUILD_TYPE
-        Use Custom Clang: ${{ inputs.use_custom_clang }}
-        OLLVM Level: ${{ inputs.obfuscation_level }}
-        Timestamp: $(date)
-        
-        COMPILER INFORMATION:
-        Default Clang: $(which clang)
-        Default Clang Version: $(/opt/ddk/clang/clang-r450784e/bin/clang --version 2>&1 | head -1)
-        
-        OLLVM STATUS:
-        OLLVM Clang Installed: $(if [ -f "/usr/local/ollvm/bin/clang" ]; then echo "YES"; else echo "NO"; fi)
-        OLLVM Clang Path: $(if [ -f "/usr/local/ollvm/bin/clang" ]; then echo "/usr/local/ollvm/bin/clang"; else echo "N/A"; fi)
-        OLLVM Clang Version: $(if [ -f "/usr/local/ollvm/bin/clang" ]; then /usr/local/ollvm/bin/clang --version 2>&1 | head -1; else echo "N/A"; fi)
-        
-        BUILD OUTPUT:
-        Original File: $KO_FILE
-        Output File: $OUTPUT_NAME
-        Original Size: $ORIGINAL_SIZE bytes
-        Stripped Size: ${STRIPPED_SIZE:-$ORIGINAL_SIZE} bytes
-        
-        OLLVM VERIFICATION:
-        $(if [ "${{ inputs.use_custom_clang }}" = "true" ] && [ -f "/tmp/build.log" ]; then
-          echo "Build log contains OLLVM flags:"
-          grep -i "mllvm\|fla\|sub\|bcf" /tmp/build.log 2>/dev/null | head -3 || echo "None found"
-        else
-          echo "No OLLVM verification data"
-        fi)
-        
-        MODULE STRUCTURE:
-        Source files: $(find "$MODULE_DIR/src" -name "*.c" 2>/dev/null | wc -l)
-        Header files: $(find "$MODULE_DIR/src" -name "*.h" 2>/dev/null | wc -l)
-        =========================================
-        EOF
+=========================================
+BUILD INFORMATION
+=========================================
+Module: $MODULE_DIR
+KMI: ${{ matrix.kmi }}
+Build Type: $BUILD_TYPE
+Use Custom Clang: ${{ inputs.use_custom_clang }}
+OLLVM Level: ${{ inputs.obfuscation_level }}
+Timestamp: $(date)
+
+COMPILER INFORMATION:
+Default Clang: $(which clang)
+Default Clang Version: $(/opt/ddk/clang/clang-r450784e/bin/clang --version 2>&1 | head -1)
+
+OLLVM STATUS:
+OLLVM Clang Installed: $(if [ -f "/usr/local/ollvm/bin/clang" ]; then echo "YES"; else echo "NO"; fi)
+OLLVM Clang Path: $(if [ -f "/usr/local/ollvm/bin/clang" ]; then echo "/usr/local/ollvm/bin/clang"; else echo "N/A"; fi)
+OLLVM Clang Version: $(if [ -f "/usr/local/ollvm/bin/clang" ]; then /usr/local/ollvm/bin/clang --version 2>&1 | head -1; else echo "N/A"; fi)
+
+BUILD OUTPUT:
+Original File: $KO_FILE
+Output File: $OUTPUT_NAME
+Original Size: $ORIGINAL_SIZE bytes
+Stripped Size: ${STRIPPED_SIZE:-$ORIGINAL_SIZE} bytes
+
+OLLVM VERIFICATION:
+$(if [ "${{ inputs.use_custom_clang }}" = "true" ] && [ -f "/tmp/build.log" ]; then
+  echo "Build log contains OLLVM flags:"
+  grep -i "mllvm\|fla\|sub\|bcf" /tmp/build.log 2>/dev/null | head -3 || echo "None found"
+else
+  echo "No OLLVM verification data"
+fi)
+
+MODULE STRUCTURE:
+Source files: $(find "$MODULE_DIR/src" -name "*.c" 2>/dev/null | wc -l)
+Header files: $(find "$MODULE_DIR/src" -name "*.h" 2>/dev/null | wc -l)
+=========================================
+EOF
         
         echo "ARTIFACT_PATH=/github/workspace/out/$OUTPUT_NAME" >> $GITHUB_ENV
 
