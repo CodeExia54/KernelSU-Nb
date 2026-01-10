@@ -91,10 +91,6 @@ jobs:
           
           # Extract preserving directory structure
           unzip -q "$zip_file" -d /usr/local/ollvm/
-          
-          # List what was extracted (just a summary)
-          echo "Files extracted from $(basename "$zip_file"):"
-          unzip -l "$zip_file" | tail -5 || true
         done
         
         # Make everything in bin executable
@@ -104,37 +100,33 @@ jobs:
         
         # Show final structure
         echo ""
-        echo "=== Final Toolchain Structure ==="
+        echo "=== Toolchain Structure ==="
         
         if [ -d "/usr/local/ollvm/bin" ]; then
           echo "Files in /usr/local/ollvm/bin/:"
           ls -la /usr/local/ollvm/bin/
-          echo ""
-          echo "Total binaries: $(ls -1 /usr/local/ollvm/bin/ 2>/dev/null | wc -l)"
         else
-          echo "⚠️ No bin directory found! Listing /usr/local/ollvm:"
-          find /usr/local/ollvm -type f | head -20
-        fi
-        
-        # Test if clang exists and works
-        echo ""
-        echo "=== Testing clang ==="
-        if [ -f "/usr/local/ollvm/bin/clang" ]; then
-          echo "✅ clang found at: /usr/local/ollvm/bin/clang"
-          echo "Version:"
-          /usr/local/ollvm/bin/clang --version 2>&1 | head -2 || echo "  Version test failed"
-        else
-          echo "❌ clang NOT FOUND in /usr/local/ollvm/bin/"
+          echo "⚠️ No bin directory found!"
           exit 1
         fi
         
-        # Test ld.lld if available
-        if [ -f "/usr/local/ollvm/bin/ld.lld" ]; then
-          echo ""
-          echo "=== Testing ld.lld ==="
-          echo "✅ ld.lld found"
-          /usr/local/ollvm/bin/ld.lld --version 2>&1 | head -1 || true
-        fi
+        # Test essential tools
+        echo ""
+        echo "=== Testing Essential Tools ==="
+        
+        ESSENTIAL_TOOLS=("clang" "ld.lld" "llvm-ar" "llvm-nm" "llvm-objcopy" "llvm-strip")
+        for tool in "${ESSENTIAL_TOOLS[@]}"; do
+          if [ -f "/usr/local/ollvm/bin/$tool" ]; then
+            echo "✅ $tool: Found"
+          else
+            echo "❌ $tool: MISSING - This may cause build issues"
+          fi
+        done
+        
+        # Test clang
+        echo ""
+        echo "=== Testing clang ==="
+        /usr/local/ollvm/bin/clang --version 2>&1 | head -2 || echo "❌ clang test failed"
         
         # Add to PATH
         echo 'export PATH=/usr/local/ollvm/bin:$PATH' >> /etc/profile.d/ollvm.sh
@@ -142,21 +134,56 @@ jobs:
         
         echo "OLLVM_TOOLCHAIN_INSTALLED=true" >> $GITHUB_ENV
 
+    - name: Diagnostic - Test Toolchain Compatibility
+      if: ${{ inputs.use_custom_clang }}
+      run: |
+        echo "=== Toolchain Compatibility Test ==="
+        
+        # Test basic compilation
+        echo ""
+        echo "1. Testing basic compilation:"
+        echo 'int test() { return 0; }' > /tmp/simple.c
+        if /usr/local/ollvm/bin/clang -c /tmp/simple.c -o /tmp/simple.o 2>&1; then
+          echo "✅ Basic compilation works"
+        else
+          echo "❌ Basic compilation failed"
+        fi
+        
+        # Test OLLVM flags
+        echo ""
+        echo "2. Testing OLLVM flags:"
+        echo 'int test() { int x = 5; return x * 2; }' > /tmp/ollvm_test.c
+        if /usr/local/ollvm/bin/clang -mllvm -fla -c /tmp/ollvm_test.c -o /tmp/ollvm_test.o 2>&1; then
+          echo "✅ OLLVM flags work"
+        else
+          echo "❌ OLLVM flags failed"
+        fi
+        
+        # Test linker
+        echo ""
+        echo "3. Testing linker:"
+        if /usr/local/ollvm/bin/ld.lld --version 2>&1 | head -1; then
+          echo "✅ Linker works"
+        else
+          echo "❌ Linker test failed"
+        fi
+
     - name: Build with OLLVM Toolchain
       if: ${{ inputs.use_custom_clang }}
       run: |
-        echo "=== Building ${{ inputs.module_dir }}.ko ==="
+        echo "=== Building ${{ inputs.module_dir }}.ko with OLLVM ==="
         
         MODULE_DIR="${{ inputs.module_dir }}"
         
-        # Verify clang exists
-        CLANG_PATH="/usr/local/ollvm/bin/clang"
-        if [ ! -f "$CLANG_PATH" ]; then
-          echo "❌ clang not found at $CLANG_PATH"
+        # Verify essential tools
+        if [ ! -f "/usr/local/ollvm/bin/clang" ]; then
+          echo "❌ clang not found!"
           exit 1
         fi
         
-        echo "✅ Using clang: $CLANG_PATH"
+        if [ ! -f "/usr/local/ollvm/bin/ld.lld" ]; then
+          echo "⚠️ ld.lld not found - using system linker (may cause LTO issues)"
+        fi
         
         # Set OLLVM flags
         case "${{ inputs.obfuscation_level }}" in
@@ -180,40 +207,53 @@ jobs:
         
         echo ""
         echo "=== Build Configuration ==="
+        echo "Using OLLVM toolchain from: /usr/local/ollvm/bin/"
+        echo "OLLVM Flags: $OLLVM_FLAGS"
         
         # Clean first
         make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
         
-        # Try simple build first - just override CC
+        # Method 1: Use OLLVM toolchain with LTO disabled
         echo ""
-        echo "=== Attempt 1: Simple build (override CC only) ==="
+        echo "=== Method 1: Build with LTO disabled ==="
         
         set +e
         make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-          CC="$CLANG_PATH $OLLVM_FLAGS" \
-          -j$(nproc) 2>&1 | tee /tmp/build_simple.log
-        SIMPLE_EXIT=$?
+          CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS -fno-lto" \
+          LD="/usr/local/ollvm/bin/ld.lld" \
+          AR="/usr/local/ollvm/bin/llvm-ar" \
+          NM="/usr/local/ollvm/bin/llvm-nm" \
+          OBJCOPY="/usr/local/ollvm/bin/llvm-objcopy" \
+          STRIP="/usr/local/ollvm/bin/llvm-strip" \
+          HOSTCC="gcc" \
+          HOSTCXX="g++" \
+          -j$(nproc) 2>&1 | tee /tmp/build.log
+        BUILD_EXIT=$?
         set -e
         
-        if [ $SIMPLE_EXIT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
-          echo "✅ Simple build successful!"
-          cp /tmp/build_simple.log /tmp/build.log
-        else
-          echo "❌ Simple build failed"
-          echo "Checking error..."
-          tail -20 /tmp/build_simple.log | grep -i "error\|fail" || true
+        echo ""
+        echo "Build exit code: $BUILD_EXIT"
+        
+        if [ $BUILD_EXIT -ne 0 ] || [ ! -f "$MODULE_DIR"/*.ko ]; then
+          echo "❌ Method 1 failed"
           
-          # Try with LTO disabled
+          # Method 2: Try with different approach
           echo ""
-          echo "=== Attempt 2: Build without LTO ==="
+          echo "=== Method 2: Try alternative build ==="
           
           make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
           
+          # Sometimes we need to disable LTO at kernel config level
           make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-            CC="$CLANG_PATH $OLLVM_FLAGS -fno-lto" \
-            -j$(nproc) 2>&1 | tee /tmp/build_no_lto.log
+            CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS" \
+            LD="/usr/local/ollvm/bin/ld.lld" \
+            AR="/usr/local/ollvm/bin/llvm-ar" \
+            CONFIG_LTO=n \
+            CONFIG_LTO_CLANG=n \
+            CONFIG_THINLTO=n \
+            -j$(nproc) 2>&1 | tee /tmp/build_alt.log
           
-          cp /tmp/build_no_lto.log /tmp/build.log
+          cp /tmp/build_alt.log /tmp/build.log
         fi
 
     - name: Build with Default Toolchain
@@ -238,29 +278,54 @@ jobs:
           echo "FILE_EXISTS=true" >> $GITHUB_ENV
           echo "KO_FILE_PATH=$KO_FILE" >> $GITHUB_ENV
           
-          # Check for OLLVM usage
+          # Show module info
+          echo ""
+          echo "=== Module Information ==="
+          ls -lh "$KO_FILE"
+          
+          # Check OLLVM usage
           if [ "${{ inputs.use_custom_clang }}" = "true" ]; then
             echo ""
             echo "=== OLLVM Verification ==="
             if grep -q "mllvm" /tmp/build.log 2>/dev/null; then
               echo "✅ OLLVM flags were used in build"
+              # Show which flags were used
+              grep "mllvm" /tmp/build.log | head -2
             else
               echo "⚠️ No OLLVM flags found in build log"
+            fi
+            
+            # Check which tools were used
+            echo ""
+            echo "=== Tool Usage ==="
+            if grep -q "/usr/local/ollvm/bin/clang" /tmp/build.log 2>/dev/null; then
+              echo "✅ OLLVM clang was used"
+            fi
+            if grep -q "/usr/local/ollvm/bin/ld.lld" /tmp/build.log 2>/dev/null; then
+              echo "✅ OLLVM ld.lld was used"
             fi
           fi
         else
           echo "❌ Build failed! No .ko file found."
           echo "FILE_EXISTS=false" >> $GITHUB_ENV
+          
+          # Show error summary
+          echo ""
+          echo "=== Error Summary ==="
+          tail -30 /tmp/build.log 2>/dev/null | grep -i "error\|fail\|warning" || echo "No specific errors found"
         fi
 
-    - name: Process and Upload Artifact
+    - name: Process Successful Build
       if: env.FILE_EXISTS == 'true'
       run: |
+        echo "=== Processing Successful Build ==="
+        
         MODULE_DIR="${{ inputs.module_dir }}"
         KO_FILE="${{ env.KO_FILE_PATH }}"
         
         TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
         
+        # Create descriptive filename
         if [ "${{ inputs.use_custom_clang }}" = "true" ]; then
           OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-ollvm-${{ inputs.obfuscation_level }}-$TIMESTAMP.ko"
         else
@@ -269,13 +334,46 @@ jobs:
         
         mkdir -p /github/workspace/out
         cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
+        
+        # Create build info file
+        BUILD_INFO="/github/workspace/out/build-info-$OUTPUT_NAME.txt"
+        {
+          echo "=== Build Information ==="
+          echo "Module: $MODULE_DIR"
+          echo "KMI: ${{ matrix.kmi }}"
+          echo "Timestamp: $(date)"
+          echo "Output: $OUTPUT_NAME"
+          echo "Size: $(stat -c%s "/github/workspace/out/$OUTPUT_NAME") bytes"
+          
+          if [ "${{ inputs.use_custom_clang }}" = "true" ]; then
+            echo ""
+            echo "=== OLLVM Configuration ==="
+            echo "OLLVM Level: ${{ inputs.obfuscation_level }}"
+            echo "Toolchain: /usr/local/ollvm/bin/"
+            echo "Clang Version: $(/usr/local/ollvm/bin/clang --version 2>&1 | head -1)"
+            echo "LD Version: $(/usr/local/ollvm/bin/ld.lld --version 2>&1 | head -1 2>/dev/null || echo 'Not available')"
+            
+            # Check if OLLVM was actually used
+            if grep -q "mllvm" /tmp/build.log 2>/dev/null; then
+              echo "OLLVM Used: YES"
+            else
+              echo "OLLVM Used: NO (flags not found in build log)"
+            fi
+          fi
+        } > "$BUILD_INFO"
+        
+        echo "✅ Module saved: $OUTPUT_NAME"
+        echo "✅ Build info saved: build-info-$OUTPUT_NAME.txt"
+        
         echo "ARTIFACT_PATH=/github/workspace/out/$OUTPUT_NAME" >> $GITHUB_ENV
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
-        path: ${{ env.ARTIFACT_PATH }}
+        path: |
+          ${{ env.ARTIFACT_PATH }}
+          /github/workspace/out/build-info-*.txt
         retention-days: 7
       if: env.FILE_EXISTS == 'true'
 
