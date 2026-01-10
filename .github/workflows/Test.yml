@@ -72,35 +72,88 @@ jobs:
         rm -rf /usr/local/ollvm
         mkdir -p /usr/local/ollvm
         
-        # Find all clang*.zip files
+        # Find and extract all ZIP files
         echo "Looking for ZIP files in $MODULE_DIR/"
-        ZIP_FILES=($(find "$MODULE_DIR" -name "clang*.zip" | sort))
         
-        if [ ${#ZIP_FILES[@]} -eq 0 ]; then
-          echo "❌ No clang*.zip files found!"
-          exit 1
-        fi
-        
-        echo "Found ${#ZIP_FILES[@]} ZIP file(s):"
-        printf '%s\n' "${ZIP_FILES[@]}"
-        
-        # Extract each ZIP directly to /usr/local/ollvm
-        for zip_file in "${ZIP_FILES[@]}"; do
-          echo ""
-          echo "=== Extracting $(basename "$zip_file") ==="
-          unzip -q "$zip_file" -d /usr/local/ollvm/
+        for zip_file in "$MODULE_DIR"/clang*.zip; do
+          if [ -f "$zip_file" ]; then
+            echo ""
+            echo "=== Extracting $(basename "$zip_file") ==="
+            unzip -q "$zip_file" -d /usr/local/ollvm/
+          fi
         done
         
-        # Make everything in bin executable
+        # Show what we got
+        echo ""
+        echo "=== Extracted Structure ==="
+        echo "Top-level directories:"
+        ls -la /usr/local/ollvm/
+        
+        # Organize binaries
+        echo ""
+        echo "=== Organizing Binaries ==="
+        
+        # Create bin directory if it doesn't exist
+        mkdir -p /usr/local/ollvm/bin
+        
+        # Move any binaries from extracted bin/ to our bin/
         if [ -d "/usr/local/ollvm/bin" ]; then
-          chmod -R +x /usr/local/ollvm/bin/ 2>/dev/null || true
+          echo "Moving binaries from /usr/local/ollvm/bin to /usr/local/ollvm/bin"
+          # They're already in the right place
+        else
+          # Check if binaries are loose in the root
+          echo "Looking for loose binaries..."
+          find /usr/local/ollvm -maxdepth 1 -type f -executable -name "*" -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
         fi
         
-        # Test clang and ld.lld
+        # Make everything executable
+        chmod -R +x /usr/local/ollvm/bin/ 2>/dev/null || true
+        
+        # Show what we have
         echo ""
-        echo "=== Testing Toolchain ==="
-        /usr/local/ollvm/bin/clang --version 2>&1 | head -2
-        /usr/local/ollvm/bin/ld.lld --version 2>&1 | head -2
+        echo "=== Final Structure ==="
+        echo "Binaries in /usr/local/ollvm/bin/:"
+        ls -la /usr/local/ollvm/bin/ | head -20
+        
+        if [ -d "/usr/local/ollvm/include" ]; then
+          echo ""
+          echo "Headers in /usr/local/ollvm/include/:"
+          ls -la /usr/local/ollvm/include/ | head -10
+          echo "Header files found: $(find /usr/local/ollvm/include -name "*.h" | wc -l)"
+        else
+          echo ""
+          echo "⚠️ No include directory found at /usr/local/ollvm/include"
+          echo "Looking for headers anywhere..."
+          find /usr/local/ollvm -name "*.h" -type f | head -10
+        fi
+        
+        # Test clang
+        echo ""
+        echo "=== Testing clang ==="
+        if [ -f "/usr/local/ollvm/bin/clang" ]; then
+          /usr/local/ollvm/bin/clang --version 2>&1 | head -2
+          
+          # Test if it can find headers
+          echo ""
+          echo "Testing header search..."
+          if echo '#include <stdarg.h>' | /usr/local/ollvm/bin/clang -E -x c - 2>&1 >/dev/null; then
+            echo "✅ clang can find stdarg.h"
+          else
+            echo "❌ clang cannot find stdarg.h"
+            
+            # Try with explicit include path
+            if [ -d "/usr/local/ollvm/include" ]; then
+              echo "Trying with -I/usr/local/ollvm/include..."
+              if echo '#include <stdarg.h>' | /usr/local/ollvm/bin/clang -I/usr/local/ollvm/include -E -x c - 2>&1 >/dev/null; then
+                echo "✅ Found stdarg.h with -I/usr/local/ollvm/include"
+              else
+                echo "❌ Still not found"
+              fi
+            fi
+          fi
+        else
+          echo "❌ clang not found in /usr/local/ollvm/bin/"
+        fi
         
         # Add to PATH
         echo 'export PATH=/usr/local/ollvm/bin:$PATH' >> /etc/profile.d/ollvm.sh
@@ -108,47 +161,20 @@ jobs:
         
         echo "OLLVM_TOOLCHAIN_INSTALLED=true" >> $GITHUB_ENV
 
-    - name: Debug LTO Compatibility
+    - name: Build with Simple Approach
       if: ${{ inputs.use_custom_clang }}
       run: |
-        echo "=== Debugging LTO Compatibility ==="
-        
-        # Test if OLLVM works with LTO at all
-        echo 'int test_func(int x) { return x * 2; }' > /tmp/lto_test.c
-        
-        echo ""
-        echo "1. Testing normal LTO (no OLLVM):"
-        /usr/local/ollvm/bin/clang -flto -c /tmp/lto_test.c -o /tmp/normal_lto.o 2>&1 && \
-          echo "✅ Normal LTO compilation works" || echo "❌ Normal LTO compilation fails"
-        
-        echo ""
-        echo "2. Testing OLLVM FLA with LTO:"
-        /usr/local/ollvm/bin/clang -flto -mllvm -fla -c /tmp/lto_test.c -o /tmp/fla_lto.o 2>&1 && \
-          echo "✅ FLA + LTO compilation works" || echo "❌ FLA + LTO compilation fails"
-        
-        echo ""
-        echo "3. Testing OLLVM SUB with LTO:"
-        /usr/local/ollvm/bin/clang -flto -mllvm -sub -c /tmp/lto_test.c -o /tmp/sub_lto.o 2>&1 && \
-          echo "✅ SUB + LTO compilation works" || echo "❌ SUB + LTO compilation fails"
-        
-        echo ""
-        echo "4. Testing OLLVM BCF with LTO:"
-        /usr/local/ollvm/bin/clang -flto -mllvm -bcf -c /tmp/lto_test.c -o /tmp/bcf_lto.o 2>&1 && \
-          echo "✅ BCF + LTO compilation works" || echo "❌ BCF + LTO compilation fails"
-        
-        echo ""
-        echo "5. Testing combined OLLVM passes with LTO:"
-        /usr/local/ollvm/bin/clang -flto -mllvm -fla -mllvm -sub -c /tmp/lto_test.c -o /tmp/combined_lto.o 2>&1 && \
-          echo "✅ Combined passes + LTO compilation works" || echo "❌ Combined passes + LTO compilation fails"
-
-    - name: Try Multiple LTO Build Approaches
-      if: ${{ inputs.use_custom_clang }}
-      run: |
-        echo "=== Trying Multiple LTO Approaches ==="
+        echo "=== Building ${{ inputs.module_dir }}.ko (Simple Approach) ==="
         
         MODULE_DIR="${{ inputs.module_dir }}"
         
-        # Set OLLVM flags based on level
+        # Verify clang exists
+        if [ ! -f "/usr/local/ollvm/bin/clang" ]; then
+          echo "❌ clang not found!"
+          exit 1
+        fi
+        
+        # Set OLLVM flags
         case "${{ inputs.obfuscation_level }}" in
           "light")
             OLLVM_FLAGS="-mllvm -fla"
@@ -168,16 +194,28 @@ jobs:
             ;;
         esac
         
+        echo ""
+        echo "=== Build Configuration ==="
+        
         # Clean first
         make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
         
-        # APPROACH 1: Try ThinLTO
-        echo ""
-        echo "=== APPROACH 1: ThinLTO ==="
+        # SIMPLE APPROACH: Just add include path if we have headers
+        INCLUDE_FLAG=""
+        if [ -d "/usr/local/ollvm/include" ]; then
+          INCLUDE_FLAG="-I/usr/local/ollvm/include"
+          echo "Using headers from: /usr/local/ollvm/include"
+        fi
         
+        # Also add system includes as fallback
+        INCLUDE_FLAG="$INCLUDE_FLAG -I/usr/include"
+        
+        echo "Build command: make CC=\"/usr/local/ollvm/bin/clang $OLLVM_FLAGS $INCLUDE_FLAG\" ..."
+        
+        # Build
         set +e
         make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-          CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS -flto=thin" \
+          CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS $INCLUDE_FLAG" \
           LD="/usr/local/ollvm/bin/ld.lld" \
           AR="/usr/local/ollvm/bin/llvm-ar" \
           NM="/usr/local/ollvm/bin/llvm-nm" \
@@ -185,89 +223,14 @@ jobs:
           STRIP="/usr/local/ollvm/bin/llvm-strip" \
           HOSTCC="gcc" \
           HOSTCXX="g++" \
-          -j$(nproc) 2>&1 | tee /tmp/build_thinlto.log
-        THINLTO_EXIT=$?
+          -j$(nproc) 2>&1 | tee /tmp/build.log
+        BUILD_EXIT=$?
         set -e
         
-        if [ $THINLTO_EXIT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
-          echo "✅ ThinLTO approach successful!"
-          cp /tmp/build_thinlto.log /tmp/build.log
+        if [ $BUILD_EXIT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
+          echo "✅ Build successful!"
         else
-          echo "❌ ThinLTO failed"
-          
-          # APPROACH 2: Try with new pass manager
-          echo ""
-          echo "=== APPROACH 2: New Pass Manager ==="
-          
-          make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
-          
-          set +e
-          make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-            CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS -flto -fexperimental-new-pass-manager" \
-            LD="/usr/local/ollvm/bin/ld.lld" \
-            AR="/usr/local/ollvm/bin/llvm-ar" \
-            NM="/usr/local/ollvm/bin/llvm-nm" \
-            OBJCOPY="/usr/local/ollvm/bin/llvm-objcopy" \
-            STRIP="/usr/local/ollvm/bin/llvm-strip" \
-            HOSTCC="gcc" \
-            HOSTCXX="g++" \
-            -j$(nproc) 2>&1 | tee /tmp/build_newpm.log
-          NEWPM_EXIT=$?
-          set -e
-          
-          if [ $NEWPM_EXIT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
-            echo "✅ New Pass Manager approach successful!"
-            cp /tmp/build_newpm.log /tmp/build.log
-          else
-            echo "❌ New Pass Manager failed"
-            
-            # APPROACH 3: Try without SUB pass (most problematic)
-            echo ""
-            echo "=== APPROACH 3: Without SUB pass ==="
-            
-            # Remove -sub if present (it creates bogus control flow)
-            OLLVM_FLAGS_NO_SUB=$(echo "$OLLVM_FLAGS" | sed 's/-mllvm -sub//g')
-            
-            make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
-            
-            set +e
-            make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-              CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS_NO_SUB -flto" \
-              LD="/usr/local/ollvm/bin/ld.lld" \
-              AR="/usr/local/ollvm/bin/llvm-ar" \
-              NM="/usr/local/ollvm/bin/llvm-nm" \
-              OBJCOPY="/usr/local/ollvm/bin/llvm-objcopy" \
-              STRIP="/usr/local/ollvm/bin/llvm-strip" \
-              HOSTCC="gcc" \
-              HOSTCXX="g++" \
-              -j$(nproc) 2>&1 | tee /tmp/build_nosub.log
-            NOSUB_EXIT=$?
-            set -e
-            
-            if [ $NOSUB_EXIT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
-              echo "✅ Approach without SUB pass successful!"
-              cp /tmp/build_nosub.log /tmp/build.log
-            else
-              echo "❌ All LTO approaches failed, falling back to no-LTO"
-              
-              # FINAL APPROACH: No LTO
-              make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
-              
-              make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-                CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS -fno-lto" \
-                LD="/usr/local/ollvm/bin/ld.lld" \
-                AR="/usr/local/ollvm/bin/llvm-ar" \
-                NM="/usr/local/ollvm/bin/llvm-nm" \
-                OBJCOPY="/usr/local/ollvm/bin/llvm-objcopy" \
-                STRIP="/usr/local/ollvm/bin/llvm-strip" \
-                HOSTCC="gcc" \
-                HOSTCXX="g++" \
-                CONFIG_LTO=n \
-                -j$(nproc) 2>&1 | tee /tmp/build_nolto.log
-              
-              cp /tmp/build_nolto.log /tmp/build.log
-            fi
-          fi
+          echo "❌ Build failed"
         fi
 
     - name: Build with Default Toolchain
@@ -296,4 +259,36 @@ jobs:
           echo "FILE_EXISTS=false" >> $GITHUB_ENV
         fi
 
-    # ... rest of the workflow remains the same
+    - name: Process Successful Build
+      if: env.FILE_EXISTS == 'true'
+      run: |
+        MODULE_DIR="${{ inputs.module_dir }}"
+        KO_FILE="${{ env.KO_FILE_PATH }}"
+        
+        TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+        
+        if [ "${{ inputs.use_custom_clang }}" = "true" ]; then
+          OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-ollvm-${{ inputs.obfuscation_level }}-$TIMESTAMP.ko"
+        else
+          OUTPUT_NAME="$MODULE_DIR-${{ matrix.kmi }}-default-$TIMESTAMP.ko"
+        fi
+        
+        mkdir -p /github/workspace/out
+        cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
+        echo "ARTIFACT_PATH=/github/workspace/out/$OUTPUT_NAME" >> $GITHUB_ENV
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
+        path: ${{ env.ARTIFACT_PATH }}
+        retention-days: 7
+      if: env.FILE_EXISTS == 'true'
+
+    - name: Upload Build Logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-logs
+        path: /tmp/build*.log
+        retention-days: 7
+      if: always()
