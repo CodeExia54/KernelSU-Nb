@@ -72,59 +72,40 @@ jobs:
         rm -rf /usr/local/ollvm
         mkdir -p /usr/local/ollvm
         
-        # Find and extract all ZIP files
-        echo "Looking for ZIP files in $MODULE_DIR/"
+        # Extract both ZIP files
+        echo "Extracting clang*.zip files..."
         
         for zip_file in "$MODULE_DIR"/clang*.zip; do
           if [ -f "$zip_file" ]; then
-            echo ""
-            echo "=== Extracting $(basename "$zip_file") ==="
+            echo "Extracting: $(basename "$zip_file")"
             unzip -q "$zip_file" -d /usr/local/ollvm/
           fi
         done
         
-        # Show what we got
-        echo ""
-        echo "=== Extracted Structure ==="
-        echo "Top-level directories:"
-        ls -la /usr/local/ollvm/
-        
-        # Organize binaries
-        echo ""
-        echo "=== Organizing Binaries ==="
-        
-        # Create bin directory if it doesn't exist
-        mkdir -p /usr/local/ollvm/bin
-        
-        # Move any binaries from extracted bin/ to our bin/
+        # Make binaries executable
         if [ -d "/usr/local/ollvm/bin" ]; then
-          echo "Moving binaries from /usr/local/ollvm/bin to /usr/local/ollvm/bin"
-          # They're already in the right place
-        else
-          # Check if binaries are loose in the root
-          echo "Looking for loose binaries..."
-          find /usr/local/ollvm -maxdepth 1 -type f -executable -name "*" -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
+          chmod -R +x /usr/local/ollvm/bin/ 2>/dev/null || true
         fi
-        
-        # Make everything executable
-        chmod -R +x /usr/local/ollvm/bin/ 2>/dev/null || true
         
         # Show what we have
         echo ""
-        echo "=== Final Structure ==="
-        echo "Binaries in /usr/local/ollvm/bin/:"
-        ls -la /usr/local/ollvm/bin/ | head -20
+        echo "=== Extracted Structure ==="
+        
+        if [ -d "/usr/local/ollvm/bin" ]; then
+          echo "Binaries in bin/:"
+          ls -la /usr/local/ollvm/bin/ | head -15
+        fi
         
         if [ -d "/usr/local/ollvm/include" ]; then
           echo ""
-          echo "Headers in /usr/local/ollvm/include/:"
+          echo "Headers in include/:"
           ls -la /usr/local/ollvm/include/ | head -10
-          echo "Header files found: $(find /usr/local/ollvm/include -name "*.h" | wc -l)"
-        else
-          echo ""
-          echo "⚠️ No include directory found at /usr/local/ollvm/include"
-          echo "Looking for headers anywhere..."
-          find /usr/local/ollvm -name "*.h" -type f | head -10
+          echo "Checking for stdarg.h..."
+          if [ -f "/usr/local/ollvm/include/stdarg.h" ]; then
+            echo "✅ Found stdarg.h"
+          else
+            echo "❌ stdarg.h not found in include/"
+          fi
         fi
         
         # Test clang
@@ -132,27 +113,9 @@ jobs:
         echo "=== Testing clang ==="
         if [ -f "/usr/local/ollvm/bin/clang" ]; then
           /usr/local/ollvm/bin/clang --version 2>&1 | head -2
-          
-          # Test if it can find headers
-          echo ""
-          echo "Testing header search..."
-          if echo '#include <stdarg.h>' | /usr/local/ollvm/bin/clang -E -x c - 2>&1 >/dev/null; then
-            echo "✅ clang can find stdarg.h"
-          else
-            echo "❌ clang cannot find stdarg.h"
-            
-            # Try with explicit include path
-            if [ -d "/usr/local/ollvm/include" ]; then
-              echo "Trying with -I/usr/local/ollvm/include..."
-              if echo '#include <stdarg.h>' | /usr/local/ollvm/bin/clang -I/usr/local/ollvm/include -E -x c - 2>&1 >/dev/null; then
-                echo "✅ Found stdarg.h with -I/usr/local/ollvm/include"
-              else
-                echo "❌ Still not found"
-              fi
-            fi
-          fi
         else
-          echo "❌ clang not found in /usr/local/ollvm/bin/"
+          echo "❌ clang not found!"
+          exit 1
         fi
         
         # Add to PATH
@@ -161,18 +124,12 @@ jobs:
         
         echo "OLLVM_TOOLCHAIN_INSTALLED=true" >> $GITHUB_ENV
 
-    - name: Build with Simple Approach
+    - name: Build with OLLVM
       if: ${{ inputs.use_custom_clang }}
       run: |
-        echo "=== Building ${{ inputs.module_dir }}.ko (Simple Approach) ==="
+        echo "=== Building ${{ inputs.module_dir }}.ko ==="
         
         MODULE_DIR="${{ inputs.module_dir }}"
-        
-        # Verify clang exists
-        if [ ! -f "/usr/local/ollvm/bin/clang" ]; then
-          echo "❌ clang not found!"
-          exit 1
-        fi
         
         # Set OLLVM flags
         case "${{ inputs.obfuscation_level }}" in
@@ -200,22 +157,11 @@ jobs:
         # Clean first
         make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" clean 2>/dev/null || true
         
-        # SIMPLE APPROACH: Just add include path if we have headers
-        INCLUDE_FLAG=""
-        if [ -d "/usr/local/ollvm/include" ]; then
-          INCLUDE_FLAG="-I/usr/local/ollvm/include"
-          echo "Using headers from: /usr/local/ollvm/include"
-        fi
+        # Simple build with include path
+        echo "Building with: CC=\"/usr/local/ollvm/bin/clang $OLLVM_FLAGS -I/usr/local/ollvm/include\""
         
-        # Also add system includes as fallback
-        INCLUDE_FLAG="$INCLUDE_FLAG -I/usr/include"
-        
-        echo "Build command: make CC=\"/usr/local/ollvm/bin/clang $OLLVM_FLAGS $INCLUDE_FLAG\" ..."
-        
-        # Build
-        set +e
         make -C "$KERNEL_SRC" M="$PWD/$MODULE_DIR" modules \
-          CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS $INCLUDE_FLAG" \
+          CC="/usr/local/ollvm/bin/clang $OLLVM_FLAGS -I/usr/local/ollvm/include" \
           LD="/usr/local/ollvm/bin/ld.lld" \
           AR="/usr/local/ollvm/bin/llvm-ar" \
           NM="/usr/local/ollvm/bin/llvm-nm" \
@@ -224,14 +170,6 @@ jobs:
           HOSTCC="gcc" \
           HOSTCXX="g++" \
           -j$(nproc) 2>&1 | tee /tmp/build.log
-        BUILD_EXIT=$?
-        set -e
-        
-        if [ $BUILD_EXIT -eq 0 ] && [ -f "$MODULE_DIR"/*.ko ]; then
-          echo "✅ Build successful!"
-        else
-          echo "❌ Build failed"
-        fi
 
     - name: Build with Default Toolchain
       if: ${{ !inputs.use_custom_clang }}
