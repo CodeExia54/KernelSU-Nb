@@ -1,4 +1,4 @@
- name: Build Kernel Module with OLLVM
+name: Build Kernel Module with OLLVM
 
 on:
   workflow_dispatch:
@@ -126,7 +126,7 @@ jobs:
         echo "=== Creating Obfuscation Scripts ==="
         
         # Create string encryption script
-        cat > /tmp/encrypt_strings.py << 'PYTHON_EOF'
+        cat > /tmp/encrypt_strings.py << 'PYEOF'
 import lief
 import sys
 import os
@@ -185,10 +185,10 @@ if __name__ == "__main__":
         sys.exit(0)
     else:
         sys.exit(1)
-PYTHON_EOF
+PYEOF
 
         # Create binary transformation script
-        cat > /tmp/transform_binary.py << 'PYTHON_EOF'
+        cat > /tmp/transform_binary.py << 'PYEOF'
 import sys
 
 def transform_binary(ko_file):
@@ -224,10 +224,10 @@ if __name__ == "__main__":
         sys.exit(0)
     else:
         sys.exit(1)
-PYTHON_EOF
+PYEOF
 
         # Create section XOR script
-        cat > /tmp/xor_sections.py << 'PYTHON_EOF'
+        cat > /tmp/xor_sections.py << 'PYEOF'
 import lief
 import sys
 
@@ -279,7 +279,7 @@ if __name__ == "__main__":
         sys.exit(0)
     else:
         sys.exit(1)
-PYTHON_EOF
+PYEOF
 
         echo "✅ Obfuscation scripts created"
 
