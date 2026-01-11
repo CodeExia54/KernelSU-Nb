@@ -44,20 +44,40 @@ jobs:
     - name: Checkout source
       uses: actions/checkout@v4
 
+    # ==================================================
+    # Install unzip (DDK container does NOT have it)
+    # ==================================================
+    - name: Install unzip
+      run: |
+        apt-get update
+        apt-get install -y unzip
+
+    # ==================================================
+    # Extract OLLVM toolchain (two ZIPs)
+    # ==================================================
     - name: Extract OLLVM toolchain
       run: |
         set -e
         cd ${{ inputs.module_dir }}
 
+        echo "Extracting OLLVM..."
         mkdir -p .ollvm
+
         unzip -q android-ollvm.zip  -d .ollvm
         unzip -q android-ollvm1.zip -d .ollvm
 
+        echo "OLLVM clang:"
         .ollvm/android-ollvm/bin/clang --version
+
+        echo "OLLVM resource dir:"
         .ollvm/android-ollvm/bin/clang -print-resource-dir
 
+        # Hard fail if builtin headers are missing
         test -f .ollvm/android-ollvm/lib/clang/*/include/stdint.h
 
+    # ==================================================
+    # Build kernel module
+    # ==================================================
     - name: Build module
       run: |
         echo "=== Building with OLLVM level: ${{ inputs.obfuscation_level }} ==="
@@ -75,11 +95,18 @@ jobs:
         OUT="/github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ inputs.obfuscation_level }}-$TS.ko"
 
         cp "$KO_FILE" "$OUT"
-        llvm-strip -d "$OUT"
 
-        echo "Built: $OUT"
+        echo "Before strip:"
         du -h "$OUT"
 
+        llvm-strip -d "$OUT"
+
+        echo "After strip:"
+        du -h "$OUT"
+
+    # ==================================================
+    # Upload artifact
+    # ==================================================
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
