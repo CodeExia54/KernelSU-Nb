@@ -23,6 +23,12 @@ src := $(if $(filter /%,$(src)),$(src),$(srctree)/$(src))
 MDIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 # ===============================
+# OLLVM Configuration
+# ===============================
+OLLVM_DIR := $(MDIR)/android-ollvm
+OLLVM_CC  := $(OLLVM_DIR)/bin/clang
+
+# ===============================
 # Include paths
 # ===============================
 ccflags-y += \
@@ -54,18 +60,15 @@ ccflags-y += -DBUILD_NO_CFI
 ccflags-y += -DENABLE_WUWA_LOGS
 
 # ===============================
-# OLLVM CONFIG
+# OLLVM Common Flags
 # ===============================
-OLLVM_DIR := $(MDIR)/.ollvm/android-ollvm
-OLLVM_CC  := $(OLLVM_DIR)/bin/clang
-
 OLLVM_COMMON_FLAGS := \
     -fno-lto \
     -fno-sanitize=cfi \
     -fno-sanitize=shadow-call-stack
 
 # ===============================
-# Objects SAFE to obfuscate
+# Objects to obfuscate with OLLVM
 # ===============================
 OLLVM_OBJS := \
     src/core/wuwa.o \
@@ -94,11 +97,12 @@ ifeq ($(OLLVM_LEVEL),hard)
 endif
 
 # ===============================
-# Enable OLLVM
+# Enable OLLVM for specific objects
 # ===============================
 ifeq ($(OLLVM),1)
-    $(OLLVM_OBJS): ccflags-y += $(OLLVM_COMMON_FLAGS) $(OLLVM_FLAGS)
-    $(OLLVM_OBJS): CC := $(OLLVM_CC)
+    # Only compile specific objects with OLLVM
+    $(foreach obj,$(OLLVM_OBJS),$(eval $(obj:.o=).o: ccflags-y += $(OLLVM_COMMON_FLAGS) $(OLLVM_FLAGS)))
+    $(foreach obj,$(OLLVM_OBJS),$(eval $(obj:.o=).o: CC := $(OLLVM_CC)))
 endif
 
 # ===============================
