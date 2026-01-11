@@ -17,18 +17,6 @@ android-wuwa-y := \
     src/mm/wuwa_bindproc.o
 
 # ===============================
-# Paths
-# ===============================
-src := $(if $(filter /%,$(src)),$(src),$(srctree)/$(src))
-MDIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-
-# ===============================
-# OLLVM Configuration
-# ===============================
-OLLVM_DIR := $(MDIR)/android-ollvm
-OLLVM_CC  := $(OLLVM_DIR)/bin/clang
-
-# ===============================
 # Include paths
 # ===============================
 ccflags-y += \
@@ -58,76 +46,6 @@ ccflags-y += -DHIDE_SELF_MODULE
 ccflags-y += -DBUILD_HIDE_SIGNAL
 ccflags-y += -DBUILD_NO_CFI
 ccflags-y += -DENABLE_WUWA_LOGS
-
-# ===============================
-# OLLVM Common Flags
-# ===============================
-OLLVM_COMMON_FLAGS := \
-    -fno-lto \
-    -fno-sanitize=cfi \
-    -fno-sanitize=shadow-call-stack
-
-# ===============================
-# Objects to obfuscate with OLLVM
-# ===============================
-OLLVM_OBJS := \
-    src/core/wuwa.o \
-    src/utils/wuwa_utils.o \
-    src/mm/wuwa_page_walk.o \
-    src/mm/wuwa_bindproc.o
-
-# ===============================
-# Obfuscation Levels (for backward compatibility)
-# ===============================
-OLLVM_LEVEL ?= easy
-
-ifeq ($(OLLVM_LEVEL),easy)
-    OLLVM_FLAGS := -mllvm -fla
-endif
-
-ifeq ($(OLLVM_LEVEL),medium)
-    OLLVM_FLAGS := -mllvm -fla -mllvm -sub
-endif
-
-ifeq ($(OLLVM_LEVEL),hard)
-    OLLVM_FLAGS := -mllvm -fla -mllvm -split -mllvm -sub
-endif
-
-ifeq ($(OLLVM_LEVEL),extreme)
-    OLLVM_FLAGS := -mllvm -fla -mllvm -split -mllvm -sub -mllvm -bcf -mllvm -sobf
-endif
-
-# ===============================
-# CUSTOM OLLVM FLAGS from workflow
-# ===============================
-ifdef OLLVM_CUSTOM_FLAGS
-    # Override with custom flags from workflow
-    OLLVM_FLAGS := $(OLLVM_CUSTOM_FLAGS)
-    $(info Using custom OLLVM flags: $(OLLVM_FLAGS))
-endif
-
-# ===============================
-# Enable OLLVM for specific objects
-# ===============================
-ifeq ($(OLLVM),1)
-    # For each OLLVM object, override compiler and add flags
-    $(foreach obj,$(OLLVM_OBJS), \
-        $(eval $(obj): CC := $(OLLVM_CC)) \
-        $(eval CFLAGS_$(basename $(obj)).o := $(OLLVM_COMMON_FLAGS) $(OLLVM_FLAGS)) \
-    )
-    
-    # Debug output
-    $(info )
-    $(info ==============================================)
-    $(info OLLVM BUILD CONFIGURATION)
-    $(info Level: $(OLLVM_LEVEL))
-    $(info OLLVM Compiler: $(OLLVM_CC))
-    $(info OLLVM Flags: $(OLLVM_FLAGS))
-    $(info OLLVM Objects: $(OLLVM_OBJS))
-    $(info Default Compiler: $(CC) - for linking and other objects)
-    $(info ==============================================)
-    $(info )
-endif
 
 # ===============================
 # Targets
