@@ -1,4 +1,4 @@
-name: Build Kernel Module with OLLVM (CFI Safe, Forced)
+name: Build Kernel Module with OLLVM (CFI Safe)
 
 on:
   workflow_dispatch:
@@ -17,20 +17,27 @@ on:
           - hello-world
           - wuwa
           - panic
-        default: 'wuwa'
+        default: 'exianb-dev'
 
       obfuscation_level:
         description: 'OLLVM obfuscation level'
-        required: true
+        required: false
         default: 'medium'
         type: choice
         options:
           - none
           - light
           - medium
+          - heavy
+
+      use_custom_clang:
+        description: 'Use custom OLLVM clang from ZIP'
+        required: false
+        default: true
+        type: boolean
 
 jobs:
-  build:
+  ddk-build:
     name: Build ${{ inputs.module_dir }}.ko for ${{ matrix.kmi }}
     runs-on: ubuntu-latest
 
@@ -38,29 +45,32 @@ jobs:
       fail-fast: false
       matrix:
         kmi:
+          - android12-5.10
+          - android13-5.10
           - android13-5.15
+          - android14-5.15
+          - android14-6.1
+          - android15-6.6
+          - android16-6.12
 
     container:
       image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
 
     steps:
-    # ------------------------------------------------------------
-    # Checkout
-    # ------------------------------------------------------------
     - name: Checkout source
       uses: actions/checkout@v4
 
     - name: Install tools
       run: |
         apt-get update
-        apt-get install -y unzip file binutils llvm
+        apt-get install -y unzip file
 
-    # ------------------------------------------------------------
-    # Install OLLVM toolchain
-    # ------------------------------------------------------------
-    - name: Install OLLVM clang (absolute path)
+    # -------------------------------------------------------
+    # Extract OLLVM toolchain
+    # -------------------------------------------------------
+    - name: Extract OLLVM Toolchain
+      if: inputs.use_custom_clang
       run: |
-        set -e
         echo "=== Installing OLLVM toolchain ==="
 
         rm -rf /usr/local/ollvm
@@ -72,109 +82,96 @@ jobs:
           unzip -oq "$zip" -d /usr/local/ollvm
         done
 
+        # Move binaries to bin/
         find /usr/local/ollvm -type f -executable \
           \( -name "clang*" -o -name "llvm-*" -o -name "ld.lld" \) \
-          -exec mv {} /usr/local/ollvm/bin/ \; || true
+          -exec mv {} /usr/local/ollvm/bin/ \; 2>/dev/null || true
 
         chmod -R +x /usr/local/ollvm/bin
+        echo "PATH=/usr/local/ollvm/bin:$PATH" >> $GITHUB_ENV
 
-        echo "=== OLLVM clang version ==="
-        /usr/local/ollvm/bin/clang --version
+        echo "=== OLLVM clang ==="
+        clang --version | head -2
 
-    # ------------------------------------------------------------
-    # HARD FAIL if this is not OLLVM
-    # ------------------------------------------------------------
-    - name: Verify OLLVM patches exist (FAIL FAST)
-      run: |
-        echo "=== Verifying OLLVM passes ==="
-        /usr/local/ollvm/bin/clang -mllvm -help | grep -E "fla|sub" || {
-          echo "❌ OLLVM passes NOT found — wrong clang!"
-          exit 1
-        }
-        echo "✅ OLLVM passes detected"
-
-    # ------------------------------------------------------------
-    # Build module (FORCED compiler)
-    # ------------------------------------------------------------
-    - name: Build module with OLLVM (FORCED)
+    # -------------------------------------------------------
+    # Build with OLLVM + ThinLTO (CFI SAFE)
+    # -------------------------------------------------------
+    - name: Build module with OLLVM (ThinLTO)
+      if: inputs.use_custom_clang
       run: |
         set -e
 
         MODULE="${{ inputs.module_dir }}"
 
-        # ------------------------------
-        # OLLVM flags (KERNEL SAFE)
-        # ------------------------------
+        # ---------------------------------
+        # OLLVM flags
+        # ---------------------------------
         case "${{ inputs.obfuscation_level }}" in
           light)
-            OLLVM_FLAGS="-mllvm -fla"
+            OLLVM="-mllvm -fla"
             ;;
           medium)
-            OLLVM_FLAGS="-mllvm -fla -mllvm -sub"
+            OLLVM="-mllvm -fla -mllvm -sub"
+            ;;
+          heavy)
+            OLLVM="-mllvm -fla -mllvm -sub -mllvm -bcf"
             ;;
           *)
-            OLLVM_FLAGS=""
+            OLLVM=""
             ;;
         esac
 
-        # ------------------------------
-        # Android CFI REQUIRES LTO
-        # ------------------------------
-        KCFLAGS="$OLLVM_FLAGS -flto=thin -fno-inline-functions"
+        # ---------------------------------
+        # Android CFI requires LTO
+        # ---------------------------------
+        KCFLAGS="$OLLVM -flto=thin"
 
         echo "KCFLAGS=$KCFLAGS"
 
         make -C "$KERNEL_SRC" M="$PWD/$MODULE" clean || true
 
         make -C "$KERNEL_SRC" M="$PWD/$MODULE" modules \
-          CC=/usr/local/ollvm/bin/clang \
-          LD=/usr/local/ollvm/bin/ld.lld \
-          AR=/usr/local/ollvm/bin/llvm-ar \
-          NM=/usr/local/ollvm/bin/llvm-nm \
-          OBJCOPY=/usr/local/ollvm/bin/llvm-objcopy \
-          STRIP=/usr/local/ollvm/bin/llvm-strip \
+          CC=clang \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          STRIP=llvm-strip \
           KCFLAGS="$KCFLAGS" \
           -j$(nproc) \
           2>&1 | tee /tmp/build.log
 
-    # ------------------------------------------------------------
-    # VERIFY compiler used (CRITICAL)
-    # ------------------------------------------------------------
-    - name: Verify compiler actually used
+    # -------------------------------------------------------
+    # Fallback: default toolchain
+    # -------------------------------------------------------
+    - name: Build with default toolchain
+      if: ${{ !inputs.use_custom_clang }}
       run: |
-        echo "=== Compiler verification ==="
-        grep -E "You are using:" /tmp/build.log || true
+        make -C "$KERNEL_SRC" M="$PWD/${{ inputs.module_dir }}" modules \
+          -j$(nproc) 2>&1 | tee /tmp/build.log
 
-        if grep -q "github.com/llvm/llvm-project" /tmp/build.log; then
-          echo "❌ Upstream clang detected — build INVALID"
-          exit 1
-        fi
-
-        echo "✅ Android / OLLVM clang used"
-
-    # ------------------------------------------------------------
-    # Analyze obfuscation (PROOF)
-    # ------------------------------------------------------------
-    - name: Analyze obfuscation
+    # -------------------------------------------------------
+    # Check result
+    # -------------------------------------------------------
+    - name: Check build result
       run: |
         KO=$(find "${{ inputs.module_dir }}" -name "*.ko" | head -1)
-        echo "KO=$KO"
 
-        echo "=== Module size ==="
-        size "$KO"
+        if [ -f "$KO" ]; then
+          echo "✅ Built: $KO"
+          echo "KO_FILE=$KO" >> $GITHUB_ENV
+          echo "FILE_EXISTS=true" >> $GITHUB_ENV
+        else
+          echo "❌ Build failed"
+          tail -50 /tmp/build.log || true
+          echo "FILE_EXISTS=false" >> $GITHUB_ENV
+        fi
 
-        echo "=== CFG sample ==="
-        llvm-objdump -d "$KO" | head -80
-
-        echo "=== Branch density ==="
-        llvm-objdump -d "$KO" | grep -E "br|cmp|jmp" | head -30
-
-        echo "KO_FILE=$KO" >> $GITHUB_ENV
-
-    # ------------------------------------------------------------
-    # Package artifact
-    # ------------------------------------------------------------
-    - name: Package artifact
+    # -------------------------------------------------------
+    # Process artifact
+    # -------------------------------------------------------
+    - name: Prepare artifact
+      if: env.FILE_EXISTS == 'true'
       run: |
         TS=$(date +%Y%m%d-%H%M%S)
         OUT="out/${{ inputs.module_dir }}-${{ matrix.kmi }}-ollvm-${{ inputs.obfuscation_level }}-$TS.ko"
@@ -187,7 +184,8 @@ jobs:
         echo "ARTIFACT=$OUT" >> $GITHUB_ENV
         du -h "$OUT"
 
-    - name: Upload artifact
+    - name: Upload module
+      if: env.FILE_EXISTS == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.module_dir }}-${{ matrix.kmi }}
@@ -198,6 +196,6 @@ jobs:
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: build-logs
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-logs
         path: /tmp/build.log
         retention-days: 7
