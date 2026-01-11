@@ -27,33 +27,48 @@ jobs:
       run: |
         echo "=== CLANG CONFIGURATION ANALYSIS ==="
         
-        # Get clang path
-        CLANG=$(make -C "$KERNEL_SRC" -n V=1 2>&1 | grep -o "/[^ ]*/clang[^ ]*" | head -1)
-        [ -z "$CLANG" ] && CLANG=$(which clang)
+        # Method 1: Look for actual clang binary in build output
+        CLANG=$(make -C "$KERNEL_SRC" -n V=1 2>&1 | grep -o "/[^ ]*/bin/clang[^ ]*" | head -1)
+        
+        # Method 2: If not found, search for clang in common locations
+        if [ -z "$CLANG" ] || [ ! -f "$CLANG" ]; then
+          CLANG=$(find /opt/ddk -name "clang" -type f -executable | grep -v "/lib/" | head -1)
+        fi
+        
+        # Method 3: Last resort, use which
+        if [ -z "$CLANG" ] || [ ! -f "$CLANG" ]; then
+          CLANG=$(which clang 2>/dev/null || echo "")
+        fi
+        
+        if [ -z "$CLANG" ] || [ ! -f "$CLANG" ]; then
+          echo "ERROR: Could not find clang binary"
+          exit 1
+        fi
+        
         echo "CLANG_PATH=$CLANG"
         
         # Get version
-        VERSION=$($CLANG --version | head -1)
+        VERSION=$("$CLANG" --version | head -1)
         echo "VERSION=$VERSION"
         
         # Get target
-        TARGET=$($CLANG -dumpmachine)
+        TARGET=$("$CLANG" -dumpmachine)
         echo "TARGET=$TARGET"
         
         # Check features
         echo "FEATURES:"
-        $CLANG -mllvm -help 2>&1 | grep -q "LLVM" && echo "HAS_MLLVM=yes" || echo "HAS_MLLVM=no"
-        $CLANG -flto=thin -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_THINLTO=no" || echo "HAS_THINLTO=yes"
-        $CLANG -fsanitize=cfi -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_CFI=no" || echo "HAS_CFI=yes"
+        "$CLANG" -mllvm -help 2>&1 | grep -q "LLVM" && echo "HAS_MLLVM=yes" || echo "HAS_MLLVM=no"
+        "$CLANG" -flto=thin -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_THINLTO=no" || echo "HAS_THINLTO=yes"
+        "$CLANG" -fsanitize=cfi -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_CFI=no" || echo "HAS_CFI=yes"
         
         # Save to file
         {
           echo "CLANG_PATH=$CLANG"
           echo "VERSION=$VERSION"
           echo "TARGET=$TARGET"
-          $CLANG -mllvm -help 2>&1 | grep -q "LLVM" && echo "HAS_MLLVM=yes" || echo "HAS_MLLVM=no"
-          $CLANG -flto=thin -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_THINLTO=no" || echo "HAS_THINLTO=yes"
-          $CLANG -fsanitize=cfi -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_CFI=no" || echo "HAS_CFI=yes"
+          "$CLANG" -mllvm -help 2>&1 | grep -q "LLVM" && echo "HAS_MLLVM=yes" || echo "HAS_MLLVM=no"
+          "$CLANG" -flto=thin -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_THINLTO=no" || echo "HAS_THINLTO=yes"
+          "$CLANG" -fsanitize=cfi -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_CFI=no" || echo "HAS_CFI=yes"
         } > /tmp/clang_config.txt
 
     - name: Upload Config
