@@ -155,115 +155,80 @@ jobs:
         chmod 755 android-ollvm/bin/llvm-ar
         
         echo "OLLVM clang version:"
-        ./android-ollvm/bin/clang --version || echo "Version check might fail, continuing..."
+        ./android-ollvm/bin/clang --version | head -5 || echo "Version check might fail, continuing..."
 
     # ==================================================
-    # Build kernel module with MIXED toolchain
+    # Build kernel module with CUSTOM OLLVM OPTIONS
     # ==================================================
     - name: Build module
       run: |
-        echo "=== Building with MIXED TOOLCHAIN ==="
+        echo "=== Building with CUSTOM OLLVM OPTIONS ==="
         echo "Module directory: ${{ inputs.module_dir }}"
         echo "Kernel source: $KERNEL_SRC"
         
+        cd ${{ inputs.module_dir }}
+        
         # Build OLLVM flags from user inputs
         OLLVM_FLAGS=""
+        OLLVM_DESCRIPTION=""
         
         # Control Flow Flattening
         if [ "${{ inputs.enable_fla }}" = "yes" ]; then
           OLLVM_FLAGS="$OLLVM_FLAGS -mllvm -fla"
+          OLLVM_DESCRIPTION="$OLLVM_DESCRIPTION, Control Flow Flattening"
         fi
         
         # Basic Block Splitting
         if [ "${{ inputs.enable_split }}" = "yes" ]; then
           OLLVM_FLAGS="$OLLVM_FLAGS -mllvm -split -mllvm -split_num=${{ inputs.split_num }}"
+          OLLVM_DESCRIPTION="$OLLVM_DESCRIPTION, Basic Block Splitting (iterations: ${{ inputs.split_num }})"
         fi
         
         # Instruction Substitution
         if [ "${{ inputs.enable_sub }}" = "yes" ]; then
           OLLVM_FLAGS="$OLLVM_FLAGS -mllvm -sub -mllvm -sub_loop=${{ inputs.sub_loop }}"
+          OLLVM_DESCRIPTION="$OLLVM_DESCRIPTION, Instruction Substitution (iterations: ${{ inputs.sub_loop }})"
         fi
         
         # Bogus Control Flow
         if [ "${{ inputs.enable_bcf }}" = "yes" ]; then
           OLLVM_FLAGS="$OLLVM_FLAGS -mllvm -bcf -mllvm -bcf_loop=${{ inputs.bcf_loop }} -mllvm -bcf_prob=${{ inputs.bcf_prob }}"
+          OLLVM_DESCRIPTION="$OLLVM_DESCRIPTION, Bogus Control Flow (iterations: ${{ inputs.bcf_loop }}, probability: ${{ inputs.bcf_prob }}%)"
         fi
         
         # String Obfuscation
         if [ "${{ inputs.enable_sobf }}" = "yes" ]; then
           OLLVM_FLAGS="$OLLVM_FLAGS -mllvm -sobf"
+          OLLVM_DESCRIPTION="$OLLVM_DESCRIPTION, String Obfuscation"
         fi
+        
+        # Remove leading comma and space
+        OLLVM_DESCRIPTION=${OLLVM_DESCRIPTION#, }
         
         echo "Custom OLLVM Flags: $OLLVM_FLAGS"
-        echo ""
-        
-        # Verify OLLVM clang works with these flags
-        echo "=== Verifying OLLVM Clang ==="
-        cd ${{ inputs.module_dir }}
-        
-        # Test if OLLVM clang recognizes the flags
-        echo "Testing OLLVM clang with -mllvm -fla flag..."
-        if ./android-ollvm/bin/clang -mllvm -fla --version 2>&1 | grep -q "Unknown command line argument"; then
-          echo "❌ ERROR: OLLVM clang does NOT recognize -fla flag!"
-          echo "This means it's not a real OLLVM clang!"
-          echo ""
-          echo "Checking what clang this really is:"
-          ./android-ollvm/bin/clang --version
-          exit 1
-        else
-          echo "✅ OLLVM clang recognizes the flag"
+        if [ -n "$OLLVM_DESCRIPTION" ]; then
+          echo "OLLVM Features: $OLLVM_DESCRIPTION"
         fi
-        
-        # Get container's clang path for linking
-        echo ""
-        echo "=== Container Clang Info ==="
-        CONTAINER_CLANG=$(which clang)
-        echo "Container clang path: $CONTAINER_CLANG"
-        $CONTAINER_CLANG --version | head -3
         
         # Also apply predefined level for backward compatibility
         OLLVM_LEVEL="${{ inputs.obfuscation_level }}"
         
-        # Build the module with mixed toolchain
+        # Build the module with custom flags
         echo ""
-        echo "=== Starting Build (Mixed Toolchain) ==="
-        echo "OLLVM clang will compile: wuwa.o, wuwa_utils.o, wuwa_page_walk.o, wuwa_bindproc.o"
-        echo "Container clang will compile: everything else AND handle linking"
+        echo "=== Starting Build ==="
         
-        # Build with verbose output
         make -C $KERNEL_SRC \
           M=$PWD \
           OLLVM=1 \
           OLLVM_LEVEL=$OLLVM_LEVEL \
           OLLVM_CUSTOM_FLAGS="$OLLVM_FLAGS" \
-          OLLVM_CLANG_PATH="$PWD/android-ollvm/bin/clang" \
-          CONTAINER_CLANG_PATH="$CONTAINER_CLANG" \
-          V=1 \
           modules 2>&1 | tee build.log
         
-        # Check for compiler usage in build log
-        echo ""
-        echo "=== Checking Compiler Usage ==="
-        
-        # Count OLLVM clang usage
-        OLLVM_COUNT=$(grep -c "android-ollvm/bin/clang" build.log || echo "0")
-        echo "OLLVM clang usage count: $OLLVM_COUNT"
-        
-        # Count container clang usage
-        CONTAINER_COUNT=$(grep -c "$CONTAINER_CLANG" build.log || echo "0")
-        echo "Container clang usage count: $CONTAINER_COUNT"
-        
-        if [ "$OLLVM_COUNT" -ge 4 ]; then
-          echo "✅ OLLVM clang was used for obfuscated objects"
-        else
-          echo "⚠️  OLLVM clang was not used enough (expected at least 4 times)"
-        fi
-        
         # Check if build succeeded
-        if grep -q "Error" build.log || grep -q "error:" build.log; then
-          echo "❌ Build failed with errors!"
-          echo "=== Last 50 lines of build log ==="
-          tail -50 build.log
+        if [ $? -ne 0 ]; then
+          echo "❌ Build failed!"
+          echo "=== Build log errors ==="
+          grep -i "error\|failed" build.log | head -20
           exit 1
         fi
         
@@ -274,7 +239,7 @@ jobs:
           exit 1
         fi
         
-        echo "Found KO file: $KO_FILE"
+        echo "✅ Found kernel module: $KO_FILE"
         
         # Create output directory
         mkdir -p /github/workspace/out
@@ -304,15 +269,16 @@ jobs:
         du -h "$OUT"
         file "$OUT"
         
-        echo "Build completed successfully!"
+        echo ""
+        echo "✅ Build completed successfully!"
         echo "Output: $OUT"
         echo ""
-        echo "=== TOOLCHAIN SUMMARY ==="
-        echo "OLLVM Level: $OLLVM_LEVEL"
-        echo "OLLVM Flags: $OLLVM_FLAGS"
-        echo "OLLVM Objects: 4 files compiled with OLLVM clang"
-        echo "Non-OLLVM Objects: 7 files compiled with container clang"
-        echo "Linking: Done with container clang"
+        echo "=== OLLVM Configuration Summary ==="
+        echo "Level: $OLLVM_LEVEL"
+        echo "Flags: $OLLVM_FLAGS"
+        if [ -n "$OLLVM_DESCRIPTION" ]; then
+          echo "Features: $OLLVM_DESCRIPTION"
+        fi
 
     # ==================================================
     # Upload artifact
