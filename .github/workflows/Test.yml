@@ -1,10 +1,10 @@
-name: Analyze Kernel Toolchain Configuration
+name: Analyze Kernel Clang Configuration
 
 on:
   workflow_dispatch:
     inputs:
       target_kmi:
-        description: 'Target KMI to analyze'
+        description: 'Target KMI'
         required: true
         type: choice
         options:
@@ -14,7 +14,6 @@ on:
           - android14-5.15
           - android14-6.1
           - android15-6.6
-          - android16-6.12
         default: 'android12-5.10'
 
 jobs:
@@ -24,74 +23,41 @@ jobs:
       image: ghcr.io/ylarod/ddk:${{ inputs.target_kmi }}
 
     steps:
-    - name: Analyze Fucking Toolchain
+    - name: Analyze Clang Config
       run: |
-        echo "=== TOOLCHAIN ANALYSIS - STRAIGHT TO THE POINT ==="
-        echo ""
+        echo "=== CLANG CONFIGURATION ANALYSIS ==="
         
-        # 1. FIND THE FUCKING CLANG
+        # Get clang path
         CLANG=$(make -C "$KERNEL_SRC" -n V=1 2>&1 | grep -o "/[^ ]*/clang[^ ]*" | head -1)
         [ -z "$CLANG" ] && CLANG=$(which clang)
-        echo "CLANG=$CLANG"
+        echo "CLANG_PATH=$CLANG"
         
-        # 2. GET FUCKING VERSION
+        # Get version
         VERSION=$($CLANG --version | head -1)
         echo "VERSION=$VERSION"
         
-        # 3. GET FUCKING TARGET
+        # Get target
         TARGET=$($CLANG -dumpmachine)
         echo "TARGET=$TARGET"
         
-        # 4. CHECK FUCKING FEATURES
-        echo ""
+        # Check features
         echo "FEATURES:"
-        $CLANG -mllvm -help 2>&1 | grep -q "LLVM" && echo "-mllvm=YES" || echo "-mllvm=NO"
-        $CLANG -flto=thin -c -x c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "ThinLTO=NO" || echo "ThinLTO=YES"
-        $CLANG -fsanitize=cfi -c -x c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "CFI=NO" || echo "CFI=YES"
+        $CLANG -mllvm -help 2>&1 | grep -q "LLVM" && echo "HAS_MLLVM=yes" || echo "HAS_MLLVM=no"
+        $CLANG -flto=thin -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_THINLTO=no" || echo "HAS_THINLTO=yes"
+        $CLANG -fsanitize=cfi -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_CFI=no" || echo "HAS_CFI=yes"
         
-        # 5. GET FUCKING FLAGS FROM KERNEL BUILD
-        echo ""
-        echo "KERNEL FLAGS:"
-        make -C "$KERNEL_SRC" -n V=1 2>&1 | grep "clang" | head -1 | sed 's/.*clang//' | tr ' ' '\n' | \
-          grep -E "^-" | grep -v "^-c\|^-o" | sort | uniq | head -30
-        
-        # 6. GET FUCKING CONFIG
-        echo ""
-        echo "KERNEL CONFIG:"
-        [ -f "$KERNEL_SRC/.config" ] && \
-          grep -E "CONFIG_LTO|CONFIG_CFI|CONFIG_CC_" "$KERNEL_SRC/.config" || \
-          echo "No .config found"
-        
-        # 7. GENERATE FUCKING CMAKE COMMAND
-        echo ""
-        echo "CMAKE COMMAND TO BUILD OLLVM:"
-        echo "cmake ../llvm \\"
-        echo "  -DCMAKE_BUILD_TYPE=Release \\"
-        echo "  -DLLVM_ENABLE_PROJECTS=\"clang;lld;compiler-rt\" \\"
-        echo "  -DLLVM_TARGETS_TO_BUILD=\"AArch64\" \\"
-        echo "  -DLLVM_DEFAULT_TARGET_TRIPLE=\"$TARGET\" \\"
-        echo "  -DLLVM_ENABLE_LTO=Thin \\"
-        echo "  -DLLVM_ENABLE_ASSERTIONS=OFF \\"
-        echo "  -DLLVM_INCLUDE_TESTS=OFF \\"
-        echo "  -DCLANG_DEFAULT_LINKER=lld \\"
-        echo "  -G \"Ninja\""
-        
-        # 8. SAVE TO FILE
-        cat > /tmp/toolchain_analysis.txt << EOF
-CLANG_PATH=$CLANG
-CLANG_VERSION=$VERSION
-TARGET_TRIPLE=$TARGET
-EOF
+        # Save to file
+        {
+          echo "CLANG_PATH=$CLANG"
+          echo "VERSION=$VERSION"
+          echo "TARGET=$TARGET"
+          $CLANG -mllvm -help 2>&1 | grep -q "LLVM" && echo "HAS_MLLVM=yes" || echo "HAS_MLLVM=no"
+          $CLANG -flto=thin -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_THINLTO=no" || echo "HAS_THINLTO=yes"
+          $CLANG -fsanitize=cfi -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_CFI=no" || echo "HAS_CFI=yes"
+        } > /tmp/clang_config.txt
 
-    - name: Download Analysis
-      uses: actions/download-artifact@v4
-      with:
-        name: toolchain-analysis
-        path: /tmp/
-
-    - name: Upload Results
+    - name: Upload Config
       uses: actions/upload-artifact@v4
       with:
-        name: toolchain-analysis-${{ inputs.target_kmi }}
-        path: /tmp/toolchain_analysis.txt
-        retention-days: 7
+        name: clang-config-${{ inputs.target_kmi }}
+        path: /tmp/clang_config.txt
