@@ -1,4 +1,4 @@
-name: Analyze Kernel Toolchain & Build Compatible OLLVM
+name: Analyze Kernel Toolchain Configuration
 
 on:
   workflow_dispatch:
@@ -18,527 +18,80 @@ on:
         default: 'android12-5.10'
 
 jobs:
-  analyze-toolchain:
-    name: Analyze Kernel Toolchain
+  analyze:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/ylarod/ddk:${{ inputs.target_kmi }}
 
-    outputs:
-      clang_version: ${{ steps.analyze.outputs.clang_version }}
-      target_triple: ${{ steps.analyze.outputs.target_triple }}
-      cmake_flags: ${{ steps.analyze.outputs.cmake_flags }}
-      include_paths: ${{ steps.analyze.outputs.include_paths }}
-      kernel_config: ${{ steps.analyze.outputs.kernel_config }}
-
     steps:
-    - name: Install analysis tools
+    - name: Analyze Fucking Toolchain
       run: |
-        apt-get update
-        apt-get install -y \
-          python3 \
-          python3-pip \
-          file \
-          binutils \
-          readelf \
-          dwarves
-        pip3 install pyyaml
-
-    - name: Comprehensive Toolchain Analysis
-      id: analyze
-      run: |
-        echo "=== COMPREHENSIVE KERNEL TOOLCHAIN ANALYSIS ==="
+        echo "=== TOOLCHAIN ANALYSIS - STRAIGHT TO THE POINT ==="
         echo ""
         
-        # -------------------------------------------------
-        # 1. Find and identify the clang binary
-        # -------------------------------------------------
-        echo "1. LOCATING CLANG BINARY"
-        echo "========================="
+        # 1. FIND THE FUCKING CLANG
+        CLANG=$(make -C "$KERNEL_SRC" -n V=1 2>&1 | grep -o "/[^ ]*/clang[^ ]*" | head -1)
+        [ -z "$CLANG" ] && CLANG=$(which clang)
+        echo "CLANG=$CLANG"
         
-        # Method 1: Look for clang in PATH
-        CLANG_PATH=$(which clang)
-        echo "Clang from PATH: $CLANG_PATH"
+        # 2. GET FUCKING VERSION
+        VERSION=$($CLANG --version | head -1)
+        echo "VERSION=$VERSION"
         
-        # Method 2: Look for clang in kernel build
-        KERNEL_CLANG=$(make -C "$KERNEL_SRC" -n V=1 2>&1 | \
-          grep -o "/[^ ]*/clang[^ ]*" | head -1)
-        echo "Clang from kernel build: $KERNEL_CLANG"
+        # 3. GET FUCKING TARGET
+        TARGET=$($CLANG -dumpmachine)
+        echo "TARGET=$TARGET"
         
-        # Use the one from kernel build if found
-        if [ -n "$KERNEL_CLANG" ] && [ -f "$KERNEL_CLANG" ]; then
-          CLANG_PATH="$KERNEL_CLANG"
-        fi
-        
-        if [ -z "$CLANG_PATH" ] || [ ! -f "$CLANG_PATH" ]; then
-          echo "❌ ERROR: Could not find clang binary"
-          exit 1
-        fi
-        
-        echo "Using clang: $CLANG_PATH"
-        echo "clang_path=$CLANG_PATH" >> $GITHUB_ENV
-        
-        # -------------------------------------------------
-        # 2. Get clang version and features
-        # -------------------------------------------------
+        # 4. CHECK FUCKING FEATURES
         echo ""
-        echo "2. CLANG VERSION & FEATURES"
-        echo "============================"
+        echo "FEATURES:"
+        $CLANG -mllvm -help 2>&1 | grep -q "LLVM" && echo "-mllvm=YES" || echo "-mllvm=NO"
+        $CLANG -flto=thin -c -x c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "ThinLTO=NO" || echo "ThinLTO=YES"
+        $CLANG -fsanitize=cfi -c -x c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "CFI=NO" || echo "CFI=YES"
         
-        CLANG_VERSION=$($CLANG_PATH --version | head -1)
-        echo "Version: $CLANG_VERSION"
-        
-        # Extract version number
-        VERSION_NUM=$(echo "$CLANG_VERSION" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1)
-        echo "Version number: $VERSION_NUM"
-        echo "clang_version=$VERSION_NUM" >> $GITHUB_OUTPUT
-        
-        # Check target triple
-        TARGET_TRIPLE=$($CLANG_PATH -dumpmachine)
-        echo "Target triple: $TARGET_TRIPLE"
-        echo "target_triple=$TARGET_TRIPLE" >> $GITHUB_OUTPUT
-        
-        # -------------------------------------------------
-        # 3. Analyze kernel build configuration
-        # -------------------------------------------------
+        # 5. GET FUCKING FLAGS FROM KERNEL BUILD
         echo ""
-        echo "3. KERNEL BUILD CONFIGURATION"
-        echo "=============================="
+        echo "KERNEL FLAGS:"
+        make -C "$KERNEL_SRC" -n V=1 2>&1 | grep "clang" | head -1 | sed 's/.*clang//' | tr ' ' '\n' | \
+          grep -E "^-" | grep -v "^-c\|^-o" | sort | uniq | head -30
         
-        # Get kernel .config
-        if [ -f "$KERNEL_SRC/.config" ]; then
-          echo "Kernel config exists"
-          
-          # Extract important configs
-          echo "Key kernel configs:"
-          grep -E "(CONFIG_CC_|CONFIG_LTO|CONFIG_CFI|CONFIG_ARCH_|CONFIG_ARM64)" "$KERNEL_SRC/.config" | \
-            head -20 | while read line; do echo "  $line"; done
-          
-          # Save config snippet
-          CONFIG_SNIPPET=$(grep -E "(CONFIG_CC_|CONFIG_LTO|CONFIG_CFI)" "$KERNEL_SRC/.config" | head -10)
-          echo "kernel_config<<EOF" >> $GITHUB_OUTPUT
-          echo "$CONFIG_SNIPPET" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-        else
-          echo "⚠️ No .config found"
-        fi
-        
-        # -------------------------------------------------
-        # 4. Extract compilation flags from kernel build
-        # -------------------------------------------------
+        # 6. GET FUCKING CONFIG
         echo ""
-        echo "4. KERNEL COMPILATION FLAGS"
-        echo "============================"
+        echo "KERNEL CONFIG:"
+        [ -f "$KERNEL_SRC/.config" ] && \
+          grep -E "CONFIG_LTO|CONFIG_CFI|CONFIG_CC_" "$KERNEL_SRC/.config" || \
+          echo "No .config found"
         
-        # Create a dummy module to extract full build commands
-        mkdir -p /tmp/analysis_module
-        cat > /tmp/analysis_module/test.c << 'EOF'
-        #define MODULE
-        int test_init(void) { return 0; }
-        void test_exit(void) { }
+        # 7. GENERATE FUCKING CMAKE COMMAND
+        echo ""
+        echo "CMAKE COMMAND TO BUILD OLLVM:"
+        echo "cmake ../llvm \\"
+        echo "  -DCMAKE_BUILD_TYPE=Release \\"
+        echo "  -DLLVM_ENABLE_PROJECTS=\"clang;lld;compiler-rt\" \\"
+        echo "  -DLLVM_TARGETS_TO_BUILD=\"AArch64\" \\"
+        echo "  -DLLVM_DEFAULT_TARGET_TRIPLE=\"$TARGET\" \\"
+        echo "  -DLLVM_ENABLE_LTO=Thin \\"
+        echo "  -DLLVM_ENABLE_ASSERTIONS=OFF \\"
+        echo "  -DLLVM_INCLUDE_TESTS=OFF \\"
+        echo "  -DCLANG_DEFAULT_LINKER=lld \\"
+        echo "  -G \"Ninja\""
+        
+        # 8. SAVE TO FILE
+        cat > /tmp/toolchain_analysis.txt << EOF
+CLANG_PATH=$CLANG
+CLANG_VERSION=$VERSION
+TARGET_TRIPLE=$TARGET
 EOF
-        
-        cat > /tmp/analysis_module/Makefile << 'EOF'
-        obj-m := test.o
-EOF
-        
-        # Get the actual compile command
-        make -C "$KERNEL_SRC" M=/tmp/analysis_module -n V=1 2>&1 | \
-          grep "clang.*test\.c" > /tmp/compile_command.txt
-        
-        if [ -s /tmp/compile_command.txt ]; then
-          echo "Full compile command:"
-          head -1 /tmp/compile_command.txt | fold -w 80
-          
-          # Extract flags
-          FLAGS=$(head -1 /tmp/compile_command.txt | sed 's/.*clang//' | sed 's/-c [^ ]*//' | sed 's/-o [^ ]*//')
-          
-          # Analyze important flags
-          echo ""
-          echo "Important flags detected:"
-          echo "$FLAGS" | tr ' ' '\n' | grep -E "^-" | sort | uniq | while read flag; do
-            echo "  $flag"
-          done | head -30
-        fi
-        
-        # -------------------------------------------------
-        # 5. Get include paths
-        # -------------------------------------------------
-        echo ""
-        echo "5. INCLUDE PATHS"
-        echo "================="
-        
-        # Get system include paths from clang
-        $CLANG_PATH -E -x c - -v < /dev/null 2>&1 | \
-          grep "^ /" > /tmp/system_includes.txt
-        
-        echo "System include paths ($(wc -l < /tmp/system_includes.txt) found):"
-        head -10 /tmp/system_includes.txt | while read line; do echo "  $line"; done
-        
-        # Get kernel include paths from build
-        make -C "$KERNEL_SRC" -n V=1 2>&1 | \
-          grep "clang" | head -1 | tr ' ' '\n' | \
-          grep "^-I" | sort -u > /tmp/kernel_includes.txt
-        
-        echo ""
-        echo "Kernel include paths ($(wc -l < /tmp/kernel_includes.txt) found):"
-        head -10 /tmp/kernel_includes.txt | while read line; do echo "  $line"; done
-        
-        # Save include paths
-        echo "include_paths<<EOF" >> $GITHUB_OUTPUT
-        cat /tmp/system_includes.txt /tmp/kernel_includes.txt 2>/dev/null >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-        
-        # -------------------------------------------------
-        # 6. Check for LLVM features
-        # -------------------------------------------------
-        echo ""
-        echo "6. LLVM FEATURE DETECTION"
-        echo "=========================="
-        
-        # Check if -mllvm is supported
-        if $CLANG_PATH -mllvm -help 2>&1 | grep -q "LLVM"; then
-          echo "✅ -mllvm flag supported"
-          echo "Available passes (sample):"
-          $CLANG_PATH -mllvm -help 2>&1 | grep -E "(fla|sub|bcf|obfus)" | head -5 || \
-            echo "  (No OLLVM passes found)"
-        else
-          echo "❌ -mllvm flag NOT supported"
-        fi
-        
-        # Check LTO support
-        echo ""
-        echo "LTO support:"
-        $CLANG_PATH -flto=thin -### -x c -c /dev/null -o /dev/null 2>&1 | \
-          grep -q "error" && echo "  ❌ ThinLTO not supported" || echo "  ✅ ThinLTO supported"
-        
-        $CLANG_PATH -flto -### -x c -c /dev/null -o /dev/null 2>&1 | \
-          grep -q "error" && echo "  ❌ Full LTO not supported" || echo "  ✅ Full LTO supported"
-        
-        # Check CFI support
-        echo ""
-        echo "CFI support:"
-        $CLANG_PATH -fsanitize=cfi -### -x c -c /dev/null -o /dev/null 2>&1 | \
-          grep -q "error" && echo "  ❌ CFI not supported" || echo "  ✅ CFI supported"
-        
-        # -------------------------------------------------
-        # 7. Generate CMake flags for building OLLVM
-        # -------------------------------------------------
-        echo ""
-        echo "7. RECOMMENDED CMAKE FLAGS FOR OLLVM"
-        echo "====================================="
-        
-        # Start with base flags
-        CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release"
-        CMAKE_FLAGS="$CMAKE_FLAGS -DLLVM_ENABLE_PROJECTS=clang;lld;compiler-rt"
-        
-        # Set target based on analysis
-        if echo "$TARGET_TRIPLE" | grep -q "aarch64"; then
-          CMAKE_FLAGS="$CMAKE_FLAGS -DLLVM_TARGETS_TO_BUILD=AArch64"
-          CMAKE_FLAGS="$CMAKE_FLAGS -DLLVM_DEFAULT_TARGET_TRIPLE=$TARGET_TRIPLE"
-        else
-          CMAKE_FLAGS="$CMAKE_FLAGS -DLLVM_TARGETS_TO_BUILD=AArch64;X86"
-          CMAKE_FLAGS="$CMAKE_FLAGS -DLLVM_DEFAULT_TARGET_TRIPLE=aarch64-linux-gnu"
-        fi
-        
-        # Enable LTO if kernel uses it
-        if grep -q "CONFIG_LTO=y" "$KERNEL_SRC/.config" 2>/dev/null; then
-          CMAKE_FLAGS="$CMAKE_FLAGS -DLLVM_ENABLE_LTO=Thin"
-          echo "  Kernel uses LTO, enabling ThinLTO"
-        fi
-        
-        # Enable CFI if kernel uses it
-        if grep -q "CONFIG_CFI=y" "$KERNEL_SRC/.config" 2>/dev/null; then
-          CMAKE_FLAGS="$CMAKE_FLAGS -DCLANG_DEFAULT_RTLIB=compiler-rt"
-          echo "  Kernel uses CFI, enabling compiler-rt"
-        fi
-        
-        # Add other important flags
-        CMAKE_FLAGS="$CMAKE_FLAGS -DLLVM_ENABLE_ASSERTIONS=OFF"
-        CMAKE_FLAGS="$CMAKE_FLAGS -DLLVM_INCLUDE_TESTS=OFF"
-        CMAKE_FLAGS="$CMAKE_FLAGS -DLLVM_INCLUDE_EXAMPLES=OFF"
-        CMAKE_FLAGS="$CMAKE_FLAGS -DCLANG_DEFAULT_LINKER=lld"
-        CMAKE_FLAGS="$CMAKE_FLAGS -DLLVM_ENABLE_PIC=ON"
-        
-        echo "Generated CMake flags:"
-        echo "$CMAKE_FLAGS" | tr ';' '\n' | while read flag; do
-          echo "  $flag"
-        done
-        
-        # Save CMake flags
-        echo "cmake_flags<<EOF" >> $GITHUB_OUTPUT
-        echo "$CMAKE_FLAGS" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-        
-        # -------------------------------------------------
-        # 8. Create analysis report
-        # -------------------------------------------------
-        echo ""
-        echo "8. ANALYSIS COMPLETE"
-        echo "===================="
-        
-        cat > /tmp/toolchain_analysis_report.txt << EOF
-        ========================================
-        KERNEL TOOLCHAIN ANALYSIS REPORT
-        ========================================
-        Date: $(date)
-        KMI: ${{ inputs.target_kmi }}
-        
-        1. CLANG BINARY
-           Path: $CLANG_PATH
-           Version: $CLANG_VERSION
-           Target: $TARGET_TRIPLE
-        
-        2. KERNEL CONFIG
-           LTO: $(grep -q "CONFIG_LTO=y" "$KERNEL_SRC/.config" 2>/dev/null && echo "enabled" || echo "disabled")
-           CFI: $(grep -q "CONFIG_CFI=y" "$KERNEL_SRC/.config" 2>/dev/null && echo "enabled" || echo "disabled")
-        
-        3. FEATURE SUPPORT
-           -mllvm: $($CLANG_PATH -mllvm -help 2>&1 | grep -q "LLVM" && echo "YES" || echo "NO")
-           ThinLTO: $($CLANG_PATH -flto=thin -### -x c -c /dev/null -o /dev/null 2>&1 | grep -q "error" && echo "NO" || echo "YES")
-           CFI: $($CLANG_PATH -fsanitize=cfi -### -x c -c /dev/null -o /dev/null 2>&1 | grep -q "error" && echo "NO" || echo "YES")
-        
-        4. RECOMMENDED OLLVM BUILD
-           Version: $VERSION_NUM
-           Target: $TARGET_TRIPLE
-           CMake Flags:
-        $(echo "$CMAKE_FLAGS" | sed 's/;/\\n           /g' | sed 's/-D/    -D/g')
-        
-        5. INCLUDE PATHS ($(wc -l < /tmp/system_includes.txt) system, $(wc -l < /tmp/kernel_includes.txt) kernel)
-           First few system includes:
-        $(head -3 /tmp/system_includes.txt | sed 's/^/           /')
-           First few kernel includes:
-        $(head -3 /tmp/kernel_includes.txt | sed 's/^/           /')
-        EOF
-        
-        echo "Report saved to: /tmp/toolchain_analysis_report.txt"
-        echo "========================================"
 
-    - name: Upload Analysis Report
+    - name: Download Analysis
+      uses: actions/download-artifact@v4
+      with:
+        name: toolchain-analysis
+        path: /tmp/
+
+    - name: Upload Results
       uses: actions/upload-artifact@v4
       with:
         name: toolchain-analysis-${{ inputs.target_kmi }}
-        path: |
-          /tmp/toolchain_analysis_report.txt
-          /tmp/compile_command.txt
-          /tmp/system_includes.txt
-          /tmp/kernel_includes.txt
+        path: /tmp/toolchain_analysis.txt
         retention-days: 7
-
-  build-ollvm:
-    name: Build OLLVM with Kernel Configuration
-    needs: analyze-toolchain
-    runs-on: ubuntu-22.04
-    
-    env:
-      CLANG_VERSION: ${{ needs.analyze-toolchain.outputs.clang_version }}
-      TARGET_TRIPLE: ${{ needs.analyze-toolchain.outputs.target_triple }}
-      CMAKE_FLAGS: ${{ needs.analyze-toolchain.outputs.cmake_flags }}
-
-    steps:
-    - name: Download Analysis Results
-      uses: actions/download-artifact@v4
-      with:
-        name: toolchain-analysis-${{ inputs.target_kmi }}
-        path: analysis/
-
-    - name: Display Analysis Results
-      run: |
-        echo "=== BUILDING OLLVM WITH KERNEL CONFIGURATION ==="
-        echo ""
-        echo "Analysis Results:"
-        echo "-----------------"
-        cat analysis/toolchain_analysis_report.txt
-        
-        echo ""
-        echo "Environment Variables:"
-        echo "CLANG_VERSION: $CLANG_VERSION"
-        echo "TARGET_TRIPLE: $TARGET_TRIPLE"
-        echo "CMAKE_FLAGS: $CMAKE_FLAGS"
-
-    - name: Clone and Prepare OLLVM
-      run: |
-        echo "=== Preparing OLLVM Source ==="
-        
-        # Clone OLLVM fork
-        git clone --depth=1 https://github.com/sr-tream/obfuscator.git --branch release/14.x
-        
-        cd obfuscator
-        
-        # Initialize submodules
-        git submodule update --init --recursive
-        
-        # Apply OLLVM patches
-        echo "Applying OLLVM patches..."
-        cd llvm-project
-        
-        if [ -f "../../obfuscator.patch" ]; then
-          echo "Found obfuscator.patch, applying..."
-          patch -p1 < ../../obfuscator.patch || \
-            patch -p1 -F 3 --no-backup-if-mismatch < ../../obfuscator.patch || true
-        fi
-        
-        # Look for other patches
-        for patch in ../*.patch; do
-          [ -f "$patch" ] || continue
-          echo "Applying $(basename "$patch")"
-          patch -p1 --no-backup-if-mismatch < "$patch" 2>/dev/null || true
-        done
-
-    - name: Apply Android Kernel Patches
-      run: |
-        echo "=== Applying Android Kernel Patches ==="
-        
-        cd obfuscator/llvm-project
-        
-        # Download Android kernel patches for the detected clang version
-        VERSION_SHORT=$(echo "$CLANG_VERSION" | cut -d. -f1-2)
-        
-        echo "Looking for Android patches for clang $VERSION_SHORT..."
-        
-        # Try to find patches (this is approximate)
-        ANDROID_PATCH_DIR="/tmp/android-patches"
-        mkdir -p "$ANDROID_PATCH_DIR"
-        
-        # Common Android patch URLs (approximate)
-        PATCH_URLS=(
-          "https://android.googlesource.com/platform/external/llvm-project/+archive/refs/heads/main.tar.gz"
-          "https://android.googlesource.com/platform/external/llvm-project/+archive/refs/heads/master.tar.gz"
-        )
-        
-        for url in "${PATCH_URLS[@]}"; do
-          echo "Trying: $url"
-          curl -L "$url" 2>/dev/null | tar -xz -C "$ANDROID_PATCH_DIR" 2>/dev/null && break || continue
-        done
-        
-        # Apply relevant patches
-        if [ -d "$ANDROID_PATCH_DIR" ]; then
-          echo "Applying Android patches..."
-          
-          find "$ANDROID_PATCH_DIR" -name "*.patch" -o -name "*.diff" | \
-            while read patch; do
-              # Check if patch is relevant
-              if grep -q -i "android\|kernel\|aarch64\|arm64\|cfi\|lto" "$patch"; then
-                echo "  Applying: $(basename "$patch")"
-                patch -p1 --no-backup-if-mismatch < "$patch" 2>/dev/null || true
-              fi
-            done
-        else
-          echo "⚠️ No Android patches found/downloaded"
-        fi
-
-    - name: Build OLLVM with Analyzed Configuration
-      run: |
-        echo "=== Building OLLVM ==="
-        
-        cd obfuscator/llvm-project
-        
-        # Create build directory
-        mkdir -p build
-        cd build
-        
-        echo "CMake configuration:"
-        echo "$CMAKE_FLAGS" | tr ';' '\n' | grep -v "^$"
-        
-        # Parse and apply CMake flags
-        # Convert semicolon-separated to proper CMake
-        echo "$CMAKE_FLAGS" | tr ';' '\n' | grep -v "^$" > /tmp/cmake_args.txt
-        
-        # Add OLLVM-specific flags
-        cat >> /tmp/cmake_args.txt << EOF
-        -DLLVM_ENABLE_WARNINGS=OFF
-        -DLLVM_BUILD_32_BITS=OFF
-        -DLLVM_BUILD_RUNTIME=ON
-        -DCLANG_ENABLE_ARCMT=OFF
-        -DCLANG_ENABLE_STATIC_ANALYZER=OFF
-        EOF
-        
-        # Run CMake
-        echo "Running CMake..."
-        cat /tmp/cmake_args.txt | xargs cmake ../llvm -G "Ninja"
-        
-        # Build
-        echo "Building..."
-        ninja -j$(nproc)
-        
-        # Verify build
-        if [ -f "bin/clang" ]; then
-          echo "✅ OLLVM built successfully"
-          
-          echo ""
-          echo "=== Verifying OLLVM Features ==="
-          echo "Version:"
-          ./bin/clang --version | head -2
-          
-          echo ""
-          echo "Checking OLLVM passes:"
-          if ./bin/clang -mllvm -help 2>&1 | grep -q -i "fla\|sub\|bcf"; then
-            echo "✅ OLLVM passes available"
-          else
-            echo "❌ OLLVM passes not found"
-          fi
-          
-          echo ""
-          echo "Testing kernel compilation flags:"
-          ./bin/clang --target=$TARGET_TRIPLE \
-            -nostdinc -D__KERNEL__ -c /dev/null -o /dev/null 2>&1 && \
-            echo "✅ Kernel flags work" || echo "⚠️ Kernel flags may have issues"
-        else
-          echo "❌ Build failed"
-          exit 1
-        fi
-
-    - name: Create OLLVM Package
-      run: |
-        echo "=== Creating OLLVM Package ==="
-        
-        cd obfuscator/llvm-project/build
-        
-        # Create package structure
-        mkdir -p android-kernel-ollvm/bin
-        
-        # Copy binaries
-        cp -L bin/clang android-kernel-ollvm/bin/
-        cp -L bin/clang++ android-kernel-ollvm/bin/ 2>/dev/null || true
-        cp -L bin/ld.lld android-kernel-ollvm/bin/ 2>/dev/null || true
-        cp -L bin/lld android-kernel-ollvm/bin/ 2>/dev/null || true
-        
-        # Copy tools
-        for tool in llvm-ar llvm-nm llvm-strip llvm-objcopy llvm-objdump; do
-          [ -f "bin/$tool" ] && cp -L "bin/$tool" android-kernel-ollvm/bin/
-        done
-        
-        # Copy runtime
-        if [ -d "lib/clang" ]; then
-          CLANG_VER=$(ls lib/clang/ | head -1)
-          mkdir -p android-kernel-ollvm/lib/clang/$CLANG_VER
-          cp -r lib/clang/$CLANG_VER/include android-kernel-ollvm/lib/clang/$CLANG_VER/ 2>/dev/null || true
-        fi
-        
-        # Add analysis info
-        cat > android-kernel-ollvm/BUILD_INFO.txt << EOF
-        Android Kernel OLLVM Toolchain
-        ===============================
-        Built for KMI: ${{ inputs.target_kmi }}
-        Based on analysis from: $(date)
-        
-        Original Toolchain:
-          Clang: $CLANG_VERSION
-          Target: $TARGET_TRIPLE
-        
-        Build Configuration:
-        $(echo "$CMAKE_FLAGS" | tr ';' '\n' | sed 's/^/  /')
-        
-        Features:
-          - OLLVM obfuscation passes (-mllvm -fla, -sub, -bcf)
-          - Android kernel compatible
-          - Target: $TARGET_TRIPLE
-          - LTO support: $(grep -q "LLVM_ENABLE_LTO" <<< "$CMAKE_FLAGS" && echo "Yes" || echo "No")
-        
-        Usage:
-          export PATH=\$PATH:\$(pwd)/android-kernel-ollvm/bin
-          make CC=clang KCFLAGS="-mllvm -fla -mllvm -sub"
-        EOF
-        
-        # Create package
-        tar -czf android-kernel-ollvm-${{ inputs
