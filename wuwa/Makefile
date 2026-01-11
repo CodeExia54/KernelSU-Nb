@@ -1,6 +1,3 @@
-# ===============================
-# Kernel Module
-# ===============================
 obj-m := android-wuwa.o
 
 android-wuwa-y := \
@@ -16,44 +13,41 @@ android-wuwa-y := \
     src/utils/karray_list.o \
     src/mm/wuwa_bindproc.o
 
-# ===============================
-# Include paths
-# ===============================
-ccflags-y += \
-    -I$(src)/src/core \
-    -I$(src)/src/net \
-    -I$(src)/src/ioctl \
-    -I$(src)/src/mm \
-    -I$(src)/src/inlinehook \
-    -I$(src)/src/hook \
-    -I$(src)/src/proc \
-    -I$(src)/src/utils
+src := $(if $(filter /%,$(src)),$(src),$(srctree)/$(src))
 
-# ===============================
-# Warnings / Defines
-# ===============================
-ccflags-y += \
-    -Wno-implicit-function-declaration \
-    -Wno-strict-prototypes \
-    -Wno-int-conversion \
-    -Wno-gcc-compat \
-    -Wno-declaration-after-statement \
-    -Wno-unused-function \
-    -Wno-unused-variable \
-    -Wno-unused-label
+KDIR := $(KDIR)
+MDIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
+$(info -- KDIR: $(KDIR))
+$(info -- MDIR: $(MDIR))
+$(info -- WUWA_SRC_DIR: $(src))
+$(info -- WUWA_OBJ_DIR: $(obj))
+
+ccflags-y += -I$(src)/src/core -I$(src)/src/net -I$(src)/src/ioctl -I$(src)/src/mm
+ccflags-y += -I$(src)/src/inlinehook -I$(src)/src/hook -I$(src)/src/proc -I$(src)/src/utils
+
+ccflags-y += -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat
+ccflags-y += -Wno-declaration-after-statement -Wno-unused-function -Wno-unused-variable
+ccflags-y += -Wno-unused-label  # ADDED THIS LINE TO FIX THE ERROR
+
+# 编译时启用 隐藏模块功能
 ccflags-y += -DHIDE_SELF_MODULE
+# 编译时启用 PTE_MAPPING 功能
+#ccflags-y += -DBUILD_PTE_MAPPING
+# 编译时启用 HIDE_SIGNAL 功能
 ccflags-y += -DBUILD_HIDE_SIGNAL
+#ccflags-y += -DPTE_WALK
 ccflags-y += -DBUILD_NO_CFI
+# LOG CONTROL - Add this line to ENABLE logs, comment to DISABLE logs
 ccflags-y += -DENABLE_WUWA_LOGS
 
-# ===============================
-# Targets
-# ===============================
 all:
 	make -C $(KDIR) M=$(MDIR) modules
 
 clean:
 	make -C $(KDIR) M=$(MDIR) clean
+    
+compdb:
+	python3 $(MDIR)/.vscode/generate_compdb.py -O $(KDIR) $(MDIR)
 
 .PHONY: all clean
