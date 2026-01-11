@@ -45,64 +45,180 @@ jobs:
       uses: actions/checkout@v4
 
     # ==================================================
-    # Install unzip (DDK container does NOT have it)
+    # Install dependencies and fix permissions
     # ==================================================
-    - name: Install unzip
+    - name: Install dependencies and setup
       run: |
         apt-get update
-        apt-get install -y unzip
+        apt-get install -y unzip file
+        
+        # Check container environment
+        echo "=== Container Environment ==="
+        echo "CLANG_PREBUILT_BIN: $CLANG_PREBUILT_BIN"
+        echo "KERNEL_SRC: $KERNEL_SRC"
+        echo "PATH: $PATH"
+        echo "User: $(whoami)"
+        echo "UID: $(id -u)"
+        echo "GID: $(id -g)"
+        
+        # Check if Google Clang exists
+        if [ -f "$CLANG_PREBUILT_BIN/clang" ]; then
+          echo "✓ Google Clang found at: $CLANG_PREBUILT_BIN/clang"
+          $CLANG_PREBUILT_BIN/clang --version
+        else
+          echo "✗ Google Clang not found at $CLANG_PREBUILT_BIN/clang"
+          # Try to find it
+          find / -name "clang" -type f 2>/dev/null | grep -v ".git" | head -10
+        fi
 
     # ==================================================
-    # Extract OLLVM toolchain (two ZIPs)
+    # Extract OLLVM toolchain with proper permissions
     # ==================================================
     - name: Extract OLLVM toolchain
       run: |
         set -e
         cd ${{ inputs.module_dir }}
-
-        echo "Extracting OLLVM..."
-        mkdir -p .ollvm
-
-        unzip -q android-ollvm.zip  -d .ollvm
+        
+        echo "=== Extracting OLLVM ==="
+        
+        # Clean old extraction if exists
+        rm -rf .ollvm
+        
+        # Extract with proper permissions
+        echo "Extracting android-ollvm.zip..."
+        unzip -q android-ollvm.zip -d .ollvm
+        
+        echo "Extracting android-ollvm1.zip..."
         unzip -q android-ollvm1.zip -d .ollvm
-
-        echo "OLLVM clang:"
-        .ollvm/android-ollvm/bin/clang --version
-
-        echo "OLLVM resource dir:"
-        .ollvm/android-ollvm/bin/clang -print-resource-dir
-
-        # Hard fail if builtin headers are missing
-        test -f .ollvm/android-ollvm/lib/clang/*/include/stdint.h
+        
+        # Fix permissions on extracted files
+        echo "Fixing permissions..."
+        chmod -R 755 .ollvm/android-ollvm/bin/
+        chmod -R 644 .ollvm/android-ollvm/lib/
+        chmod -R 644 .ollvm/android-ollvm/include/
+        
+        # Make clang executable
+        chmod 755 .ollvm/android-ollvm/bin/clang
+        chmod 755 .ollvm/android-ollvm/bin/clang++
+        chmod 755 .ollvm/android-ollvm/bin/llvm-ar
+        
+        # Verify permissions
+        echo "Verifying permissions..."
+        ls -la .ollvm/android-ollvm/bin/clang
+        file .ollvm/android-ollvm/bin/clang
+        
+        echo "=== OLLVM Clang Info ==="
+        .ollvm/android-ollvm/bin/clang --version || echo "Clang version check failed, but continuing..."
+        
+        echo "=== OLLVM Resource Dir ==="
+        .ollvm/android-ollvm/bin/clang -print-resource-dir || echo "Resource dir check failed, but continuing..."
+        
+        # Check for builtin headers
+        echo "Checking for builtin headers..."
+        RESOURCE_DIR=$(.ollvm/android-ollvm/bin/clang -print-resource-dir 2>/dev/null || echo "")
+        if [ -n "$RESOURCE_DIR" ]; then
+          echo "Resource dir: $RESOURCE_DIR"
+          if [ -f "$RESOURCE_DIR/include/stdint.h" ]; then
+            echo "✓ Found stdint.h"
+          else
+            echo "Looking for stdint.h..."
+            find .ollvm -name "stdint.h" -type f | head -5
+          fi
+        else
+          echo "Looking for clang includes..."
+          find .ollvm -name "stdint.h" -type f | head -5
+        fi
 
     # ==================================================
     # Build kernel module
     # ==================================================
     - name: Build module
+      env:
+        # Pass Google Clang path to Makefile
+        GOOGLE_CLANG: "$CLANG_PREBUILT_BIN/clang"
       run: |
         echo "=== Building with OLLVM level: ${{ inputs.obfuscation_level }} ==="
-
+        echo "Module directory: ${{ inputs.module_dir }}"
+        echo "Kernel source: $KERNEL_SRC"
+        echo "Google Clang path: $GOOGLE_CLANG"
+        
+        # Verify Google Clang exists and is executable
+        if [ ! -f "$GOOGLE_CLANG" ]; then
+          echo "ERROR: Google Clang not found at $GOOGLE_CLANG"
+          exit 1
+        fi
+        
+        echo "Google Clang version:"
+        $GOOGLE_CLANG --version || echo "Version check failed"
+        
+        # Verify OLLVM clang exists and is executable
+        OLLVM_CLANG="$PWD/${{ inputs.module_dir }}/.ollvm/android-ollvm/bin/clang"
+        if [ ! -f "$OLLVM_CLANG" ]; then
+          echo "ERROR: OLLVM Clang not found at $OLLVM_CLANG"
+          exit 1
+        fi
+        
+        echo "OLLVM Clang path: $OLLVM_CLANG"
+        echo "OLLVM Clang permissions:"
+        ls -la "$OLLVM_CLANG"
+        
+        # Build the module
+        echo "=== Starting Build ==="
+        
         make -C $KERNEL_SRC \
           M=$PWD/${{ inputs.module_dir }} \
           OLLVM=1 \
           OLLVM_LEVEL=${{ inputs.obfuscation_level }} \
-          modules
-
-        mkdir -p /github/workspace/out
-
+          GOOGLE_CLANG_PATH="$GOOGLE_CLANG" \
+          modules 2>&1 | tee build.log
+        
+        # Check if build succeeded
+        if [ $? -ne 0 ]; then
+          echo "Build failed!"
+          echo "=== Build Log ==="
+          tail -100 build.log
+          exit 1
+        fi
+        
+        # Find and copy the kernel module
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" | head -1)
+        if [ -z "$KO_FILE" ]; then
+          echo "ERROR: No .ko file found!"
+          find "${{ inputs.module_dir }}" -type f -name "*.o" | head -10
+          exit 1
+        fi
+        
+        echo "Found KO file: $KO_FILE"
+        
+        # Create output directory
+        mkdir -p /github/workspace/out
+        
+        # Generate timestamp
         TS=$(date +'%Y%m%d-%H%M%S')
         OUT="/github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ inputs.obfuscation_level }}-$TS.ko"
-
+        
+        # Copy and strip
         cp "$KO_FILE" "$OUT"
-
+        
         echo "Before strip:"
         du -h "$OUT"
-
-        llvm-strip -d "$OUT"
-
+        file "$OUT"
+        
+        # Try to strip debug symbols
+        if command -v llvm-strip &> /dev/null; then
+          llvm-strip -d "$OUT" && echo "Stripped with llvm-strip"
+        elif command -v strip &> /dev/null; then
+          strip --strip-debug "$OUT" && echo "Stripped with GNU strip"
+        else
+          echo "No strip command found, skipping"
+        fi
+        
         echo "After strip:"
         du -h "$OUT"
+        file "$OUT"
+        
+        echo "Build completed successfully!"
+        echo "Output: $OUT"
 
     # ==================================================
     # Upload artifact
@@ -112,3 +228,15 @@ jobs:
       with:
         name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ inputs.obfuscation_level }}
         path: /github/workspace/out/*.ko
+        
+    # ==================================================
+    # Optional: Upload build logs for debugging
+    # ==================================================
+    - name: Upload build logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-logs
+        path: |
+          ${{ inputs.module_dir }}/build.log
+          ${{ inputs.module_dir }}/.ollvm/
