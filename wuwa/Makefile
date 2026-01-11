@@ -23,33 +23,10 @@ src := $(if $(filter /%,$(src)),$(src),$(srctree)/$(src))
 MDIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 # ===============================
-# Toolchain Configuration
+# OLLVM Configuration
 # ===============================
-# OLLVM Clang (for specific objects)
-ifdef OLLVM_CLANG_PATH
-    OLLVM_CC := $(OLLVM_CLANG_PATH)
-else
-    OLLVM_DIR := $(MDIR)/android-ollvm
-    OLLVM_CC  := $(OLLVM_DIR)/bin/clang
-endif
-
-# Container Clang (for linking and non-obfuscated objects)
-ifdef CONTAINER_CLANG_PATH
-    CONTAINER_CC := $(CONTAINER_CLANG_PATH)
-else
-    # Default to kernel's default clang
-    CONTAINER_CC := $(CC)
-endif
-
-# ===============================
-# Debug Info
-# ===============================
-$(info )
-$(info === TOOLCHAIN CONFIGURATION ===)
-$(info OLLVM Clang: $(OLLVM_CC))
-$(info Container Clang: $(CONTAINER_CC))
-$(info OLLVM Enabled: $(OLLVM))
-$(info )
+OLLVM_DIR := $(MDIR)/android-ollvm
+OLLVM_CC  := $(OLLVM_DIR)/bin/clang
 
 # ===============================
 # Include paths
@@ -100,19 +77,7 @@ OLLVM_OBJS := \
     src/mm/wuwa_bindproc.o
 
 # ===============================
-# Objects to compile with container clang
-# ===============================
-CONTAINER_OBJS := \
-    src/net/wuwa_sock.o \
-    src/net/wuwa_protocol.o \
-    src/ioctl/wuwa_ioctl.o \
-    src/hook/wuwa_safe_signal.o \
-    src/proc/wuwa_proc.o \
-    src/inlinehook/hijack_arm64.o \
-    src/utils/karray_list.o
-
-# ===============================
-# Obfuscation Levels
+# Obfuscation Levels (for backward compatibility)
 # ===============================
 OLLVM_LEVEL ?= easy
 
@@ -142,40 +107,24 @@ ifdef OLLVM_CUSTOM_FLAGS
 endif
 
 # ===============================
-# MIXED TOOLCHAIN: Enable OLLVM for specific objects only
+# Enable OLLVM for specific objects
 # ===============================
 ifeq ($(OLLVM),1)
-    # ============================================
-    # 1. OLLVM OBJECTS: Compile with OLLVM clang
-    # ============================================
+    # For each OLLVM object, override compiler and add flags
     $(foreach obj,$(OLLVM_OBJS), \
-        $(eval CFLAGS_$(basename $(obj)).o := $(OLLVM_COMMON_FLAGS) $(OLLVM_FLAGS)) \
         $(eval $(obj): CC := $(OLLVM_CC)) \
+        $(eval CFLAGS_$(basename $(obj)).o := $(OLLVM_COMMON_FLAGS) $(OLLVM_FLAGS)) \
     )
     
-    # ============================================
-    # 2. CONTAINER OBJECTS: Compile with container clang
-    # ============================================
-    $(foreach obj,$(CONTAINER_OBJS), \
-        $(eval $(obj): CC := $(CONTAINER_CC)) \
-    )
-    
-    # ============================================
-    # 3. LINKING: Use container clang for linking
-    # ============================================
-    # The final module object and linking should use container clang
-    android-wuwa.o: CC := $(CONTAINER_CC)
-    LD := $(CONTAINER_CC)
-    
-    # ============================================
-    # 4. Debug output
-    # ============================================
+    # Debug output
+    $(info )
     $(info ==============================================)
-    $(info MIXED TOOLCHAIN CONFIGURATION)
-    $(info OLLVM Level: $(OLLVM_LEVEL))
-    $(info OLLVM Objects (4): $(OLLVM_OBJS))
-    $(info Container Objects (7): $(CONTAINER_OBJS))
-    $(info Linking with: $(CONTAINER_CC))
+    $(info OLLVM BUILD CONFIGURATION)
+    $(info Level: $(OLLVM_LEVEL))
+    $(info OLLVM Compiler: $(OLLVM_CC))
+    $(info OLLVM Flags: $(OLLVM_FLAGS))
+    $(info OLLVM Objects: $(OLLVM_OBJS))
+    $(info Default Compiler: $(CC) - for linking and other objects)
     $(info ==============================================)
     $(info )
 endif
