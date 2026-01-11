@@ -45,20 +45,16 @@ jobs:
       uses: actions/checkout@v4
 
     # ==================================================
-    # Install unzip (DDK container has it already)
+    # Install unzip
     # ==================================================
-    - name: Check container tools
+    - name: Install required tools
       run: |
-        echo "=== Container Environment ==="
-        echo "KERNEL_SRC: $KERNEL_SRC"
-        echo "PATH: $PATH"
-        which clang
-        clang --version
-        which make
-        make --version
+        echo "=== Installing required packages ==="
+        apt-get update
+        apt-get install -y unzip
 
     # ==================================================
-    # Extract OLLVM toolchain correctly
+    # Extract OLLVM toolchain directly
     # ==================================================
     - name: Extract OLLVM toolchain
       run: |
@@ -68,42 +64,28 @@ jobs:
         echo "=== Current directory structure ==="
         ls -la
         
-        echo "=== Extracting OLLVM ==="
+        echo "=== Extracting OLLVM ZIPs ==="
         
-        # Clean old extraction if exists
-        rm -rf .ollvm
-        mkdir -p .ollvm
-        
-        # Extract first ZIP - it contains android-ollvm/ folder
+        # Extract first ZIP directly
         echo "Extracting android-ollvm.zip..."
-        unzip -q android-ollvm.zip -d .ollvm
+        unzip -q android-ollvm.zip
         
-        # Extract second ZIP into the same android-ollvm folder
+        # Extract second ZIP directly (will merge with first)
         echo "Extracting android-ollvm1.zip..."
-        # Use -j to junk paths and extract directly
-        unzip -q -j android-ollvm1.zip -d .ollvm/android-ollvm
+        unzip -q -o android-ollvm1.zip  # -o overwrites without prompting
         
-        echo "=== OLLVM directory structure ==="
-        ls -la .ollvm/
-        ls -la .ollvm/android-ollvm/
+        echo "=== After extraction structure ==="
+        ls -la android-ollvm/
+        ls -la android-ollvm/bin/
         
         # Fix permissions on clang binary
-        if [ -f ".ollvm/android-ollvm/bin/clang" ]; then
-          echo "Fixing permissions on OLLVM clang..."
-          chmod 755 .ollvm/android-ollvm/bin/clang
-          chmod 755 .ollvm/android-ollvm/bin/clang++
-          chmod 755 .ollvm/android-ollvm/bin/llvm-ar
-          
-          echo "OLLVM clang permissions:"
-          ls -la .ollvm/android-ollvm/bin/clang
-          
-          echo "OLLVM clang version:"
-          .ollvm/android-ollvm/bin/clang --version || echo "Version check might fail, continuing..."
-        else
-          echo "ERROR: OLLVM clang not found!"
-          find .ollvm -type f -name "clang" | head -10
-          exit 1
-        fi
+        echo "=== Fixing permissions ==="
+        chmod 755 android-ollvm/bin/clang
+        chmod 755 android-ollvm/bin/clang++
+        chmod 755 android-ollvm/bin/llvm-ar
+        
+        echo "OLLVM clang version:"
+        ./android-ollvm/bin/clang --version || echo "Version check might fail, continuing..."
 
     # ==================================================
     # Build kernel module
@@ -124,19 +106,22 @@ jobs:
           modules 2>&1 | tee build.log
         
         # Check if build succeeded
-        if [ $? -ne 0 ]; then
-          echo "Build failed!"
-          echo "=== Build Log (last 100 lines) ==="
-          tail -100 build.log
+        BUILD_STATUS=$?
+        if [ $BUILD_STATUS -ne 0 ]; then
+          echo "Build failed with status: $BUILD_STATUS"
+          echo "=== Build Log (last 200 lines) ==="
+          tail -200 build.log
           exit 1
         fi
         
         # Find and copy the kernel module
-        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" | head -1)
+        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
         if [ -z "$KO_FILE" ]; then
           echo "ERROR: No .ko file found!"
-          echo "Looking for object files..."
+          echo "Looking for any output files..."
           find "${{ inputs.module_dir }}" -type f -name "*.o" | head -10
+          echo "=== Build Log (last 50 lines) ==="
+          tail -50 build.log
           exit 1
         fi
         
