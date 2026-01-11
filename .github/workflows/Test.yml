@@ -19,6 +19,7 @@ on:
           - easy
           - medium
           - hard
+          - extreme
         default: easy
 
 jobs:
@@ -45,13 +46,23 @@ jobs:
       uses: actions/checkout@v4
 
     # ==================================================
-    # Install unzip
+    # Install required tools
     # ==================================================
     - name: Install required tools
       run: |
         echo "=== Installing required packages ==="
         apt-get update
-        apt-get install -y unzip
+        apt-get install -y unzip file binutils python3
+        
+        echo "=== Container Environment ==="
+        echo "KERNEL_SRC: $KERNEL_SRC"
+        echo "PATH: $PATH"
+        
+        # Check default clang in container
+        echo "=== Default Clang in Container ==="
+        which clang
+        clang --version | head -3
+        echo ""
 
     # ==================================================
     # Extract OLLVM toolchain directly
@@ -84,23 +95,63 @@ jobs:
         chmod 755 android-ollvm/bin/clang++
         chmod 755 android-ollvm/bin/llvm-ar
         
-        echo "OLLVM clang version:"
+        echo "=== OLLVM Clang Info ==="
         ./android-ollvm/bin/clang --version || echo "Version check might fail, continuing..."
+        
+        echo ""
+        echo "=== Clang Comparison ==="
+        echo "Container Clang:"
+        clang --version | head -3
+        echo ""
+        echo "OLLVM Clang:"
+        ./android-ollvm/bin/clang --version | head -3
 
     # ==================================================
-    # Build kernel module
+    # Build kernel module with EXTREME verbosity
     # ==================================================
-    - name: Build module
+    - name: Build module with detailed logging
       run: |
         echo "=== Building with OLLVM level: ${{ inputs.obfuscation_level }} ==="
         echo "Module directory: ${{ inputs.module_dir }}"
         echo "Kernel source: $KERNEL_SRC"
         
-        # Build the module
-        echo "=== Starting Build ==="
+        # Create a test to verify clang paths
+        echo ""
+        echo "=== Pre-build Clang Verification ==="
+        cd ${{ inputs.module_dir }}
         
+        # Test which clang will be used
+        echo 'int test() { return 42; }' > test_clang.c
+        
+        echo "Testing OLLVM clang:"
+        ./android-ollvm/bin/clang -c test_clang.c -o test_ollvm.o 2>&1 | head -5 || true
+        echo ""
+        
+        echo "Testing container clang:"
+        clang -c test_clang.c -o test_container.o 2>&1 | head -5 || true
+        rm -f test_clang.c test_ollvm.o test_container.o
+        
+        # Build with maximum verbosity to see ALL commands
+        echo ""
+        echo "=== Starting Build with V=2 (maximum verbosity) ==="
+        
+        # First, clean to ensure fresh build
         make -C $KERNEL_SRC \
-          M=$PWD/${{ inputs.module_dir }} \
+          M=$PWD \
+          clean 2>&1 | tee clean.log
+        
+        # Now build with full verbosity
+        make -C $KERNEL_SRC \
+          M=$PWD \
+          OLLVM=1 \
+          OLLVM_LEVEL=${{ inputs.obfuscation_level }} \
+          V=2 \
+          modules 2>&1 | tee build_verbose.log
+        
+        # Also build without verbose for artifact
+        echo "=== Building (normal) for artifact ==="
+        make -C $KERNEL_SRC \
+          M=$PWD \
           OLLVM=1 \
           OLLVM_LEVEL=${{ inputs.obfuscation_level }} \
           modules 2>&1 | tee build.log
@@ -114,14 +165,360 @@ jobs:
           exit 1
         fi
         
-        # Find and copy the kernel module
-        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
+        echo "=== Build completed successfully! ==="
+
+    # ==================================================
+    # Create Python analysis script
+    # ==================================================
+    - name: Create analysis script
+      run: |
+        cd ${{ inputs.module_dir }}
+        
+        # Create Python script for analysis
+        cat > analyze_objects.py << "EOF"
+import subprocess
+import os
+import re
+
+def get_compiler_info(obj_file):
+    """Extract compiler information from object file"""
+    if not os.path.exists(obj_file):
+        return "File not found"
+    
+    # Use strings to find compiler info
+    result = subprocess.run(['strings', obj_file], 
+                          capture_output=True, text=True)
+    strings = result.stdout
+    
+    # Look for clang/llvm version info
+    patterns = [
+        r'clang version (\d+\.\d+\.\d+)',
+        r'LLVM version (\d+\.\d+\.\d+)',
+        r'clang.*14\.',
+        r'android-ollvm'
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, strings, re.IGNORECASE)
+        if matches:
+            return f"{pattern}: {matches[0]}"
+    
+    # Check for OLLVM specific strings
+    ollvm_strings = ['fla', 'bcf', 'sub', 'split', 'obfuscator']
+    found = []
+    for s in ollvm_strings:
+        if s in strings.lower():
+            found.append(s)
+    
+    if found:
+        return f"OLLVM patterns: {', '.join(found)}"
+    
+    return "No compiler info found"
+
+def analyze_file(obj_path, obj_name):
+    if not os.path.exists(obj_path):
+        return f"{obj_name}: NOT FOUND"
+    
+    size = os.path.getsize(obj_path)
+    compiler_info = get_compiler_info(obj_path)
+    
+    # Check if it's likely OLLVM compiled
+    is_ollvm = 'android-ollvm' in compiler_info.lower() or \
+              '14.' in compiler_info or \
+              any(pattern in compiler_info.lower() for pattern in ['fla', 'bcf', 'sub', 'split'])
+    
+    status = "OLLVM" if is_ollvm else "Non-OLLVM"
+    check = "✓" if is_ollvm else "✗"
+    
+    return f"{check} {status} | {obj_name}: {size:,} bytes | {compiler_info}"
+
+# Analyze files
+ollvm_files = [
+    ('src/core/wuwa.o', 'wuwa.o'),
+    ('src/utils/wuwa_utils.o', 'wuwa_utils.o'),
+    ('src/mm/wuwa_page_walk.o', 'wuwa_page_walk.o'),
+    ('src/mm/wuwa_bindproc.o', 'wuwa_bindproc.o')
+]
+
+non_ollvm_files = [
+    ('src/net/wuwa_sock.o', 'wuwa_sock.o'),
+    ('src/ioctl/wuwa_ioctl.o', 'wuwa_ioctl.o'),
+    ('src/hook/wuwa_safe_signal.o', 'wuwa_safe_signal.o')
+]
+
+print("=== OLLVM Objects Analysis ===")
+for path, name in ollvm_files:
+    print(analyze_file(path, name))
+
+print("\n=== Non-OLLVM Objects Analysis ===")
+for path, name in non_ollvm_files:
+    print(analyze_file(path, name))
+
+# Check final .ko
+ko_files = [f for f in os.listdir('.') if f.endswith('.ko')]
+if ko_files:
+    print(f"\n=== Final Module Analysis ===")
+    ko_info = analyze_file(ko_files[0], ko_files[0])
+    print(ko_info)
+EOF
+
+    # ==================================================
+    # COMPREHENSIVE OLLVM VERIFICATION
+    # ==================================================
+    - name: Comprehensive OLLVM verification
+      run: |
+        echo "================================================"
+        echo "COMPREHENSIVE OLLVM VERIFICATION"
+        echo "================================================"
+        cd ${{ inputs.module_dir }}
+        
+        # Create verification summary file
+        VERIFICATION_FILE="/github/workspace/ollvm_verification_${{ inputs.module_dir }}_${{ inputs.obfuscation_level }}.txt"
+        echo "" > "$VERIFICATION_FILE"
+        
+        # Function to log to both console and file
+        log() {
+          echo "$1"
+          echo "$1" >> "$VERIFICATION_FILE"
+        }
+        
+        # ============================================
+        # 1. CLANG USAGE ANALYSIS
+        # ============================================
+        log ""
+        log "=== 1. CLANG USAGE ANALYSIS ==="
+        
+        # Count total compilation commands
+        TOTAL_COMPILATIONS=$(grep -c "CC\[M\]" build_verbose.log)
+        log "Total compilation commands: $TOTAL_COMPILATIONS"
+        
+        # Count OLLVM clang usage
+        OLLVM_CLANG_USAGE=$(grep -c "android-ollvm/bin/clang" build_verbose.log)
+        log "OLLVM clang usage count: $OLLVM_CLANG_USAGE"
+        
+        # Count container clang usage
+        CONTAINER_CLANG_USAGE=$(grep -E "clang.*-c" build_verbose.log | grep -v "android-ollvm" | wc -l)
+        log "Container clang usage count: $CONTAINER_CLANG_USAGE"
+        
+        # Check specific OLLVM objects
+        log ""
+        log "=== Checking specific object compilation ==="
+        
+        # Define arrays
+        OLLVM_OBJECTS=("src/core/wuwa.o" "src/utils/wuwa_utils.o" "src/mm/wuwa_page_walk.o" "src/mm/wuwa_bindproc.o")
+        NON_OLLVM_OBJECTS=("src/net/wuwa_sock.o" "src/net/wuwa_protocol.o" "src/ioctl/wuwa_ioctl.o" "src/hook/wuwa_safe_signal.o" "src/proc/wuwa_proc.o" "src/inlinehook/hijack_arm64.o" "src/utils/karray_list.o")
+        
+        log ""
+        log "=== OLLVM Objects (should use OLLVM clang) ==="
+        OLLVM_CORRECT=0
+        OLLVM_TOTAL=0
+        for obj in "${OLLVM_OBJECTS[@]}"; do
+          OLLVM_TOTAL=$((OLLVM_TOTAL + 1))
+          obj_base=$(basename "$obj" .o)
+          if grep -q "CC.*$obj_base.*android-ollvm/bin/clang" build_verbose.log; then
+            log "✓ $(basename $obj): Uses OLLVM clang"
+            OLLVM_CORRECT=$((OLLVM_CORRECT + 1))
+          else
+            log "✗ $(basename $obj): DOES NOT use OLLVM clang"
+            # Show what was used instead
+            grep -A1 "CC.*$obj_base" build_verbose.log | grep "clang" | head -1 | sed 's/^/  /'
+          fi
+        done
+        
+        log ""
+        log "=== Non-OLLVM Objects (should use container clang) ==="
+        NON_OLLVM_CORRECT=0
+        NON_OLLVM_TOTAL=0
+        for obj in "${NON_OLLVM_OBJECTS[@]}"; do
+          NON_OLLVM_TOTAL=$((NON_OLLVM_TOTAL + 1))
+          obj_base=$(basename "$obj" .o)
+          if grep -q "CC.*$obj_base" build_verbose.log; then
+            if grep -A1 "CC.*$obj_base" build_verbose.log | grep -q "android-ollvm"; then
+              log "✗ $(basename $obj): INCORRECTLY uses OLLVM clang"
+            else
+              log "✓ $(basename $obj): Uses container clang"
+              NON_OLLVM_CORRECT=$((NON_OLLVM_CORRECT + 1))
+            fi
+          else
+            log "? $(basename $obj): No compilation command found"
+          fi
+        done
+        
+        # ============================================
+        # 2. OLLVM FLAG VERIFICATION
+        # ============================================
+        log ""
+        log "=== 2. OLLVM FLAG VERIFICATION ==="
+        
+        # Define expected flags per level
+        case "${{ inputs.obfuscation_level }}" in
+          "easy")
+            EXPECTED_FLAGS=("-mllvm -fla")
+            log "Expected flags: -mllvm -fla"
+            ;;
+          "medium")
+            EXPECTED_FLAGS=("-mllvm -fla" "-mllvm -sub")
+            log "Expected flags: -mllvm -fla -mllvm -sub"
+            ;;
+          "hard")
+            EXPECTED_FLAGS=("-mllvm -fla" "-mllvm -split" "-mllvm -sub")
+            log "Expected flags: -mllvm -fla -mllvm -split -mllvm -sub"
+            ;;
+          "extreme")
+            EXPECTED_FLAGS=("-mllvm -fla" "-mllvm -split" "-mllvm -sub" "-mllvm -bcf" "-mllvm -sobf")
+            log "Expected flags: -mllvm -fla -mllvm -split -mllvm -sub -mllvm -bcf -mllvm -sobf"
+            ;;
+        esac
+        
+        log ""
+        log "Checking for OLLVM flags in build commands:"
+        
+        # Get a sample OLLVM compilation command
+        SAMPLE_CMD=$(grep "android-ollvm/bin/clang" build_verbose.log | head -1)
+        if [ -n "$SAMPLE_CMD" ]; then
+          log "Sample OLLVM compilation command:"
+          echo "$SAMPLE_CMD" | sed 's/^/  /' | tee -a "$VERIFICATION_FILE"
+          
+          # Check each expected flag
+          for flag in "${EXPECTED_FLAGS[@]}"; do
+            if echo "$SAMPLE_CMD" | grep -q "$flag"; then
+              log "✓ Found flag: $flag"
+            else
+              log "✗ Missing flag: $flag"
+            fi
+          done
+        else
+          log "No OLLVM compilation commands found!"
+        fi
+        
+        # ============================================
+        # 3. OBJECT FILE ANALYSIS
+        # ============================================
+        log ""
+        log "=== 3. OBJECT FILE ANALYSIS ==="
+        
+        # Run Python analysis
+        python3 analyze_objects.py 2>&1 | while IFS= read -r line; do
+          log "$line"
+        done
+        
+        # ============================================
+        # 4. SIZE COMPARISON ANALYSIS
+        # ============================================
+        log ""
+        log "=== 4. SIZE COMPARISON ANALYSIS ==="
+        log "(OLLVM objects are typically larger due to obfuscation)"
+        
+        # Calculate average sizes
+        ollvm_total_size=0
+        ollvm_count=0
+        non_ollvm_total_size=0
+        non_ollvm_count=0
+        
+        for obj in "${OLLVM_OBJECTS[@]}"; do
+          if [ -f "$obj" ]; then
+            size=$(stat -c%s "$obj" 2>/dev/null || stat -f%z "$obj")
+            ollvm_total_size=$((ollvm_total_size + size))
+            ollvm_count=$((ollvm_count + 1))
+            log "  OLLVM $(basename $obj): $((size/1024)) KB"
+          fi
+        done
+        
+        # Check first 4 non-ollvm files only
+        for obj in "${NON_OLLVM_OBJECTS[@]:0:4}"; do
+          if [ -f "$obj" ]; then
+            size=$(stat -c%s "$obj" 2>/dev/null || stat -f%z "$obj")
+            non_ollvm_total_size=$((non_ollvm_total_size + size))
+            non_ollvm_count=$((non_ollvm_count + 1))
+            log "  Non-OLLVM $(basename $obj): $((size/1024)) KB"
+          fi
+        done
+        
+        if [ $ollvm_count -gt 0 ] && [ $non_ollvm_count -gt 0 ]; then
+          ollvm_avg=$((ollvm_total_size / ollvm_count))
+          non_ollvm_avg=$((non_ollvm_total_size / non_ollvm_count))
+          ratio=$(( (ollvm_avg * 100) / non_ollvm_avg ))
+          
+          log ""
+          log "  Average OLLVM object: $((ollvm_avg/1024)) KB"
+          log "  Average non-OLLVM object: $((non_ollvm_avg/1024)) KB"
+          log "  Size ratio: OLLVM objects are ${ratio}% of non-OLLVM size"
+          
+          if [ $ratio -gt 110 ]; then
+            log "  ✓ OLLVM objects are significantly larger (expected)"
+          elif [ $ratio -gt 90 ]; then
+            log "  ⚠ OLLVM objects are similar in size (might not be obfuscated)"
+          else
+            log "  ✗ OLLVM objects are smaller (unexpected)"
+          fi
+        fi
+        
+        # ============================================
+        # 5. FINAL VERIFICATION SUMMARY
+        # ============================================
+        log ""
+        log "================================================"
+        log "FINAL VERIFICATION SUMMARY"
+        log "================================================"
+        
+        # Calculate scores
+        if [ $OLLVM_TOTAL -gt 0 ]; then
+          OLLVM_ACCURACY=$(( (OLLVM_CORRECT * 100) / OLLVM_TOTAL ))
+        else
+          OLLVM_ACCURACY=0
+        fi
+        
+        if [ $NON_OLLVM_TOTAL -gt 0 ]; then
+          NON_OLLVM_ACCURACY=$(( (NON_OLLVM_CORRECT * 100) / NON_OLLVM_TOTAL ))
+        else
+          NON_OLLVM_ACCURACY=0
+        fi
+        
+        TOTAL_FILES=$((OLLVM_TOTAL + NON_OLLVM_TOTAL))
+        if [ $TOTAL_FILES -gt 0 ]; then
+          OVERALL_ACCURACY=$(( ((OLLVM_CORRECT + NON_OLLVM_CORRECT) * 100) / TOTAL_FILES ))
+        else
+          OVERALL_ACCURACY=0
+        fi
+        
+        log "OLLVM Objects Accuracy: $OLLVM_CORRECT/$OLLVM_TOTAL ($OLLVM_ACCURACY%)"
+        log "Non-OLLVM Objects Accuracy: $NON_OLLVM_CORRECT/$NON_OLLVM_TOTAL ($NON_OLLVM_ACCURACY%)"
+        log "Overall Compiler Usage Accuracy: $OVERALL_ACCURACY%"
+        log ""
+        
+        if [ $OLLVM_ACCURACY -ge 80 ] && [ $OVERALL_ACCURACY -ge 80 ]; then
+          log "✅ SUCCESS: OLLVM is properly configured and working!"
+          log "   Level: ${{ inputs.obfuscation_level }}"
+          log "   OLLVM clang is being used for specified objects"
+        elif [ $OLLVM_ACCURACY -ge 50 ]; then
+          log "⚠ PARTIAL: Some OLLVM objects not using OLLVM clang"
+          log "   Check Makefile configuration"
+        else
+          log "❌ FAILURE: OLLVM is NOT working correctly"
+          log "   OLLVM clang is not being used"
+          log "   Please check:"
+          log "   1. Makefile OLLVM configuration"
+          log "   2. OLLVM_OBJS list"
+          log "   3. CC variable override"
+        fi
+        
+        log ""
+        log "=== DEBUG INFO ==="
+        log "Build log location: $PWD/build_verbose.log"
+        log "Verification file: $VERIFICATION_FILE"
+
+    # ==================================================
+    # Prepare and upload artifacts
+    # ==================================================
+    - name: Prepare artifacts
+      run: |
+        echo "=== Preparing artifacts ==="
+        cd ${{ inputs.module_dir }}
+        
+        # Find the kernel module
+        KO_FILE=$(find . -name "*.ko" -type f | head -1)
         if [ -z "$KO_FILE" ]; then
           echo "ERROR: No .ko file found!"
-          echo "Looking for any output files..."
-          find "${{ inputs.module_dir }}" -type f -name "*.o" | head -10
-          echo "=== Build Log (last 50 lines) ==="
-          tail -50 build.log
           exit 1
         fi
         
@@ -137,6 +534,7 @@ jobs:
         # Copy and strip
         cp "$KO_FILE" "$OUT"
         
+        echo "=== Module Info ==="
         echo "Before strip:"
         du -h "$OUT"
         file "$OUT"
@@ -154,24 +552,22 @@ jobs:
         du -h "$OUT"
         file "$OUT"
         
-        echo "Build completed successfully!"
-        echo "Output: $OUT"
+        echo "Artifact ready: $OUT"
 
     # ==================================================
-    # Upload artifact
+    # Upload all artifacts
     # ==================================================
-    - name: Upload artifact
+    - name: Upload kernel module
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ inputs.obfuscation_level }}
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ inputs.obfuscation_level }}-module
         path: /github/workspace/out/*.ko
         
-    # ==================================================
-    # Optional: Upload build logs for debugging
-    # ==================================================
     - name: Upload build logs
-      if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-logs
-        path: ${{ inputs.module_dir }}/build.log
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ inputs.obfuscation_level }}-logs
+        path: |
+          ${{ inputs.module_dir }}/build.log
+          ${{ inputs.module_dir }}/build_verbose.log
+      
