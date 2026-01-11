@@ -110,7 +110,7 @@ jobs:
           
           echo ""
           echo "=== Contents after extraction ==="
-          tree /opt/ollvm-clang/ || find /opt/ollvm-clang -type f | head -20
+          tree /opt/ollvm-clang/ 2>/dev/null || find /opt/ollvm-clang -type f | head -20
           
           # Find the clang binary
           CLANG_BIN=$(find /opt/ollvm-clang -name "clang" -type f | head -1)
@@ -237,96 +237,99 @@ jobs:
         
         echo "OLLVM flags: $OLLVM_FLAGS"
         
-        # Create a debug script to trace which clang is used
-        cat > /tmp/debug-build.sh << 'EOF'
-#!/bin/bash
-set -x  # Enable debugging
-
-# Log the command being executed
-echo "🔧 MAKE COMMAND: $0 $@" >&2
-echo "🔧 Using CC: $CC" >&2
-echo "🔧 CC path: $(which "$CC" 2>/dev/null || echo "not found")" >&2
-echo "🔧 Real CC path: $(readlink -f "$(which "$CC" 2>/dev/null)" 2>/dev/null || echo "unknown")" >&2
-
-# Capture the actual compiler used
-if [[ "$@" == *" -c "* ]]; then
-  echo "🔧 COMPILING FILE - checking which clang..." >&2
-  # The actual make command will be logged by set -x
-fi
-
-# Execute the actual make
-exec make "$@"
-EOF
-        
-        chmod +x /tmp/debug-build.sh
-        
         # Clean first (optional)
         echo "=== Cleaning previous build ==="
         make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean 2>&1 | head -20 || true
         
         echo ""
         echo "=== Starting build with DEBUG ==="
-        echo "Build command will be logged with set -x"
         
-        # Build with verbose output
-        # First, test a simple compilation to see which clang is used
-        echo ""
-        echo "=== TEST: Compile one file to check compiler ==="
-        cd "${{ inputs.module_dir }}"
+        # Create a simple test to see which compiler runs
+        echo "=== Creating test compilation ==="
+        TEST_FILE="/tmp/test_compiler.c"
+        cat > $TEST_FILE << 'EOF'
+#include <stdio.h>
+int main() {
+    printf("Compiler test\n");
+    #ifdef __clang__
+    printf("This is Clang version: %d.%d.%d\n", 
+           __clang_major__, __clang_minor__, __clang_patchlevel__);
+    #ifdef __OLLVM__
+    printf("OLLVM enabled\n");
+    #endif
+    #endif
+    return 0;
+}
+EOF
         
-        # Find first C file
-        FIRST_C_FILE=$(find . -name "*.c" | head -1)
-        if [ -f "$FIRST_C_FILE" ]; then
-          echo "Testing compilation of: $FIRST_C_FILE"
-          echo "Using CC=$CLANG_PATH"
-          
-          # Manual compile test
-          $CLANG_PATH -c "$FIRST_C_FILE" -o /tmp/test.o \
-            -I$KERNEL_SRC/include \
-            -I$KERNEL_SRC/arch/arm64/include \
-            -D__KERNEL__ \
-            $OLLVM_FLAGS 2>&1 | head -20
-          
-          if [ $? -eq 0 ]; then
-            echo "✅ Test compilation successful"
-            echo "Test output file:"
-            file /tmp/test.o
-          else
-            echo "❌ Test compilation failed"
-          fi
+        echo "Testing compiler with our OLLVM clang:"
+        $CLANG_PATH $TEST_FILE -o /tmp/test_program $OLLVM_FLAGS 2>&1
+        if [ $? -eq 0 ]; then
+          echo "✅ Test compilation successful with our clang"
+          /tmp/test_program || echo "Test program output not available"
+        else
+          echo "❌ Test compilation failed with our clang"
         fi
-        cd ..
         
         echo ""
-        echo "=== FULL BUILD ==="
+        echo "=== Running make with V=1 and tracing ==="
         
-        # Build the module with OLLVM clang - with debugging
-        bash -x -c "
-          make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
-            CC=\"$CLANG_PATH\" \
-            LD=ld.lld \
-            AR=llvm-ar \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            STRIP=llvm-strip \
-            EXTRA_CFLAGS=\"$OLLVM_FLAGS\" \
-            KCFLAGS=\"-flto=thin\" \
-            V=1 \
-            2>&1 | tee /tmp/build.log
-        "
+        # Build with full tracing
+        echo "Starting build at: $(date)"
+        set -x
+        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
+          CC="$CLANG_PATH" \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          STRIP=llvm-strip \
+          EXTRA_CFLAGS="$OLLVM_FLAGS" \
+          KCFLAGS="-flto=thin" \
+          V=1 \
+          2>&1 | tee /tmp/build.log
+        set +x
         
-        BUILD_RESULT=$?
+        BUILD_RESULT=${PIPESTATUS[0]}
+        
+        echo "Build finished at: $(date)"
         
         echo ""
         echo "=== BUILD ANALYSIS ==="
         
         # Check which clang was actually used
-        echo "Checking build log for compiler usage..."
-        grep -i "clang" /tmp/build.log | head -10 || echo "No 'clang' found in logs"
+        echo "1. Checking build log for compiler usage..."
+        echo "Lines containing 'clang':"
+        grep -n -i "clang" /tmp/build.log | head -20 || echo "No 'clang' found in logs"
         
         echo ""
-        echo "Checking for OLLVM in build output..."
-        grep -i "ollvm\|fla\|sub\|bcf" /tmp/build.log | head -10 || echo "No OLLVM references found"
+        echo "2. Checking for actual compilation commands..."
+        echo "Lines containing ' -c ' (compilation commands):"
+        grep -n " -c " /tmp/build.log | head -10 || echo "No compilation commands found"
+        
+        echo ""
+        echo "3. Checking for OLLVM flags in build output..."
+        grep -n -i "mllvm\|fla\|sub\|bcf" /tmp/build.log | head -10 || echo "No OLLVM references found"
+        
+        # Check if our specific clang was used
+        echo ""
+        echo "4. Checking if our OLLVM clang was used..."
+        CLANG_BASENAME=$(basename "$CLANG_PATH")
+        if grep -q "$CLANG_PATH" /tmp/build.log; then
+          echo "✅ Our OLLVM clang ($CLANG_BASENAME) was used in the build!"
+          grep -n "$CLANG_PATH" /tmp/build.log | head -3
+        elif grep -q "$CLANG_BASENAME" /tmp/build.log; then
+          echo "✅ A clang named '$CLANG_BASENAME' was used (likely ours)"
+          grep -n "$CLANG_BASENAME" /tmp/build.log | head -3
+        else
+          echo "⚠️ Our OLLVM clang was NOT found in build logs"
+          echo "Checking for any clang usage..."
+          grep -n "clang" /tmp/build.log | grep -v "which\|path\|PATH" | head -5 || echo "No clang commands found"
+        fi
+        
+        echo ""
+        echo "5. Checking for build errors/warnings..."
+        grep -n -i "error\|warning\|failed" /tmp/build.log | tail -10 || echo "No errors/warnings found"
         
         if [ $BUILD_RESULT -eq 0 ]; then
           echo "✅ Build command completed successfully"
@@ -355,17 +358,30 @@ EOF
             # Check if OLLVM had effect
             echo ""
             echo "=== Checking OLLVM effect ==="
-            echo "Checking strings in module..."
-            strings "/github/workspace/out/$OUTPUT_NAME" | grep -i "main\|init\|exit" | head -5 || echo "No common function names found"
+            echo "Checking for common function names (should be obscured if OLLVM worked):"
+            strings "/github/workspace/out/$OUTPUT_NAME" | grep -i "init_module\|cleanup_module\|hello\|wuwa\|main\|init\|exit" | head -10 || echo "No clear function names found (good for obfuscation!)"
+            
+            # Check file type
+            echo ""
+            echo "File type information:"
+            file "/github/workspace/out/$OUTPUT_NAME"
             
             # Strip debug symbols
             echo ""
             echo "Stripping debug symbols..."
-            llvm-strip -d "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null && \
-            echo "✅ Stripped debug symbols" || \
-            echo "⚠️ Could not strip debug symbols (maybe already stripped)"
+            if command -v llvm-strip >/dev/null 2>&1; then
+              llvm-strip -d "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null && \
+              echo "✅ Stripped debug symbols with llvm-strip" || \
+              echo "⚠️ Could not strip with llvm-strip"
+            else
+              echo "⚠️ llvm-strip not available"
+            fi
             
-            echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+            echo "Final size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+            
+            # Also save a copy of the build log with the module
+            cp /tmp/build.log "/github/workspace/out/$OUTPUT_NAME.log"
+            echo "Build log saved to: /github/workspace/out/$OUTPUT_NAME.log"
         else
             echo "❌ ERROR: No .ko file found in ${{ inputs.module_dir }}/!"
             echo "Available files in ${{ inputs.module_dir }}/:"
@@ -390,3 +406,4 @@ EOF
         path: |
           /tmp/build.log
           /tmp/ollvm_version.txt
+          /github/workspace/out/*.log
