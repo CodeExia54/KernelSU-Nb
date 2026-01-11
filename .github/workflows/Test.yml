@@ -1,78 +1,171 @@
-name: Analyze Kernel Clang Configuration
+name: Build Kernel Module ddk with OLLVM
 
 on:
   workflow_dispatch:
     inputs:
-      target_kmi:
-        description: 'Target KMI'
+      module_dir:
+        description: 'Module directory to build'
         required: true
         type: choice
         options:
+        - exianb-dev
+        - exianb
+        - ovo
+        - prctl-fd
+        - prctl-hook
+        - offset
+        - hello-world
+        - wuwa
+        - panic
+        default: 'wuwa'
+      
+      obfuscation_level:
+        description: 'OLLVM obfuscation level'
+        required: false
+        default: 'medium'
+        type: choice
+        options:
+          - none
+          - light
+          - medium
+          - heavy
+
+jobs:
+  ddk-build:
+    name: Build ${{ inputs.module_dir }}.ko for ${{ matrix.kmi }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        kmi:
           - android12-5.10
           - android13-5.10
           - android13-5.15
           - android14-5.15
           - android14-6.1
           - android15-6.6
-        default: 'android12-5.10'
+          - android16-6.12
 
-jobs:
-  analyze:
-    runs-on: ubuntu-latest
     container:
-      image: ghcr.io/ylarod/ddk:${{ inputs.target_kmi }}
+      image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}
 
     steps:
-    - name: Analyze Clang Config
+    - name: Checkout source code
+      uses: actions/checkout@v4
+
+    - name: Install OLLVM Clang
       run: |
-        echo "=== CLANG CONFIGURATION ANALYSIS ==="
+        echo "=== Installing OLLVM Clang ==="
         
-        # Method 1: Look for actual clang binary in build output
-        CLANG=$(make -C "$KERNEL_SRC" -n V=1 2>&1 | grep -o "/[^ ]*/bin/clang[^ ]*" | head -1)
+        # Create directory for OLLVM clang
+        mkdir -p /opt/ollvm-clang
         
-        # Method 2: If not found, search for clang in common locations
-        if [ -z "$CLANG" ] || [ ! -f "$CLANG" ]; then
-          CLANG=$(find /opt/ddk -name "clang" -type f -executable | grep -v "/lib/" | head -1)
-        fi
+        # Find and extract clang.zip
+        CLANG_ZIP=$(find . -name "clang.zip" | head -1)
         
-        # Method 3: Last resort, use which
-        if [ -z "$CLANG" ] || [ ! -f "$CLANG" ]; then
-          CLANG=$(which clang 2>/dev/null || echo "")
-        fi
-        
-        if [ -z "$CLANG" ] || [ ! -f "$CLANG" ]; then
-          echo "ERROR: Could not find clang binary"
+        if [ -f "$CLANG_ZIP" ]; then
+          echo "Found clang.zip: $CLANG_ZIP"
+          unzip -q "$CLANG_ZIP" -d /opt/ollvm-clang/
+          
+          # Find the clang binary
+          CLANG_BIN=$(find /opt/ollvm-clang -name "clang" -type f | head -1)
+          
+          if [ -f "$CLANG_BIN" ]; then
+            chmod +x "$CLANG_BIN"
+            echo "OLLVM clang installed at: $CLANG_BIN"
+            echo "CLANG_PATH=$CLANG_BIN" >> $GITHUB_ENV
+          else
+            echo "ERROR: No clang binary found in the zip!"
+            exit 1
+          fi
+        else
+          echo "ERROR: No clang.zip found in repository!"
+          echo "Available files:"
+          find . -type f -name "*.zip" | head -10
           exit 1
         fi
         
-        echo "CLANG_PATH=$CLANG"
-        
-        # Get version
-        VERSION=$("$CLANG" --version | head -1)
-        echo "VERSION=$VERSION"
-        
-        # Get target
-        TARGET=$("$CLANG" -dumpmachine)
-        echo "TARGET=$TARGET"
-        
-        # Check features
-        echo "FEATURES:"
-        "$CLANG" -mllvm -help 2>&1 | grep -q "LLVM" && echo "HAS_MLLVM=yes" || echo "HAS_MLLVM=no"
-        "$CLANG" -flto=thin -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_THINLTO=no" || echo "HAS_THINLTO=yes"
-        "$CLANG" -fsanitize=cfi -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_CFI=no" || echo "HAS_CFI=yes"
-        
-        # Save to file
-        {
-          echo "CLANG_PATH=$CLANG"
-          echo "VERSION=$VERSION"
-          echo "TARGET=$TARGET"
-          "$CLANG" -mllvm -help 2>&1 | grep -q "LLVM" && echo "HAS_MLLVM=yes" || echo "HAS_MLLVM=no"
-          "$CLANG" -flto=thin -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_THINLTO=no" || echo "HAS_THINLTO=yes"
-          "$CLANG" -fsanitize=cfi -c -o /dev/null /dev/null 2>&1 | grep -q "error" && echo "HAS_CFI=no" || echo "HAS_CFI=yes"
-        } > /tmp/clang_config.txt
+        # Test clang version
+        echo "=== OLLVM Clang Version ==="
+        $CLANG_BIN --version | head -3
 
-    - name: Upload Config
+    - name: Build ${{ inputs.module_dir }}.ko with OLLVM
+      run: |
+        echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
+        echo "Using OLLVM clang: $CLANG_PATH"
+        
+        # Set OLLVM flags based on input
+        case "${{ inputs.obfuscation_level }}" in
+          light)
+            OLLVM_FLAGS="-mllvm -fla"
+            ;;
+          medium)
+            OLLVM_FLAGS="-mllvm -fla -mllvm -sub"
+            ;;
+          heavy)
+            OLLVM_FLAGS="-mllvm -fla -mllvm -sub -mllvm -bcf"
+            ;;
+          *)
+            OLLVM_FLAGS=""
+            ;;
+        esac
+        
+        echo "OLLVM flags: $OLLVM_FLAGS"
+        
+        # Clean first (optional)
+        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean 2>/dev/null || true
+        
+        # Build the module with OLLVM clang
+        # Use EXTRA_CFLAGS to pass OLLVM flags to module compilation
+        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
+          CC="$CLANG_PATH" \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          STRIP=llvm-strip \
+          EXTRA_CFLAGS="$OLLVM_FLAGS" \
+          KCFLAGS="-flto=thin"
+        
+        echo "=== Build completed ==="
+
+        # Create output directory
+        mkdir -p /github/workspace/out
+        
+        # Find the first .ko file in the module directory
+        KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
+        
+        TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+        OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-ollvm-${{ inputs.obfuscation_level }}-$TIMESTAMP.ko"
+        
+        if [ -n "$KO_FILE" ] && [ -f "$KO_FILE" ]; then
+            cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
+            echo "Copied: $KO_FILE -> /github/workspace/out/$OUTPUT_NAME"
+            echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+            
+            # Strip debug symbols
+            llvm-strip -d "/github/workspace/out/$OUTPUT_NAME" 2>/dev/null || \
+            echo "Note: Could not strip debug symbols"
+            
+            echo "Size after stripping: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+        else
+            echo "ERROR: No .ko file found in ${{ inputs.module_dir }}/!"
+            echo "Available files in ${{ inputs.module_dir }}/:"
+            ls -la "${{ inputs.module_dir }}/" || echo "Directory doesn't exist"
+            exit 1
+        fi
+
+    - name: Upload ${{ inputs.module_dir }}.ko artifact
       uses: actions/upload-artifact@v4
       with:
-        name: clang-config-${{ inputs.target_kmi }}
-        path: /tmp/clang_config.txt
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ inputs.obfuscation_level }}-${{ github.run_id }}
+        path: /github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-ollvm-*.ko
+
+    # Optional: Upload build logs if needed
+    - name: Upload build logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-logs
+        path: |
+          /tmp/build.log
+          /github/workspace/out/
