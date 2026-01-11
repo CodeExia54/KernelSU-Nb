@@ -1,3 +1,6 @@
+# ===============================
+# Kernel Module
+# ===============================
 obj-m := android-wuwa.o
 
 android-wuwa-y := \
@@ -13,41 +16,98 @@ android-wuwa-y := \
     src/utils/karray_list.o \
     src/mm/wuwa_bindproc.o
 
+# ===============================
+# Paths
+# ===============================
 src := $(if $(filter /%,$(src)),$(src),$(srctree)/$(src))
-
-KDIR := $(KDIR)
 MDIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
-$(info -- KDIR: $(KDIR))
-$(info -- MDIR: $(MDIR))
-$(info -- WUWA_SRC_DIR: $(src))
-$(info -- WUWA_OBJ_DIR: $(obj))
+# ===============================
+# Include paths
+# ===============================
+ccflags-y += \
+    -I$(src)/src/core \
+    -I$(src)/src/net \
+    -I$(src)/src/ioctl \
+    -I$(src)/src/mm \
+    -I$(src)/src/inlinehook \
+    -I$(src)/src/hook \
+    -I$(src)/src/proc \
+    -I$(src)/src/utils
 
-ccflags-y += -I$(src)/src/core -I$(src)/src/net -I$(src)/src/ioctl -I$(src)/src/mm
-ccflags-y += -I$(src)/src/inlinehook -I$(src)/src/hook -I$(src)/src/proc -I$(src)/src/utils
+# ===============================
+# Warnings / Defines
+# ===============================
+ccflags-y += \
+    -Wno-implicit-function-declaration \
+    -Wno-strict-prototypes \
+    -Wno-int-conversion \
+    -Wno-gcc-compat \
+    -Wno-declaration-after-statement \
+    -Wno-unused-function \
+    -Wno-unused-variable \
+    -Wno-unused-label
 
-ccflags-y += -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat
-ccflags-y += -Wno-declaration-after-statement -Wno-unused-function -Wno-unused-variable
-ccflags-y += -Wno-unused-label  # ADDED THIS LINE TO FIX THE ERROR
-
-# 编译时启用 隐藏模块功能
 ccflags-y += -DHIDE_SELF_MODULE
-# 编译时启用 PTE_MAPPING 功能
-#ccflags-y += -DBUILD_PTE_MAPPING
-# 编译时启用 HIDE_SIGNAL 功能
 ccflags-y += -DBUILD_HIDE_SIGNAL
-#ccflags-y += -DPTE_WALK
 ccflags-y += -DBUILD_NO_CFI
-# LOG CONTROL - Add this line to ENABLE logs, comment to DISABLE logs
 ccflags-y += -DENABLE_WUWA_LOGS
 
+# ===============================
+# OLLVM CONFIG
+# ===============================
+OLLVM_DIR := $(MDIR)/.ollvm/android-ollvm
+OLLVM_CC  := $(OLLVM_DIR)/bin/clang
+
+OLLVM_COMMON_FLAGS := \
+    -fno-lto \
+    -fno-sanitize=cfi \
+    -fno-sanitize=shadow-call-stack
+
+# ===============================
+# Objects SAFE to obfuscate
+# ===============================
+OLLVM_OBJS := \
+    src/core/wuwa.o \
+    src/utils/wuwa_utils.o \
+    src/mm/wuwa_page_walk.o \
+    src/mm/wuwa_bindproc.o
+
+# ===============================
+# Obfuscation Levels
+# ===============================
+OLLVM_LEVEL ?= easy
+
+ifeq ($(OLLVM_LEVEL),easy)
+    OLLVM_FLAGS := -mllvm -fla
+endif
+
+ifeq ($(OLLVM_LEVEL),medium)
+    OLLVM_FLAGS := -mllvm -fla -mllvm -sub
+endif
+
+ifeq ($(OLLVM_LEVEL),hard)
+    OLLVM_FLAGS := \
+        -mllvm -fla \
+        -mllvm -split -mllvm -split_num=2 \
+        -mllvm -sub  -mllvm -sub_loop=2
+endif
+
+# ===============================
+# Enable OLLVM
+# ===============================
+ifeq ($(OLLVM),1)
+    $(OLLVM_OBJS): ccflags-y += $(OLLVM_COMMON_FLAGS) $(OLLVM_FLAGS)
+    $(OLLVM_OBJS): CC := $(OLLVM_CC)
+endif
+
+# ===============================
+# Targets
+# ===============================
 all:
 	make -C $(KDIR) M=$(MDIR) modules
 
 clean:
 	make -C $(KDIR) M=$(MDIR) clean
-    
-compdb:
-	python3 $(MDIR)/.vscode/generate_compdb.py -O $(KDIR) $(MDIR)
 
 .PHONY: all clean
