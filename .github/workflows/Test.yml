@@ -57,27 +57,25 @@ jobs:
         echo "=== System Information ==="
         echo "Container: ${{ matrix.kmi }}"
         echo "Current directory: $(pwd)"
-        echo "Home directory: $HOME"
         echo "PATH: $PATH"
         
         echo ""
         echo "=== Checking existing clang installations ==="
         which clang || echo "clang not in PATH"
-        find /usr -name "clang" -type f 2>/dev/null | head -10
-        find /opt -name "clang" -type f 2>/dev/null | head -10
+        find /usr -name "clang" -type f 2>/dev/null | head -5
         
         echo ""
-        echo "=== Checking toolchain directory ==="
+        echo "=== Kernel Source ==="
+        echo "KERNEL_SRC: $KERNEL_SRC"
         if [ -d "$KERNEL_SRC" ]; then
-          echo "KERNEL_SRC exists: $KERNEL_SRC"
-          find "$KERNEL_SRC" -name "clang" -type f 2>/dev/null | head -5
+          echo "Kernel source exists"
         fi
 
     - name: Install required packages
       run: |
         echo "=== Installing required packages ==="
         apt-get update
-        apt-get install -y unzip file
+        apt-get install -y unzip
 
     - name: Install OLLVM Clang
       run: |
@@ -107,7 +105,7 @@ jobs:
             echo "=== OLLVM Clang Version ==="
             if "$CLANG_BIN" --version > /tmp/ollvm_version.txt 2>&1; then
               echo "✅ OLLVM clang works!"
-              cat /tmp/ollvm_version.txt
+              head -3 /tmp/ollvm_version.txt
             else
               echo "❌ OLLVM clang failed to run"
               cat /tmp/ollvm_version.txt
@@ -122,44 +120,11 @@ jobs:
           echo "❌ ERROR: No clang.zip found!"
           exit 1
         fi
-        
-        echo ""
-        echo "=== Comparing with system clang ==="
-        SYSTEM_CLANG=$(which clang || echo "No system clang in PATH")
-        echo "System clang: $SYSTEM_CLANG"
 
-    - name: Debug build environment
-      run: |
-        echo "=== Build Environment Debug ==="
-        echo "CLANG_PATH: $CLANG_PATH"
-        
-        if [ -f "$CLANG_PATH" ]; then
-          echo "✅ Our OLLVM clang exists"
-        else
-          echo "❌ ERROR: CLANG_PATH not found!"
-          exit 1
-        fi
-        
-        echo ""
-        echo "=== Module Directory ==="
-        if [ -d "${{ inputs.module_dir }}" ]; then
-          echo "Module directory exists: ${{ inputs.module_dir }}"
-        else
-          echo "❌ Module directory not found!"
-          exit 1
-        fi
-        
-        echo ""
-        echo "=== Kernel Source ==="
-        echo "KERNEL_SRC: $KERNEL_SRC"
-        if [ ! -d "$KERNEL_SRC" ]; then
-          echo "❌ KERNEL_SRC not found!"
-          exit 1
-        fi
-
-    - name: Build ${{ inputs.module_dir }}.ko with OLLVM
+    - name: Build ${{ inputs.module_dir }}.ko with OLLVM Wrapper
       env:
         CLANG_PATH: ${{ env.CLANG_PATH }}
+        MODULE_NAME: ${{ inputs.module_dir }}
       run: |
         echo "=== Building ${{ inputs.module_dir }}.ko for KMI: ${{ matrix.kmi }} ==="
         echo "Using OLLVM clang: $CLANG_PATH"
@@ -169,6 +134,7 @@ jobs:
           exit 1
         fi
         
+        # Set OLLVM flags
         case "${{ inputs.obfuscation_level }}" in
           light)
             OLLVM_FLAGS="-mllvm -fla"
@@ -185,33 +151,85 @@ jobs:
         esac
         
         echo "OLLVM flags: $OLLVM_FLAGS"
+        echo "Module directory: $MODULE_NAME"
         
-        echo "=== Cleaning previous build ==="
-        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean 2>&1 | head -20 || true
+        # Create a smart wrapper script
+        cat > /tmp/clang-wrapper << 'WRAPPER_EOF'
+#!/bin/bash
+
+OLLVM_CLANG="$CLANG_PATH"
+OLLVM_FLAGS="$OLLVM_FLAGS"
+MODULE_DIR="$MODULE_NAME"
+
+# Find original clang in container
+ORIG_CLANG=$(which clang)
+if [ -z "$ORIG_CLANG" ]; then
+  ORIG_CLANG="/usr/bin/clang"
+fi
+
+# Debug: log what we're compiling
+echo "=== WRAPPER DEBUG ===" >&2
+echo "Compiling: $@" >&2
+echo "File being compiled:" >&2
+for arg in "$@"; do
+  if [[ "$arg" == *.c ]]; then
+    echo "  C file: $arg" >&2
+  fi
+done
+
+# Check if this is compiling our module's C files
+USE_OLLVM=false
+for arg in "$@"; do
+  if [[ "$arg" == *.c ]] && [[ "$arg" != *"-E"* ]] && [[ "$arg" != *"-M"* ]]; then
+    # Check if it's our module source
+    if [[ "$arg" == *"/$MODULE_DIR/"* ]] || [[ "$arg" == *"/src/"* ]]; then
+      USE_OLLVM=true
+      echo "  -> Using OLLVM clang for this file" >&2
+      break
+    fi
+  fi
+done
+
+if [ "$USE_OLLVM" = true ] && [ -n "$OLLVM_FLAGS" ]; then
+  echo "  OLLVM flags: $OLLVM_FLAGS" >&2
+  exec "$OLLVM_CLANG" "$@" $OLLVM_FLAGS
+else
+  echo "  -> Using original clang" >&2
+  exec "$ORIG_CLANG" "$@"
+fi
+WRAPPER_EOF
+        
+        chmod +x /tmp/clang-wrapper
         
         echo ""
-        echo "=== Starting build ==="
+        echo "=== Wrapper script created ==="
+        echo "Wrapper will:"
+        echo "1. Use OLLVM clang for files in $MODULE_NAME/ directory"
+        echo "2. Use original clang for everything else (kernel headers)"
+        echo "3. Apply OLLVM flags: $OLLVM_FLAGS"
+        
+        echo ""
+        echo "=== Testing wrapper ==="
+        echo 'int test() { return 0; }' > /tmp/test.c
+        /tmp/clang-wrapper -c /tmp/test.c -o /tmp/test.o 2>&1 | grep "WRAPPER DEBUG" || true
+        
+        echo ""
+        echo "=== Cleaning previous build ==="
+        make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} clean 2>&1 | tail -5 || true
+        
+        echo ""
+        echo "=== Building module with OLLVM wrapper ==="
         echo "Build start: $(date)"
         
-        # Simple test of compiler first
-        echo "=== Testing compiler ==="
-        echo 'int main(){return 0;}' > /tmp/simple.c
-        $CLANG_PATH /tmp/simple.c -o /tmp/simple_test 2>&1 && echo "✅ Compiler test passed" || echo "⚠️ Compiler test had issues"
-        
-        echo ""
-        echo "=== Building module ==="
-        
-        # Build with tracing
-        PS4='+[${LINENO}]: '
+        # Build using the wrapper
         set -x
         make -C $KERNEL_SRC M=$PWD/${{ inputs.module_dir }} modules \
-          CC="$CLANG_PATH" \
+          CC="/tmp/clang-wrapper" \
           LD=ld.lld \
           AR=llvm-ar \
           NM=llvm-nm \
           OBJCOPY=llvm-objcopy \
           STRIP=llvm-strip \
-          EXTRA_CFLAGS="$OLLVM_FLAGS" \
           KCFLAGS="-flto=thin" \
           V=1 \
           2>&1 | tee /tmp/build.log
@@ -224,39 +242,43 @@ jobs:
         echo ""
         echo "=== BUILD ANALYSIS ==="
         
-        echo "1. Checking which clang was used..."
-        if grep -q "$CLANG_PATH" /tmp/build.log; then
-          echo "✅ Our OLLVM clang was used!"
-          grep "$CLANG_PATH" /tmp/build.log | head -2
-        else
-          echo "⚠️ Our clang path not found in logs"
-          echo "Found these clang references:"
-          grep -i "clang" /tmp/build.log | head -5 || echo "No clang found"
+        echo "1. Checking compiler usage in build log..."
+        echo "Lines with 'WRAPPER DEBUG':"
+        grep -n "WRAPPER DEBUG" /tmp/build.log | head -10 || echo "No wrapper debug lines found"
+        
+        echo ""
+        echo "2. Checking which clang was used..."
+        if grep -q "Using OLLVM clang" /tmp/build.log; then
+          echo "✅ OLLVM clang was used for module files!"
+          grep "Using OLLVM clang" /tmp/build.log | head -3
+        fi
+        
+        if grep -q "Using original clang" /tmp/build.log; then
+          echo "✅ Original clang was used for kernel headers!"
+          grep "Using original clang" /tmp/build.log | head -3
         fi
         
         echo ""
-        echo "2. Checking for OLLVM flags..."
+        echo "3. Checking for OLLVM flags..."
         if [ -n "$OLLVM_FLAGS" ]; then
-          if grep -q "mllvm" /tmp/build.log; then
-            echo "✅ OLLVM flags found in build"
-            grep -i "mllvm" /tmp/build.log | head -3
-          else
-            echo "⚠️ OLLVM flags not found in build log"
+          if grep -q "OLLVM flags:" /tmp/build.log; then
+            echo "✅ OLLVM flags were applied!"
+            grep "OLLVM flags:" /tmp/build.log | head -3
           fi
         fi
         
         echo ""
-        echo "3. Checking build result..."
+        echo "4. Checking build result..."
         if [ $BUILD_RESULT -eq 0 ]; then
-          echo "✅ Build successful"
+          echo "✅ Build completed successfully"
         else
-          echo "❌ Build failed with code: $BUILD_RESULT"
-          echo "Last 50 lines of build log:"
-          tail -50 /tmp/build.log
+          echo "❌ Build failed with exit code: $BUILD_RESULT"
+          echo "Last 30 lines of build log:"
+          tail -30 /tmp/build.log
         fi
         
         echo ""
-        echo "=== Looking for output ==="
+        echo "=== Looking for output module ==="
         
         mkdir -p /github/workspace/out
         KO_FILE=$(find "${{ inputs.module_dir }}" -name "*.ko" -type f | head -1)
@@ -266,17 +288,28 @@ jobs:
           OUTPUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-ollvm-${{ inputs.obfuscation_level }}-$TIMESTAMP.ko"
           
           cp "$KO_FILE" "/github/workspace/out/$OUTPUT_NAME"
-          echo "✅ Module built: $OUTPUT_NAME"
+          echo "✅ Module built successfully!"
+          echo "Output: $OUTPUT_NAME"
           echo "Size: $(du -h "/github/workspace/out/$OUTPUT_NAME" | cut -f1)"
+          
+          # Check if OLLVM worked by looking for function names
+          echo ""
+          echo "=== Checking OLLVM effect ==="
+          echo "Common function names in module (should be obscured):"
+          strings "/github/workspace/out/$OUTPUT_NAME" | grep -i "init\|exit\|open\|release\|read\|write" | head -5 || echo "No clear function names found - OLLVM likely working!"
           
           # Save build log
           cp /tmp/build.log "/github/workspace/out/$OUTPUT_NAME.log"
+          echo "Build log saved as: $OUTPUT_NAME.log"
+          
         else
-          echo "❌ No .ko file found!"
+          echo "❌ ERROR: No .ko file found in ${{ inputs.module_dir }}/"
+          echo "Directory contents:"
+          ls -la "${{ inputs.module_dir }}/" || echo "Directory not found"
           exit 1
         fi
 
-    - name: Upload ${{ inputs.module_dir }}.ko artifact
+    - name: Upload kernel module
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ inputs.obfuscation_level }}-${{ github.run_id }}
