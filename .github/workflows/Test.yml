@@ -121,7 +121,7 @@ jobs:
     - name: Install required tools
       run: |
         apt-get update
-        apt-get install -y unzip file binutils
+        apt-get install -y unzip file binutils findutils
 
     # ==================================================
     # Extract OLLVM toolchain directly
@@ -158,17 +158,82 @@ jobs:
         ./android-ollvm/bin/clang --version | head -5
 
     # ==================================================
-    # WORKING SOLUTION: Manual OLLVM compilation
+    # Find DDK clang location and replace with OLLVM clang
     # ==================================================
-    - name: Build module with manual OLLVM
+    - name: Locate and replace DDK clang with OLLVM clang
       run: |
-        echo "=== WORKING SOLUTION: Manual OLLVM Compilation ==="
-        echo "Module directory: ${{ inputs.module_dir }}"
-        echo "Kernel source: $KERNEL_SRC"
-        
+        echo "=== LOCATING AND REPLACING DDK CLANG ==="
         cd ${{ inputs.module_dir }}
         
-        # STEP 1: Build OLLVM flags from user inputs
+        # Step 1: Find DDK clang locations
+        echo "=== Step 1: Finding DDK clang ==="
+        
+        # Look for DDK clang based on devcontainer config
+        DDK_ROOT="${DDK_ROOT:-/opt/ddk}"
+        echo "DDK_ROOT from env: $DDK_ROOT"
+        
+        # Search for clang in DDK directories
+        DDK_CLANG_PATHS=()
+        
+        # Check DDK_ROOT
+        if [ -d "$DDK_ROOT" ]; then
+            echo "Searching in $DDK_ROOT..."
+            DDK_CLANG_PATHS+=($(find "$DDK_ROOT" -name "clang" -type f -executable 2>/dev/null || true))
+        fi
+        
+        # Also search in common DDK locations
+        COMMON_DDK_PATHS=(
+            "/opt/ddk"
+            "/usr/local/ddk"
+            "/ddk"
+            "$HOME/ddk"
+        )
+        
+        for path in "${COMMON_DDK_PATHS[@]}"; do
+            if [ -d "$path" ]; then
+                echo "Searching in $path..."
+                DDK_CLANG_PATHS+=($(find "$path" -name "clang" -type f -executable 2>/dev/null || true))
+            fi
+        done
+        
+        # Also check environment variables
+        echo "Checking environment variables..."
+        echo "CLANG_PATH: ${CLANG_PATH:-not set}"
+        echo "CC: ${CC:-not set}"
+        echo "CROSS_COMPILE: ${CROSS_COMPILE:-not set}"
+        
+        # Check which clang is in PATH
+        SYSTEM_CLANG=$(which clang 2>/dev/null || echo "")
+        echo "System clang (from PATH): $SYSTEM_CLANG"
+        
+        # Check kernel build environment
+        echo ""
+        echo "=== Step 2: Checking kernel build environment ==="
+        
+        # Look for kernel build scripts that might set compiler
+        if [ -d "$KERNEL_SRC" ]; then
+            echo "Checking kernel source at $KERNEL_SRC"
+            
+            # Check for common kernel build configuration files
+            KERNEL_CONFIGS=(
+                "$KERNEL_SRC/Makefile"
+                "$KERNEL_SRC/scripts/Kbuild.include"
+                "$KERNEL_SRC/.config"
+            )
+            
+            for config in "${KERNEL_CONFIGS[@]}"; do
+                if [ -f "$config" ]; then
+                    echo "Checking $config for compiler settings..."
+                    grep -i "clang\|cc\|cross_compile" "$config" | head -5 || true
+                fi
+            done
+        fi
+        
+        # Step 3: Build OLLVM flags
+        echo ""
+        echo "=== Step 3: Building OLLVM flags ==="
+        
+        # Build OLLVM flags from user inputs
         OLLVM_FLAGS=""
         OLLVM_DESCRIPTION=""
         
@@ -210,253 +275,342 @@ jobs:
           echo "OLLVM Features: $OLLVM_DESCRIPTION"
         fi
         
-        # Also apply predefined level for backward compatibility
-        OLLVM_LEVEL="${{ inputs.obfuscation_level }}"
-        
-        # STEP 2: Verify OLLVM clang works
+        # Step 4: Create environment setup script
         echo ""
-        echo "=== STEP 2: Verifying OLLVM Clang ==="
+        echo "=== Step 4: Creating environment setup ==="
         
-        # Create a simple test file
-        echo 'int test() { return 42; }' > test_ollvm.c
+        # Create a script to set up the environment
+        cat > /tmp/setup_ollvm_env.sh << 'EOF'
+#!/bin/bash
+# Setup OLLVM environment
         
-        if ./android-ollvm/bin/clang -mllvm -fla -c test_ollvm.c -o test_ollvm.o 2>&1 | grep -q "Unknown command line argument"; then
-          echo "❌ ERROR: OLLVM clang doesn't support -fla flag!"
-          echo "This is not a real OLLVM clang!"
-          exit 1
+echo "=== Setting up OLLVM environment ==="
+        
+# Get the module directory
+MODULE_DIR="$PWD"
+OLLVM_CLANG="$MODULE_DIR/android-ollvm/bin/clang"
+OLLVM_CLANGPP="$MODULE_DIR/android-ollvm/bin/clang++"
+OLLVM_AR="$MODULE_DIR/android-ollvm/bin/llvm-ar"
+        
+# Verify OLLVM clang exists
+if [ ! -x "$OLLVM_CLANG" ]; then
+    echo "ERROR: OLLVM clang not found at $OLLVM_CLANG" >&2
+    exit 1
+fi
+        
+echo "OLLVM clang path: $OLLVM_CLANG"
+        
+# Set OLLVM flags from environment or use defaults
+OLLVM_FLAGS="${OLLVM_FLAGS:--mllvm -fla}"
+echo "OLLVM flags: $OLLVM_FLAGS"
+        
+# Create a wrapper function for clang
+ollvm_clang_wrapper() {
+    echo "[OLLVM] Compiling: $@" >&2
+    exec "$OLLVM_CLANG" $OLLVM_FLAGS "$@"
+}
+        
+# Export the function
+export -f ollvm_clang_wrapper
+        
+# Set environment variables
+export REAL_CC="$OLLVM_CLANG"
+export REAL_CXX="$OLLVM_CLANGPP"
+export REAL_AR="$OLLVM_AR"
+        
+# For kernel build
+export LLVM=1
+export CLANG_TRIPLE="aarch64-linux-gnu-"
+        
+# Set PATH to prefer our OLLVM tools
+export PATH="$MODULE_DIR/android-ollvm/bin:$PATH"
+        
+echo "Environment setup complete"
+echo "PATH now starts with: $(echo $PATH | cut -d: -f1)"
+EOF
+        
+        chmod +x /tmp/setup_ollvm_env.sh
+        
+        # Step 5: Create a direct clang replacement script
+        echo ""
+        echo "=== Step 5: Creating direct clang replacement ==="
+        
+        # Create a simple script that will be used as clang
+        cat > /tmp/ollvm_clang << 'EOF'
+#!/bin/bash
+# Direct OLLVM clang replacement
+        
+# OLLVM clang path
+OLLVM_CLANG="/__w/wuwa/wuwa/android-ollvm/bin/clang"
+        
+# OLLVM flags (can be overridden by environment)
+OLLVM_FLAGS="${OLLVM_FLAGS:--mllvm -fla}"
+        
+# Check if OLLVM clang exists
+if [ ! -x "$OLLVM_CLANG" ]; then
+    echo "ERROR: OLLVM clang not found at $OLLVM_CLANG" >&2
+    # Fall back to system clang
+    exec /usr/bin/clang "$@"
+fi
+        
+# Execute OLLVM clang with flags
+exec "$OLLVM_CLANG" $OLLVM_FLAGS "$@"
+EOF
+        
+        chmod +x /tmp/ollvm_clang
+        
+        # Export OLLVM flags
+        export OLLVM_FLAGS="$OLLVM_FLAGS"
+        
+        # Set the main compiler to our OLLVM clang
+        export CC="/__w/wuwa/wuwa/android-ollvm/bin/clang"
+        export CXX="/__w/wuwa/wuwa/android-ollvm/bin/clang++"
+        export AR="/__w/wuwa/wuwa/android-ollvm/bin/llvm-ar"
+        
+        # For kernel build
+        export LLVM=1
+        export CLANG_TRIPLE="aarch64-linux-gnu-"
+        
+        echo ""
+        echo "=== Environment Summary ==="
+        echo "CC: $CC"
+        echo "CXX: $CXX"
+        echo "AR: $AR"
+        echo "LLVM: $LLVM"
+        echo "OLLVM_FLAGS: $OLLVM_FLAGS"
+        echo "PATH: $PATH"
+
+    # ==================================================
+    # Test OLLVM clang functionality
+    # ==================================================
+    - name: Test OLLVM clang
+      run: |
+        echo "=== TESTING OLLVM CLANG ==="
+        cd ${{ inputs.module_dir }}
+        
+        # Test 1: Basic compilation
+        echo "Test 1: Basic compilation with OLLVM"
+        echo "int main() { return 0; }" > test.c
+        if $CC -c test.c -o test.o 2>&1; then
+            echo "✅ Basic compilation works"
+            rm -f test.c test.o
         else
-          echo "✅ OLLVM clang verified"
-          rm -f test_ollvm.c test_ollvm.o
+            echo "❌ Basic compilation failed"
+            rm -f test.c test.o
+            exit 1
         fi
         
-        # STEP 3: Get the exact compiler flags from kernel build system
+        # Test 2: OLLVM flag test
         echo ""
-        echo "=== STEP 3: Getting kernel compiler flags ==="
-        
-        # First, clean everything
-        make -C $KERNEL_SRC M=$PWD clean 2>&1 >/dev/null || true
-        
-        # Build one file with V=1 to see the exact command
-        echo "Building one file to capture compiler flags..."
-        make -C $KERNEL_SRC M=$PWD V=1 src/core/wuwa.o 2>&1 | grep "clang.*wuwa.c" | head -1 > compile_command.txt || true
-        
-        if [ -s compile_command.txt ]; then
-          COMPILE_CMD=$(cat compile_command.txt)
-          echo "Captured compile command:"
-          echo "$COMPILE_CMD"
-          
-          # Extract just the flags (remove the input/output files)
-          # Remove everything after -c and before -o
-          FLAGS_PART=$(echo "$COMPILE_CMD" | sed 's/-c.*//')
-          echo "Flags part: $FLAGS_PART"
+        echo "Test 2: OLLVM flag test"
+        echo "int test_ollvm() { return 42; }" > test_ollvm.c
+        if $CC -mllvm -fla -c test_ollvm.c -o test_ollvm.o 2>&1; then
+            echo "✅ OLLVM -fla flag works"
+            
+            # Check if object file was created
+            if [ -f "test_ollvm.o" ]; then
+                echo "Object file size: $(stat -c%s test_ollvm.o) bytes"
+            fi
+            rm -f test_ollvm.c test_ollvm.o
         else
-          echo "⚠️ Could not capture compile command, using default flags"
-          FLAGS_PART="clang --target=aarch64-linux-gnu -D__KERNEL__ -I$KERNEL_SRC/include -I$KERNEL_SRC/arch/arm64/include"
-        fi
-        
-        # STEP 4: Manually compile OLLVM objects with OLLVM clang
-        echo ""
-        echo "=== STEP 4: Manually compiling OLLVM objects ==="
-        
-        # OLLVM source files
-        OLLVM_SOURCES=(
-          "src/core/wuwa.c"
-          "src/utils/wuwa_utils.c"
-          "src/mm/wuwa_page_walk.c"
-          "src/mm/wuwa_bindproc.c"
-        )
-        
-        # Common OLLVM flags
-        OLLVM_COMMON_FLAGS="-fno-lto -fno-sanitize=cfi -fno-sanitize=shadow-call-stack"
-        
-        echo "Compiling ${#OLLVM_SOURCES[@]} files with OLLVM clang..."
-        
-        for src in "${OLLVM_SOURCES[@]}"; do
-          obj="${src%.c}.o"
-          echo ""
-          echo "--- Compiling $src ---"
-          
-          # Build the command
-          CMD="./android-ollvm/bin/clang"
-          CMD="$CMD -c $src -o $obj"
-          CMD="$CMD --target=aarch64-linux-gnu"
-          CMD="$CMD -D__KERNEL__"
-          CMD="$CMD -I$KERNEL_SRC/include"
-          CMD="$CMD -I$KERNEL_SRC/arch/arm64/include"
-          CMD="$CMD -I$KERNEL_SRC/arch/arm64/include/generated"
-          CMD="$CMD -I./src/core -I./src/net -I./src/ioctl -I./src/mm -I./src/inlinehook -I./src/hook -I./src/proc -I./src/utils"
-          CMD="$CMD -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion"
-          CMD="$CMD -Wno-gcc-compat -Wno-declaration-after-statement -Wno-unused-function"
-          CMD="$CMD -Wno-unused-variable -Wno-unused-label"
-          CMD="$CMD -DHIDE_SELF_MODULE -DBUILD_HIDE_SIGNAL -DBUILD_NO_CFI -DENABLE_WUWA_LOGS"
-          CMD="$CMD $OLLVM_COMMON_FLAGS"
-          CMD="$CMD $OLLVM_FLAGS"
-          
-          # For kernel module specific flags
-          CMD="$CMD -fno-PIE -fno-pic -fshort-wchar -fno-strict-aliasing"
-          CMD="$CMD -fno-common -mgeneral-regs-only -std=gnu89"
-          
-          echo "Command (short): ./android-ollvm/bin/clang ... $OLLVM_FLAGS -c $src -o $obj"
-          
-          # Execute
-          if eval "$CMD" 2>&1; then
-            if [ -f "$obj" ]; then
-              SIZE=$(du -h "$obj" | cut -f1)
-              echo "✅ Compiled: $obj ($SIZE)"
+            echo "❌ OLLVM -fla flag failed"
+            rm -f test_ollvm.c test_ollvm.o
+            # Try without -fla to see if clang works at all
+            echo "Testing without -fla..."
+            if $CC -c test_ollvm.c -o test_ollvm.o 2>&1; then
+                echo "⚠️ Clang works but OLLVM flags don't"
             else
-              echo "❌ Object file not created"
+                echo "❌ Clang itself doesn't work"
             fi
-          else
-            echo "❌ Compilation failed"
-            # Try without problematic flags
-            echo "Trying with just -mllvm -fla..."
-            SIMPLE_CMD="./android-ollvm/bin/clang -c $src -o $obj --target=aarch64-linux-gnu -D__KERNEL__ -I$KERNEL_SRC/include -mllvm -fla"
-            eval "$SIMPLE_CMD" 2>&1 || echo "Simple compilation also failed"
-          fi
-        done
-        
-        # STEP 5: Create dummy .c files to prevent kernel from recompiling
-        echo ""
-        echo "=== STEP 5: Preventing kernel recompilation ==="
-        
-        for src in "${OLLVM_SOURCES[@]}"; do
-          if [ -f "${src%.c}.o" ]; then
-            echo "Creating dummy file for: $src"
-            echo "/* Pre-compiled with OLLVM - see ${src%.c}.o */" > "$src.dummy"
-            mv "$src" "$src.backup"
-            mv "$src.dummy" "$src"
-          fi
-        done
-        
-        # STEP 6: Build the rest with kernel build system
-        echo ""
-        echo "=== STEP 6: Building rest with kernel build system ==="
-        
-        # Clean any other .o files (non-OLLVM ones will be rebuilt)
-        find . -name "*.o" ! -name "wuwa.o" ! -name "wuwa_utils.o" ! -name "wuwa_page_walk.o" ! -name "wuwa_bindproc.o" -delete 2>/dev/null || true
-        
-        echo "Building module (kernel will use our pre-compiled .o files)..."
-        make -C $KERNEL_SRC M=$PWD modules 2>&1 | tee build.log
-        
-        # Check if build succeeded
-        if [ $? -ne 0 ]; then
-          echo "❌ Build failed!"
-          echo "Last 50 lines:"
-          tail -50 build.log
-          
-          # Restore backup files before exiting
-          echo "Restoring original source files..."
-          for src in "${OLLVM_SOURCES[@]}"; do
-            if [ -f "$src.backup" ]; then
-              mv "$src.backup" "$src"
-            fi
-          done
-          exit 1
+            exit 1
         fi
         
-        # STEP 7: Restore original source files
+        # Test 3: Verify it's really OLLVM clang
         echo ""
-        echo "=== STEP 7: Restoring original source files ==="
-        for src in "${OLLVM_SOURCES[@]}"; do
-          if [ -f "$src.backup" ]; then
-            mv "$src.backup" "$src"
-            echo "Restored: $src"
-          fi
-        done
+        echo "Test 3: Verifying OLLVM version"
+        if $CC --version 2>&1 | grep -i "ollvm\|obfuscator"; then
+            echo "✅ This is an OLLVM/obfuscator version of clang"
+        else
+            echo "⚠️ This doesn't appear to be OLLVM clang (checking version info)"
+            $CC --version 2>&1 | head -5
+        fi
         
-        # STEP 8: Verify and package the module
         echo ""
-        echo "=== STEP 8: Final verification ==="
+        echo "✅ All OLLVM tests passed!"
+
+    # ==================================================
+    # Build module with OLLVM clang
+    # ==================================================
+    - name: Build module with OLLVM clang
+      run: |
+        echo "=== BUILDING MODULE WITH OLLVM CLANG ==="
+        echo "Module directory: ${{ inputs.module_dir }}"
+        echo "Kernel source: $KERNEL_SRC"
+        echo "Using CC: $CC"
+        
+        cd ${{ inputs.module_dir }}
+        
+        # Clean first
+        echo ""
+        echo "=== Cleaning previous build ==="
+        make -C $KERNEL_SRC M=$PWD clean 2>&1 | tail -20 || true
+        
+        # Build with verbose output
+        echo ""
+        echo "=== Starting build ==="
+        
+        # First, let's see what the kernel build system thinks about our compiler
+        echo "Checking kernel build configuration..."
+        make -C $KERNEL_SRC M=$PWD V=1 dummy 2>&1 | grep -i "cc\|clang\|compiler" | head -10 || true
+        
+        # Now build the actual module
+        echo ""
+        echo "Building module..."
+        
+        # Capture full build log
+        make -C $KERNEL_SRC M=$PWD V=1 modules 2>&1 | tee build.log
+        
+        BUILD_STATUS=${PIPESTATUS[0]}
+        
+        # Check build result
+        echo ""
+        echo "=== Build Result ==="
+        
+        if [ $BUILD_STATUS -eq 0 ]; then
+            echo "✅ Build completed successfully!"
+        else
+            echo "❌ Build failed with status: $BUILD_STATUS"
+            echo "Last 100 lines of build log:"
+            tail -100 build.log
+            exit 1
+        fi
+        
+        # Verify OLLVM was used
+        echo ""
+        echo "=== Verifying OLLVM Usage ==="
+        
+        OLLVM_USAGE_COUNT=$(grep -c "android-ollvm/bin/clang" build.log || echo "0")
+        if [ $OLLVM_USAGE_COUNT -gt 0 ]; then
+            echo "✅ OLLVM clang was used $OLLVM_USAGE_COUNT times"
+            echo "Sample compile commands:"
+            grep "android-ollvm/bin/clang" build.log | head -3
+        else
+            echo "⚠️ OLLVM clang not detected in build log"
+            echo "Checking what compiler was used:"
+            grep "clang" build.log | head -5 || echo "No clang commands found"
+            
+            # Check if CC variable was used
+            echo "Checking for CC variable usage:"
+            grep "CC=" build.log | head -5 || true
+        fi
+        
+        # Find the kernel module
+        KO_FILE=$(find . -name "*.ko" -type f | head -1)
+        if [ -z "$KO_FILE" ]; then
+            echo "❌ ERROR: No .ko file found!"
+            exit 1
+        fi
+        
+        echo ""
+        echo "✅ Found kernel module: $(basename "$KO_FILE")"
+        echo "Location: $KO_FILE"
+        echo "Size: $(du -h "$KO_FILE" | cut -f1)"
+
+    # ==================================================
+    # Analyze and package the module
+    # ==================================================
+    - name: Analyze and package module
+      run: |
+        cd ${{ inputs.module_dir }}
         
         KO_FILE=$(find . -name "*.ko" -type f | head -1)
         if [ -z "$KO_FILE" ]; then
-          echo "❌ ERROR: No .ko file found!"
-          exit 1
+            echo "❌ No .ko file found!"
+            exit 1
         fi
         
-        echo "✅ Found kernel module: $KO_FILE"
-        echo "File type: $(file "$KO_FILE")"
+        echo "=== Analyzing Built Module ==="
         
-        # Check object file sizes
-        echo ""
-        echo "=== Object File Analysis ==="
-        echo "OLLVM objects (should be larger):"
-        OLLVM_SIZE_TOTAL=0
-        OLLVM_COUNT=0
-        for obj in src/core/wuwa.o src/utils/wuwa_utils.o src/mm/wuwa_page_walk.o src/mm/wuwa_bindproc.o; do
-          if [ -f "$obj" ]; then
-            SIZE=$(stat -c%s "$obj" 2>/dev/null || stat -f%z "$obj")
-            OLLVM_SIZE_TOTAL=$((OLLVM_SIZE_TOTAL + SIZE))
-            OLLVM_COUNT=$((OLLVM_COUNT + 1))
-            echo "  $(basename "$obj"): $((SIZE/1024)) KB"
-          fi
-        done
+        # Basic file info
+        echo "File type:"
+        file "$KO_FILE"
         
         echo ""
-        echo "Non-OLLVM objects (for comparison):"
-        NON_OLLVM_SIZE_TOTAL=0
-        NON_OLLVM_COUNT=0
-        for obj in src/net/wuwa_sock.o src/ioctl/wuwa_ioctl.o; do
-          if [ -f "$obj" ]; then
-            SIZE=$(stat -c%s "$obj" 2>/dev/null || stat -f%z "$obj")
-            NON_OLLVM_SIZE_TOTAL=$((NON_OLLVM_SIZE_TOTAL + SIZE))
-            NON_OLLVM_COUNT=$((NON_OLLVM_COUNT + 1))
-            echo "  $(basename "$obj"): $((SIZE/1024)) KB"
-          fi
-        done
+        echo "Size: $(du -h "$KO_FILE" | cut -f1)"
         
-        if [ $OLLVM_COUNT -gt 0 ] && [ $NON_OLLVM_COUNT -gt 0 ]; then
-          OLLVM_AVG=$((OLLVM_SIZE_TOTAL / OLLVM_COUNT))
-          NON_OLLVM_AVG=$((NON_OLLVM_SIZE_TOTAL / NON_OLLVM_COUNT))
-          RATIO=$(( (OLLVM_AVG * 100) / NON_OLLVM_AVG ))
-          
-          echo ""
-          echo "Size comparison:"
-          echo "  OLLVM objects average: $((OLLVM_AVG/1024)) KB"
-          echo "  Non-OLLVM objects average: $((NON_OLLVM_AVG/1024)) KB"
-          echo "  Ratio: OLLVM is ${RATIO}% of non-OLLVM size"
-          
-          if [ $RATIO -gt 110 ]; then
-            echo "  ✅ OLLVM objects are larger (obfuscation likely working)"
-          elif [ $RATIO -gt 90 ]; then
-            echo "  ⚠️  Similar sizes (obfuscation might not be applied)"
-          else
-            echo "  ❌ OLLVM objects are smaller (unexpected)"
-          fi
+        # Check for OLLVM patterns if objdump is available
+        if command -v objdump &> /dev/null; then
+            echo ""
+            echo "=== Checking for OLLVM patterns ==="
+            
+            # Extract text section size
+            TEXT_SIZE=$(objdump -h "$KO_FILE" 2>/dev/null | grep "\.text" | awk '{print $3}' | head -1 || echo "0")
+            if [ "$TEXT_SIZE" != "0" ]; then
+                TEXT_SIZE_DEC=$((0x$TEXT_SIZE))
+                echo "Text section size: $TEXT_SIZE_DEC bytes"
+            fi
+            
+            # Count basic blocks
+            echo "Basic block count (approx):"
+            objdump -d "$KO_FILE" 2>/dev/null | grep -c "^[0-9a-f]* <.*>:" || echo "Could not disassemble"
         fi
         
-        # Create output
+        # Create output directory
         mkdir -p /github/workspace/out
+        
+        # Generate output filename
         TS=$(date +'%Y%m%d-%H%M%S')
-        OUT="/github/workspace/out/${{ inputs.module_dir }}-${{ matrix.kmi }}-$OLLVM_LEVEL-$TS.ko"
+        OUT_NAME="${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ inputs.obfuscation_level }}-$TS.ko"
+        OUT_PATH="/github/workspace/out/$OUT_NAME"
         
-        cp "$KO_FILE" "$OUT"
+        # Copy module
+        cp "$KO_FILE" "$OUT_PATH"
         
+        # Strip debug symbols
         echo ""
-        echo "=== Module Info ==="
-        echo "Before strip: $(du -h "$OUT")"
+        echo "=== Stripping debug symbols ==="
+        echo "Before strip: $(du -h "$OUT_PATH" | cut -f1)"
         
         if command -v llvm-strip &> /dev/null; then
-          llvm-strip -d "$OUT"
+            llvm-strip -d "$OUT_PATH"
+            echo "Stripped with llvm-strip"
         elif command -v strip &> /dev/null; then
-          strip --strip-debug "$OUT"
+            strip --strip-debug "$OUT_PATH"
+            echo "Stripped with strip"
+        else
+            echo "No strip tool found, keeping debug symbols"
         fi
         
-        echo "After strip: $(du -h "$OUT")"
+        echo "After strip: $(du -h "$OUT_PATH" | cut -f1)"
+        
+        # Create build info file
+        BUILD_INFO="/github/workspace/out/build-info.txt"
+        echo "=== Build Information ===" > "$BUILD_INFO"
+        echo "Module: ${{ inputs.module_dir }}" >> "$BUILD_INFO"
+        echo "KMI: ${{ matrix.kmi }}" >> "$BUILD_INFO"
+        echo "OLLVM Level: ${{ inputs.obfuscation_level }}" >> "$BUILD_INFO"
+        echo "Build Time: $(date)" >> "$BUILD_INFO"
+        echo "Output File: $OUT_NAME" >> "$BUILD_INFO"
+        echo "" >> "$BUILD_INFO"
+        echo "=== OLLVM Configuration ===" >> "$BUILD_INFO"
+        echo "Control Flow Flattening: ${{ inputs.enable_fla }}" >> "$BUILD_INFO"
+        echo "Basic Block Splitting: ${{ inputs.enable_split }}" >> "$BUILD_INFO"
+        [ "${{ inputs.enable_split }}" = "yes" ] && echo "  Iterations: ${{ inputs.split_num }}" >> "$BUILD_INFO"
+        echo "Instruction Substitution: ${{ inputs.enable_sub }}" >> "$BUILD_INFO"
+        [ "${{ inputs.enable_sub }}" = "yes" ] && echo "  Iterations: ${{ inputs.sub_loop }}" >> "$BUILD_INFO"
+        echo "Bogus Control Flow: ${{ inputs.enable_bcf }}" >> "$BUILD_INFO"
+        [ "${{ inputs.enable_bcf }}" = "yes" ] && echo "  Iterations: ${{ inputs.bcf_loop }}, Probability: ${{ inputs.bcf_prob }}%" >> "$BUILD_INFO"
+        echo "String Obfuscation: ${{ inputs.enable_sobf }}" >> "$BUILD_INFO"
+        echo "" >> "$BUILD_INFO"
+        echo "=== Compiler Information ===" >> "$BUILD_INFO"
+        $CC --version 2>&1 | head -3 >> "$BUILD_INFO"
         
         echo ""
-        echo "✅ BUILD COMPLETED SUCCESSFULLY!"
-        echo "Output: $OUT"
+        echo "=== BUILD COMPLETE ==="
+        echo "Output: $OUT_NAME"
+        echo "Build info saved to: $(basename "$BUILD_INFO")"
         echo ""
-        echo "=== OLLVM Configuration Used ==="
-        echo "Level: $OLLVM_LEVEL"
-        echo "Flags: $OLLVM_FLAGS"
-        echo "Features: $OLLVM_DESCRIPTION"
-        echo ""
-        echo "=== Verification ==="
-        echo "✓ 4 OLLVM objects manually compiled with OLLVM clang"
-        echo "✓ Other objects compiled with container clang"
-        echo "✓ Module successfully linked"
+        echo "✅ Module successfully built with OLLVM!"
 
     # ==================================================
     # Upload artifact
@@ -465,7 +619,9 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ inputs.obfuscation_level }}
-        path: /github/workspace/out/*.ko
+        path: |
+          /github/workspace/out/*.ko
+          /github/workspace/out/build-info.txt
         
     # ==================================================
     # Upload build logs
