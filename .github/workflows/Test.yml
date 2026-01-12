@@ -155,11 +155,11 @@ jobs:
         ./android-ollvm/bin/clang --version | head -5
 
     # ==================================================
-    # Setup OLLVM environment with proper library paths
+    # Setup OLLVM environment and test in same step
     # ==================================================
-    - name: Setup OLLVM environment
+    - name: Setup and test OLLVM environment
       run: |
-        echo "=== SETTING UP OLLVM ENVIRONMENT ==="
+        echo "=== SETTING UP AND TESTING OLLVM ENVIRONMENT ==="
         cd ${{ inputs.module_dir }}
         
         # Build OLLVM flags from user inputs
@@ -196,71 +196,22 @@ jobs:
         OLLVM_DIR="$PWD/android-ollvm"
         echo "OLLVM Directory: $OLLVM_DIR"
         
-        # Check what's in the OLLVM directory
-        echo "=== OLLVM Directory Contents ==="
-        ls -la $OLLVM_DIR/
+        # Set compiler paths
+        OLLVM_CC="$OLLVM_DIR/bin/clang"
+        OLLVM_CXX="$OLLVM_DIR/bin/clang++"
+        OLLVM_AR="$OLLVM_DIR/bin/llvm-ar"
+        
+        echo "Compiler paths:"
+        echo "  CC: $OLLVM_CC"
+        echo "  CXX: $OLLVM_CXX"
+        echo "  AR: $OLLVM_AR"
+        
+        # Test 1: Basic compilation
         echo ""
-        echo "=== OLLVM lib directory ==="
-        ls -la $OLLVM_DIR/lib/ 2>/dev/null || echo "No lib directory"
-        echo ""
-        echo "=== OLLVM include directory ==="
-        ls -la $OLLVM_DIR/include/ 2>/dev/null || echo "No include directory"
-        
-        # Set environment variables
-        export OLLVM_DIR="$OLLVM_DIR"
-        export OLLVM_CC="$OLLVM_DIR/bin/clang"
-        export OLLVM_CXX="$OLLVM_DIR/bin/clang++"
-        export OLLVM_AR="$OLLVM_DIR/bin/llvm-ar"
-        export OLLVM_FLAGS="$OLLVM_FLAGS"
-        
-        # Set compiler for kernel build
-        export CC="$OLLVM_CC"
-        export CXX="$OLLVM_CXX"
-        export AR="$OLLVM_AR"
-        
-        # Kernel build specific
-        export LLVM=1
-        export CLANG_TRIPLE="aarch64-linux-gnu-"
-        
-        # For kernel build to pass OLLVM flags
-        export KBUILD_CFLAGS_MODULE="$OLLVM_FLAGS"
-        
-        # Set library paths if OLLVM has libraries
-        if [ -d "$OLLVM_DIR/lib" ]; then
-          echo "Setting OLLVM library paths..."
-          export LD_LIBRARY_PATH="$OLLVM_DIR/lib:$LD_LIBRARY_PATH"
-          export LIBRARY_PATH="$OLLVM_DIR/lib:$LIBRARY_PATH"
-        fi
-        
-        # Set include paths if OLLVM has includes
-        if [ -d "$OLLVM_DIR/include" ]; then
-          echo "Setting OLLVM include paths..."
-          export C_INCLUDE_PATH="$OLLVM_DIR/include:$C_INCLUDE_PATH"
-          export CPLUS_INCLUDE_PATH="$OLLVM_DIR/include:$CPLUS_INCLUDE_PATH"
-        fi
-        
-        echo ""
-        echo "=== Environment Variables Set ==="
-        echo "CC: $CC"
-        echo "CXX: $CXX"
-        echo "AR: $AR"
-        echo "OLLVM_FLAGS: $OLLVM_FLAGS"
-        echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
-        echo "LIBRARY_PATH: $LIBRARY_PATH"
-
-    # ==================================================
-    # Test OLLVM clang
-    # ==================================================
-    - name: Test OLLVM clang
-      run: |
-        echo "=== TESTING OLLVM CLANG ==="
-        cd ${{ inputs.module_dir }}
-        
-        # Test basic compilation
-        echo "Test 1: Basic compilation"
+        echo "=== Test 1: Basic compilation ==="
         echo "int main() { return 0; }" > test.c
         
-        if $CC -c test.c -o test.o; then
+        if "$OLLVM_CC" -c test.c -o test.o; then
           echo "✅ Basic compilation successful"
           rm -f test.c test.o
         else
@@ -269,36 +220,86 @@ jobs:
           exit 1
         fi
         
-        # Test OLLVM flag
+        # Test 2: OLLVM flag test
         echo ""
-        echo "Test 2: OLLVM flag test"
+        echo "=== Test 2: OLLVM flag test ==="
         echo "int test() { return 42; }" > test2.c
         
-        if $CC -mllvm -fla -c test2.c -o test2.o 2>&1; then
+        if "$OLLVM_CC" -mllvm -fla -c test2.c -o test2.o 2>&1; then
           echo "✅ OLLVM -fla flag works"
           rm -f test2.c test2.o
         else
           echo "⚠️ OLLVM -fla flag test failed"
           echo "Testing without flag..."
-          if $CC -c test2.c -o test2.o; then
+          if "$OLLVM_CC" -c test2.c -o test2.o; then
             echo "✅ Clang works but OLLVM flags might not be supported"
           else
             echo "❌ Clang itself doesn't work"
           fi
           rm -f test2.c test2.o
         fi
+        
+        # Test 3: Check version
+        echo ""
+        echo "=== Test 3: Check OLLVM version ==="
+        "$OLLVM_CC" --version | head -3
+        
+        # Set environment variables for next steps
+        echo ""
+        echo "=== Setting environment variables ==="
+        
+        # Write environment variables to file for next steps
+        echo "OLLVM_DIR=$OLLVM_DIR" >> $GITHUB_ENV
+        echo "OLLVM_CC=$OLLVM_CC" >> $GITHUB_ENV
+        echo "OLLVM_CXX=$OLLVM_CXX" >> $GITHUB_ENV
+        echo "OLLVM_AR=$OLLVM_AR" >> $GITHUB_ENV
+        echo "OLLVM_FLAGS='$OLLVM_FLAGS'" >> $GITHUB_ENV
+        
+        # Also set the main compiler variables
+        echo "CC=$OLLVM_CC" >> $GITHUB_ENV
+        echo "CXX=$OLLVM_CXX" >> $GITHUB_ENV
+        echo "AR=$OLLVM_AR" >> $GITHUB_ENV
+        
+        # Kernel build specific
+        echo "LLVM=1" >> $GITHUB_ENV
+        echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
+        
+        # Set library paths if OLLVM has libraries
+        if [ -d "$OLLVM_DIR/lib" ]; then
+          echo "Setting OLLVM library paths..."
+          echo "LD_LIBRARY_PATH=$OLLVM_DIR/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=$OLLVM_DIR/lib:$LIBRARY_PATH" >> $GITHUB_ENV
+        fi
+        
+        echo "✅ OLLVM setup complete!"
 
     # ==================================================
     # Build module with OLLVM clang
     # ==================================================
     - name: Build module with OLLVM clang
+      env:
+        # These will be overridden by GITHUB_ENV from previous step
+        CC: ${{ env.OLLVM_CC }}
+        CXX: ${{ env.OLLVM_CXX }}
+        AR: ${{ env.OLLVM_AR }}
+        OLLVM_FLAGS: ${{ env.OLLVM_FLAGS }}
+        LLVM: ${{ env.LLVM }}
+        CLANG_TRIPLE: ${{ env.CLANG_TRIPLE }}
       run: |
         echo "=== BUILDING MODULE WITH OLLVM CLANG ==="
         echo "Module directory: ${{ inputs.module_dir }}"
         echo "Kernel source: $KERNEL_SRC"
         echo "Using compiler: $CC"
+        echo "OLLVM flags: $OLLVM_FLAGS"
         
         cd ${{ inputs.module_dir }}
+        
+        # Verify compiler is set
+        echo ""
+        echo "=== Verifying compiler setup ==="
+        echo "CC: $CC"
+        echo "which clang: $(which clang 2>/dev/null || echo 'not in PATH')"
+        echo "ls -la \$CC: $(ls -la "$CC" 2>/dev/null || echo 'not found')"
         
         # Clean first
         echo ""
@@ -309,7 +310,17 @@ jobs:
         echo ""
         echo "=== Starting build ==="
         
+        # First, let's see what the kernel build system uses
+        echo "Checking kernel build configuration..."
+        make -C $KERNEL_SRC M=$PWD V=1 dummy 2>&1 | grep -i "cc\|clang\|compiler" | head -5 || true
+        
         # Build the module
+        echo ""
+        echo "Building module..."
+        
+        # Add OLLVM flags to kernel build flags
+        export KBUILD_CFLAGS_MODULE="$OLLVM_FLAGS"
+        
         make -C $KERNEL_SRC M=$PWD V=1 modules 2>&1 | tee build.log
         
         BUILD_STATUS=${PIPESTATUS[0]}
@@ -329,8 +340,12 @@ jobs:
         echo "=== Checking OLLVM usage ==="
         if grep -q "android-ollvm/bin/clang" build.log; then
             echo "✅ OLLVM clang was used in build"
+            echo "Sample compile commands:"
+            grep "android-ollvm/bin/clang" build.log | head -2
         else
             echo "⚠️ OLLVM clang not detected in build log"
+            echo "Checking what compiler was used:"
+            grep "clang" build.log | head -3 || echo "No clang commands found"
         fi
         
         # Find the kernel module
@@ -373,11 +388,24 @@ jobs:
         
         if command -v llvm-strip &> /dev/null; then
             llvm-strip -d "$OUT_PATH"
+            echo "Stripped with llvm-strip"
         elif command -v strip &> /dev/null; then
             strip --strip-debug "$OUT_PATH"
+            echo "Stripped with strip"
+        else
+            echo "No strip tool found"
         fi
         
         echo "After strip: $(du -h "$OUT_PATH" | cut -f1)"
+        
+        # Create build info
+        BUILD_INFO="/github/workspace/out/build-info.txt"
+        echo "Build Information" > "$BUILD_INFO"
+        echo "================" >> "$BUILD_INFO"
+        echo "Module: ${{ inputs.module_dir }}" >> "$BUILD_INFO"
+        echo "KMI: ${{ matrix.kmi }}" >> "$BUILD_INFO"
+        echo "OLLVM Level: ${{ inputs.obfuscation_level }}" >> "$BUILD_INFO"
+        echo "Build Time: $(date)" >> "$BUILD_INFO"
         
         echo ""
         echo "✅ Module packaged: $OUT_NAME"
@@ -389,7 +417,9 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.module_dir }}-${{ matrix.kmi }}-${{ inputs.obfuscation_level }}
-        path: /github/workspace/out/*.ko
+        path: |
+          /github/workspace/out/*.ko
+          /github/workspace/out/build-info.txt
         
     # ==================================================
     # Upload build logs
